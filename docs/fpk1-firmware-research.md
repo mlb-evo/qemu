@@ -142,3 +142,13 @@ Examined **both** `KI_FPK_AU536/gss-qb-primary/8/default/qb_primary.img` and `gs
 MHI2 `prepare.py` parses the first 8 bytes as `(stage2_size,stage1_size)` and requires `8 + stage2_size + stage1_size == len(raw)`. FPK1 payloads do **not** meet this invariant, so applying the MHI2 Quickboot split to FPK1 would be incorrect. It remains to be established how FPK1's Quickboot is loaded and whether an appropriate AVP/BCT handoff can be reconstructed. The common payload does **not** demonstrate identical runtime behavior of the primary/recovery paths.
 
 Reproduce with `python3 tools/fpk1/inspect_quickboot.py /path/to/FPK1-update.zip --json qb-report.json`. No firmware bytes have been committed.
+
+## Quickboot ARM code and unresolved linked addresses
+
+A direct ARM-state probe of HSP-stripped `qb_primary.img` begins with `e92d4030` (`push {r4,r5,lr}`), `e3a03000` (`mov r3,#0`), `e24dd014` (`sub sp,sp,#20`) and `e59f4064` (`ldr r4,[pc,#0x64]`). This is a **function prologue**, not proof of an AVP/BootROM entry point. The `ldr` at file-relative `0x0c` reads the literal at `0x78` = `0x8401891c`; other PC literals at `0x7c`, `0x80`, `0x84` are `0x84068088`, `0x8401891c`, and `0x84068083`.
+
+File-relative branches in the first 0x78 bytes: `0x1c -> 0x50`, `0x20 -> -0x54bf8`, `0x28 -> -0x56708`, `0x44 -> -0x54bf8`, `0x4c -> -0x56708`, and `0x68 -> 0x20`. The **negative targets are important**: this code may be a partial linked component with references outside the supplied blob, or require a different load context. Do not patch these branches or invent an entry address. Runtime address = unknown load base + file offset, and address calculations may depend on prior relocation.
+
+The literal pool contains addresses in the Tegra DRAM range used by the MHI2 machine (`0x80000000` and above), but this is **not** evidence that the exact MHI2 layout or the `0x480e0000` AVP reset PC applies to FPK1. The primary and recovery payloads are identical in the researched update. Reproduce with `python3 tools/fpk1/probe_quickboot_arm.py /path/to/update.zip --json /tmp/qb-arm.json`.
+
+**Next step**: determine if the Quickboot blob is a component intended to be linked/copied into an existing larger loader using FPK1 update metadata or if it has a nonzero load bias. To get first boot, investigate Stage1 startup and AVP handoff before trying to jump to the first instruction of this Quickboot blob.

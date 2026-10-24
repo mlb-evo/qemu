@@ -50,6 +50,7 @@ def scan_elf(buf):
                 phoff+n*32<=len(buf)-at)
             if header_ok:
                 segments=[];bad=[]
+                if ident[7:16]!=b"\x00"*9:bad.append("nonzero_e_ident_tail_diagnostic")
                 for i in range(n):
                     kind,off,vaddr,paddr,filesz,memsz,pflags,align=struct.unpack_from(
                         "<IIIIIIII",buf,at+phoff+i*32)
@@ -69,7 +70,7 @@ def scan_elf(buf):
                 out.append({"at":at,"phnum":n,"pt_load":len(loads),
                     "all_pt_load_present":bool(loads) and all(x["stored_extent_available"] for x in loads),
                     "all_pt_load_size_ok":bool(loads) and all(x["load_semantics_valid"] for x in loads),
-                    "strict_elf_valid":not bad,"rejection_reasons":bad[:12],
+                    "strict_elf_valid":not [x for x in bad if x!="nonzero_e_ident_tail_diagnostic"],"rejection_reasons":bad[:12],
                     "max_load_file_end":max((x["file_offset"]+x["file_size"] for x in loads),default=0)})
         at+=4
     return out[:50]

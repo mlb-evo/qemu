@@ -13,12 +13,14 @@ FLAG_COMPRESSION={0:"none",4:"zlib",8:"lzo",12:"ucl"}
 def inspect(data,at):
     u16=lambda pos:struct.unpack_from("<H",data,at+pos)[0]
     u32=lambda pos:struct.unpack_from("<I",data,at+pos)[0]
-    flags1=data[at+5]
+    flags1=data[at+6]
     fields={
         "signature":hex(u32(0)),
-        "version":data[at+4],
+        "version_u16":u16(4),
+        "version_low_byte":data[at+4],
+        "version_high_byte":data[at+5],
         "flags1":hex(flags1),
-        "flags2":hex(data[at+6]),
+        "flags2":hex(data[at+7]),
         "header_size":u16(8),
         "machine":u16(10),
         "startup_vaddr":hex(u32(12)),
@@ -33,6 +35,8 @@ def inspect(data,at):
         "preboot_size":u16(48),
         "compression_kind":FLAG_COMPRESSION.get(flags1&0x1c,"unknown"),
         "compression_bits":hex(flags1&0x1c),
+        "header_first_64":data[at:at+64].hex(),
+        "standard_header_version_valid":u16(4)==1,
     }
     return fields
 

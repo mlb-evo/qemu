@@ -469,3 +469,23 @@ Added `tools/fpk1/correlate_stage1_elf_runs.py`: records all triplet runs and te
 User ran `correlate_stage1_elf_runs.py` against original primary Stage1: 56 runs of `e0ff00` length at least four; **43** have an ELF magic within 128 bytes of their end; distance histogram is `3:3, 4:38, 41:1, 89:1`. All reported raw ELF32/ARM plausibility checks were false. Typical byte sequence after the run is `e0 XX 00 05/06 7f454c46`; apparent ELF `e_machine` includes e.g. 13312 rather than standard ARM e_machine 40. These numbers strongly support a systematic binary representation that retains some ELF magic, but do **not** prove a particular compression codec or that ELF files are intact.
 
 Added `tools/fpk1/analyze_stage1_elf_transforms.py` to inventory **all** Stage1 `7fELF` hits, report the 64 following raw bytes, identification prefixes, version/machine/ehsize in the *untransformed stream*, and any immediately preceding four-byte `e0 XX 00 05/06` marker. This read-only probe is intended to reveal recurring corruption/encoding patterns without inventing a decoder; user should inspect `most_common_ident16` and representative `headers`.
+
+## Important Stage1 decoding breakthrough: likely LZF token stream
+
+User's `analyze_stage1_elf_transforms.py` run found 41 raw ELF magic occurrences in Stage1 Primary, of which 38 have an immediate four-byte `e0 XX 00 05/06` preceding marker. The user previously confirmed 56 `e0ff00` triplet runs, 43 of which sit near ELF magic. **This is a strong match to LZF token grammar**:
+
+- `E0 FF 00`: LZF long backreference with length `(E0>>5=7)+FF+2=264` and distance `(((E0&31)<<8)|00)+1=1`. Consequently it repeats the previous decoded byte 264 times (if the containing stream starts early enough).
+- `E0 90 00`: same token with extension `0x90` = 153 bytes repeated at distance 1.
+- `06 7F 45 4C 46 01 01 01`: LZF literal-run control `06`, followed by 7 literal bytes beginning an ELF32 header.
+- A following `05 7F 45 4C 46 01 01` likewise copies 6 literal bytes.
+
+This coherently explains the invalid *raw* ELF headers: raw bytes contain intermixed LZF control tokens and literal fragments. However **successful complete-stream decompression has not yet been observed**, and the exact stream start/end (possibly independent blocks) are not established. Do not declare the recovered IFS or an ELF executable until decoded bytes validate.
+
+Added `tools/fpk1/probe_stage1_lzf.py`: bounded, in-memory LZF decompressor (64 MiB decoded cap), probes candidate stream starts and checks decoded ELF32 ARM headers and `imagefs\\x04` markers. It does not export proprietary bytes or run the decoded code. If a probe stops due to backreference-before-start or truncated final token, test an independently grounded stream boundary; do not automatically assume whole Stage1 is one LZF stream.
+
+User command:
+```sh
+cd /Users/pavelk/workspace/other/qemu-mhi2
+git pull --ff-only
+python3 tools/fpk1/probe_stage1_lzf.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-lzf.json
+```

@@ -35,29 +35,42 @@ def decode(src,start,limit=LIMIT):
     return out,p,None
 
 def scan_elf(buf):
+    """Conservative ELF32 ARM check; validate PHDR semantics, not merely bounds."""
     out=[];at=0
-    while (at:=buf.find(b"\x7fELF",at))>=0:
+    allowed={0,1,2,3,4,6,7,0x6474e550,0x6474e551,0x6474e552}
+    while (at:=buf.find(b"\\x7fELF",at))>=0:
         if at+52<=len(buf):
-            ident=buf[at:at+7]
+            ident=buf[at:at+16]
             typ,machine,version=struct.unpack_from("<HHI",buf,at+16)
-            phoff=struct.unpack_from("<I",buf,at+28)[0]
-            ehsize,entsize,n=struct.unpack_from("<HHH",buf,at+40)
-            ok=(ident==b"\x7fELF\x01\x01\x01" and machine==40 and version==1 and
+            entry,phoff,shoff,flags=struct.unpack_from("<IIII",buf,at+24)
+            ehsize,entsize,n,shentsize,shnum,shstrndx=struct.unpack_from("<HHHHHH",buf,at+40)
+            header_ok=(ident[:7]==b"\\x7fELF\\x01\\x01\\x01" and
+                ident[7:16]==b"\\x00"*9 and typ in (1,2,3) and machine==40 and version==1 and
                 ehsize==52 and entsize==32 and 0<n<=128 and phoff>=52 and
                 phoff+n*32<=len(buf)-at)
-            if ok:
-                segments=[]
+            if header_ok:
+                segments=[];bad=[]
                 for i in range(n):
-                    kind,off,vaddr,paddr,filesz,memsz,flags,align=struct.unpack_from(
+                    kind,off,vaddr,paddr,filesz,memsz,pflags,align=struct.unpack_from(
                         "<IIIIIIII",buf,at+phoff+i*32)
-                    segments.append({"kind":kind,"offset":off,"filesz":filesz,"memsz":memsz,
-                                     "present":off+filesz<=len(buf)-at,
-                                     "size_ok":filesz<=memsz})
-                loads=[x for x in segments if x["kind"]==1]
+                    available=off+filesz<=len(buf)-at
+                    is_load=kind==1
+                    load_valid=(not is_load or (filesz<=memsz and
+                        (align in (0,1) or ((align&(align-1))==0 and (vaddr-off)%align==0))))
+                    known_type=kind in allowed
+                    if not known_type:bad.append(f"unknown_program_type:{kind:#x}")
+                    if is_load and not load_valid:bad.append(f"invalid_PT_LOAD:{i}")
+                    if not available:bad.append(f"program_extent_missing:{i}")
+                    segments.append({"type":kind,"file_offset":off,"file_size":filesz,
+                        "memory_size":memsz,"stored_extent_available":available,
+                        "load_semantics_valid":load_valid})
+                loads=[x for x in segments if x["type"]==1]
+                if not loads:bad.append("no_PT_LOAD")
                 out.append({"at":at,"phnum":n,"pt_load":len(loads),
-                            "all_pt_load_present":bool(loads) and all(x["present"] for x in loads),
-                            "all_pt_load_size_ok":bool(loads) and all(x["size_ok"] for x in loads),
-                            "max_load_file_end":max((x["offset"]+x["filesz"] for x in loads),default=0)})
+                    "all_pt_load_present":bool(loads) and all(x["stored_extent_available"] for x in loads),
+                    "all_pt_load_size_ok":bool(loads) and all(x["load_semantics_valid"] for x in loads),
+                    "strict_elf_valid":not bad,"rejection_reasons":bad[:12],
+                    "max_load_file_end":max((x["file_offset"]+x["file_size"] for x in loads),default=0)})
         at+=4
     return out[:50]
 
@@ -77,6 +90,7 @@ def main():
                      "decoded_size":len(buf),"decode_error":error,
                      "elf_valid_count":len(elfs),
                      "elf_with_complete_loads":sum(e["all_pt_load_present"] and e["all_pt_load_size_ok"] for e in elfs),
+                     "strict_valid_elf_count":sum(e["strict_elf_valid"] for e in elfs),
                      "elfs":elfs[:12]})
     result={"note":"Empty-history LZF suffix decoding; exact stream boundaries remain unverified",
             "starts":rows}

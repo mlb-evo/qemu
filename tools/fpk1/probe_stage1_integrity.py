@@ -33,7 +33,21 @@ def analyze(raw):
         checks.append({"region":name,"length":len(buf),
                        "crc32":f"0x{crc:08x}","adler32":f"0x{adler:08x}",
                        "matches_header_u32":crc==target or adler==target})
+    footer=d[-8:]
+    padding=len(d[:-8])-len(d[:-8].rstrip(b"\\x00"))
+    declared_end=0x800+declared
+    footer_start=len(d)-8
     return {
+        "declared_region_start": "0x800",
+        "declared_region_end_exclusive":hex(declared_end),
+        "footer_start":hex(footer_start),
+        "footer_in_declared_region":declared_end==footer_start,
+        "declared_region_followed_by_zero_padding_and_footer":
+            declared_end==footer_start-padding,
+        "declared_size_matches_payload_minus_header_padding":
+            declared==len(d)-0x800-padding,
+        "declared_size_matches_payload_minus_header_padding_footer":
+            declared==len(d)-0x800-padding-8,
         "payload_size":len(d),"size_field_0x0":declared,
         "size_field_residual":len(d)-declared,
         "mode_field_0x258":struct.unpack_from("<I",d,0x258)[0],

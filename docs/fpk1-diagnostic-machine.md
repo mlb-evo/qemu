@@ -40,3 +40,21 @@ See [firmware research](fpk1-firmware-research.md). Next steps:
 4. Only then attempt original `procnto` startup and application services.
 
 The profile deliberately does not modify `mhi2-harman` behavior.
+
+## Firmware-free smoke test
+
+The existing `.github/workflows/mhi2-build.yml` now calls
+`python3 tools/fpk1/check_machine.py --qemu <path-to-qemu-system-arm>`
+immediately after building QEMU. This reuses the already running Linux/macOS
+ARM build job rather than adding a second expensive build.
+
+The smoke test checks:
+- `fpk1` appears in `-machine help`;
+- missing mandatory addresses result in a nonzero exit;
+- an entry point outside a four-byte image is rejected;
+- a generated, non-proprietary ARM A32 branch-to-self binary starts without
+  an immediate fatal error (the test terminates it by a two-second timeout).
+
+These are **machine initialization** checks, not proof of executing FPK1
+firmware or booting QNX. This PR has not yet passed a QEMU compile/run
+in the current environment; rely on the existing CI once it executes.

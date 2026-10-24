@@ -168,3 +168,23 @@ Used the field order and exact 256-byte `struct startup_header` described in QNX
 **However**, the same layout yields `startup_size=0x400001a1` and `stored_size=0x04004007`; both exceed the ~2-MB stored Stage1 payload, and startup_size > stored_size. This contradicts the QNX startup-header invariants. Do not assume `0x80a06b98` is an operational entry address, and do not feed this candidate directly into QEMU. Potential explanations (not established): modified header, false-positive embedded signature, or additional transformation/relocation.
 
 Reproduce using `python3 tools/fpk1/validate_stage1_startup_header.py /path/to/FPK1-update.zip --json stage1-header.json`. Immediate next check: compare the 256-byte header against QNX `dumpifs` on native equipment or BSP code, and inspect image start/base semantics before any boot attempt.
+
+## Tegra30 QEMU boot handoff: concrete source audit
+
+Reviewed `hw/arm/mhi2_harman.c`, `hw/arm/tegra30.c`, and `include/hw/arm/tegra30.h` from main. MHI2 uses a **captured post-BootROM handoff**, not full NVIDIA BootROM emulation:
+
+- `mhi2_reset` resets AVP and A9/LP CPUs, then sets **AVP** PC to `0x480e0000`. The Cortex-A9 CPUs are held in reset until boot code releases them.
+- In the MHI2 machine, the firmware file must be **exactly 64 MiB** and is provided as a NOR image. A `rom_add_blob_fixed` shadow copies the NOR content at `0x83f28000`; the actual flash is also exposed via a Tegra SNOR model/window at `0x48000000`. These are board-specific choices.
+- IRAM is mapped at `0x40000000`, size `0x40000` (256 KiB). `-machine iram=<image>` seeds IRAM with a captured Boot Information Table and BootROM results; without it the machine explicitly refuses boot.
+- The CPU reset-vector registers around `0x6000f100` are modelled in the SoC, allowing AVP firmware to release the main CPU after writing the entry address.
+
+These facts establish a **possible design pattern** for FPK1: keep common Tegra30 SoC, define a distinct FPK1 board machine with explicit boot handoff inputs and optional read-only diagnostic tracing. They do **not** establish that FPK1's real NOR is 64 MiB, that its Quickboot is mapped at `0x83f28000`, or that its AVP boot PC equals `0x480e0000`.
+
+### Diagnostic prerequisites before boot attempt
+
+1. Identify FPK1-specific flash map and BCT/IRAM handoff (or explicit evidence for an alternative stage1-direct boot).
+2. Determine FPK1 startup's actual physical load address and valid entry point; current Stage1 candidate has contradictory `startup_size` / `stored_size` fields.
+3. Introduce a separately named `fpk1` machine only with validated, selectable boot addresses/inputs. Log failures on missing input rather than silently using the MHI2 captured NOR/IRAM.
+4. For diagnostics use CPU tracing and unimplemented-MMIO logs at the first validated handoff. A working `procnto` is the first boot milestone, not successful ARM execution alone.
+
+No execution of FPK1 firmware in QEMU has yet been demonstrated.

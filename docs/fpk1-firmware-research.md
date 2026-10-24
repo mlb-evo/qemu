@@ -93,3 +93,9 @@ The same **16-bit record-length** and **file-type-aware name offset** from the e
 This corrects earlier wording that called all 344 entries the full catalog and incorrectly identified `+0x908` as the catalog beginning: that offset is the **first regular-file entry**, not the directory header's beginning. The independently matching maximum file end and declared logical image size show that the imagefs metadata is internally consistent, while its backing bytes still require reconstruction.
 
 `tools/fpk1/inspect_stage2_imagefs.py` was revised to follow the MHI2 layout instead of treating the entry size as a 32-bit integer. The earlier file-boundary findings for the 344 regular files are preserved.
+
+## Bounded LZO1Z probes (negative)
+
+A first direct test used the installed `liblzo2.so.2` and the same `lzo1z_decompress_safe` entry point employed by MHI2. Candidate offsets in the unwrapped Stage2 payload were `0x8b1`, `0x8b5`, `0x8b9`, `0x900`, `0x1000`, `0x2000`. Each tested at most 65,536 input bytes with a 262,144-byte output buffer. **All six returned -6** (input overrun/incomplete stream), so there is no verified LZO1Z block recovery.
+
+This **does not rule out LZO1Z**, since genuine start addresses, compressed lengths and output sizes have not been established. Do not label arbitrary slices as compressed blocks. The reproducible read-only probe is `tools/fpk1/probe_lzo1z.py`. Next investigate block boundaries and indexed extents before attempting decompression.

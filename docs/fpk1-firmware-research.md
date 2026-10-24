@@ -776,3 +776,9 @@ User ran `index_stage1_qnx_build_metadata.py`: 148 build metadata records, 23 of
 Multiple DESCRIPTION strings occur in proximity windows: e.g. `libcam.so` also sees "Generic filesystem support library"; `cam-disk.so` also sees "QNX6 filesystem library"; `tinit` also sees "Process crash dump file creation daemon"; `deva-nvaudio` also sees "mmc/sd disk driver". These additional DESCRIPTION strings **must not** be attributed to the closest NAME without establishing metadata-record boundaries. They imply additional components/build records or metadata bleed across multiple objects.
 
 Next priority: parse bounded build-record clusters anchored at NAME= and stop at the next NAME= or ELF start, report unassociated records separately, and correlate with validated SONAME/DT_NEEDED without inferring QNX imagefs names.
+
+## Build-record clustering probe
+
+Added `tools/fpk1/cluster_stage1_qnx_build_records.py`, a stricter complement to the original 148-field proximity index. It searches for NUL-bounded `NAME=` records and attempts to collect adjacent NUL-delimited `DESCRIPTION`, `DATE`, `STATE`, `HOST`, `USER` values until a non-field, blank terminator, or next record. Unlike the old field-level grouping, it reports each `NAME` record separately even when multiple records occur between two ELF headers. `names_by_preceding_elf` remains explicitly heuristic and is not a proven association, filesystem path, or catalog. Added firmware-independent synthetic tests `test_cluster_stage1_qnx_build_records.py`; they have not been executed on the user's local image in this session.
+
+Run: `python3 -m unittest discover -s tools/fpk1 -p 'test_cluster_stage1_qnx_build_records.py' -v` then `python3 tools/fpk1/cluster_stage1_qnx_build_records.py <firmware.zip> --json /tmp/fpk1-build-records.json`.

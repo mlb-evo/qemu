@@ -396,3 +396,9 @@ python3 tools/fpk1/probe_early_boot_references.py /Users/pavelk/workspace/other/
 ```
 
 The existing `tools/fpk1/inspect_stage2_imagefs.py` remains relevant: STAGE2.2's catalog has a verified imagefs directory, but most regular-file data spans exceed the stored extent. **Do not assume that an in-image search absence means a filename or command is absent from the logical Stage2 filesystem** without reconstructing the encoding.
+
+## Stage1 boot references: mount_nand and /stage3 proximity
+
+User-run `probe_early_boot_references.py` reveals Stage1 candidate-inner `mount_nand` at `0x794e0` and `:/stage3` at `0x79542`, separated by only `0x62` bytes. This is the strongest early-stage lead for filesystem preparation, but strings do **not yet establish** an executable boot script or call order. Stage1 also contains `startup-nvidia-tegra3-mm` at `0x109de`, `fs-qnx6` at `0x10e48`, and `# Needs: fs-qnx6` at `0x1765b4`. Stage2 contains a `Dir\":\"/stage3/\"` reference at `0x18859`, likely serialized metadata but still unclassified, and `S_MOUNTPOI` at `0x7a4df`. Stage1 recovery yielded no corresponding printable matches, inconclusive due to suspected encoding/packing.
+
+Added `tools/fpk1/inspect_boot_reference_context.py` for strictly bounded hex + printable-run + little-endian-u32 contexts around these known offsets in Stage1/Stage2. Coordinates are candidate-inner payload `raw[0xc2:]`. The next user run should reveal whether the strings belong to contiguous boot directives, filename metadata, or unrelated binary fragments. Do not claim an established Stage1→Stage3 mount command before the context is examined.

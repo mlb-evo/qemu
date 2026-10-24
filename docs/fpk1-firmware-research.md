@@ -99,3 +99,13 @@ This corrects earlier wording that called all 344 entries the full catalog and i
 A first direct test used the installed `liblzo2.so.2` and the same `lzo1z_decompress_safe` entry point employed by MHI2. Candidate offsets in the unwrapped Stage2 payload were `0x8b1`, `0x8b5`, `0x8b9`, `0x900`, `0x1000`, `0x2000`. Each tested at most 65,536 input bytes with a 262,144-byte output buffer. **All six returned -6** (input overrun/incomplete stream), so there is no verified LZO1Z block recovery.
 
 This **does not rule out LZO1Z**, since genuine start addresses, compressed lengths and output sizes have not been established. Do not label arbitrary slices as compressed blocks. The reproducible read-only probe is `tools/fpk1/probe_lzo1z.py`. Next investigate block boundaries and indexed extents before attempting decompression.
+
+## Stage2 storage-boundary sampling
+
+Read-only sampling of the original update (payload coordinates, HSP bytes stripped) gives a stronger baseline before speculating about a block codec. Entropy (Shannon bits/byte): Stage2.1 metadata `0x880..0x2000` **7.053**; middle `0x100000..0x110000` **7.524**; near-tail sample **7.340**; Stage2.2 first 4 KiB at `0x93cc90` **6.361**; middle `0xa00000..0xa10000` **7.460**; final 4 KiB **3.236**. The region is heterogeneous, so an arbitrary whole-region decompression is unwarranted. Low tail entropy is consistent with padding or structured data and is not proof of a codec.
+
+The embedded Stage2.2 `imagefs\\x04` header reports logical size `0x01bb5e34`, while its stored region is `0x00cbf400`. Stage2.1's embedded `#imagefs\\x04` reports `0x0174d718` and its stored field is `0x0093cc87`. These are **two distinct logical-size declarations** and neither establishes the compressed-block table layout.
+
+Reproduce with `python3 tools/fpk1/probe_stage2_regions.py /path/to/update.zip --json results.json`; the new script records sample offsets, entropy, common bytes and SHA-256 so hypotheses can be compared against future firmware builds.
+
+**Next actionable target:** correlate directory data offsets with stored-byte extents; search for block-index metadata using verified record boundaries before attempting LZO1Z. Revisit Stage1 QNX startup for boot viability in parallel.

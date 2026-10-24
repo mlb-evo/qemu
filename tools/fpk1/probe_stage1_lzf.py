@@ -36,7 +36,7 @@ def decode(src,limit=LIMIT):
             if distance==1:
                 out.extend(bytes([out[-1]])*n)
             elif distance>=n:
-                out.extend(out[-distance:-distance+n])
+                out.extend(out[len(out)-distance:len(out)-distance+n])
             else:
                 for _ in range(n):out.append(out[-distance])
     return bytes(out)

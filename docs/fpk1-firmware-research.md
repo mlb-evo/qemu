@@ -239,3 +239,16 @@ An exact invariant occurs in *both* candidate payloads:
 Primary: `0xa94=0x800+660`; recovery: `0xdd1=0x800+1489`. Both share an 8-byte footer `6865500e01000000` preceded by those zeros. The relation is strong evidence for a fixed 0x800-byte container header and a recorded length associated with content and trailing layout. **However, the declared end `0x800+size` is actually 8 bytes *into* the zero run (not the footer), so neither an exact footer-inclusion rule nor padding alignment has been established.** Do not trim, repackage, or boot based on an invented boundary.
 
 `tools/fpk1/probe_stage1_integrity.py` now reports this size identity and the distances from declared end to both the beginning of the zero run and the footer. Next: inspect last nonzero bytes before the padding, probe exact header/footer semantics in the installer code and further images.
+
+## Stage1 payload exact declared-size boundary — verified directly against original ZIP
+
+Both HSP-stripped Stage1 variants satisfy an identical arithmetic relation, now checked against the actual bytes, not merely inferred from entropy:
+
+- Primary: `payload_length=0x1f7000`, `u32le@0=0x1f656c`, `declared_end=0x800+0x1f656c=0x1f6d6c`, `last_nonzero_end=0x1f6d64`, **8 zero bytes** at `[0x1f6d64,0x1f6d6c)`, further 660 padding zeros in total before the last 8-byte footer.
+- Recovery: `payload_length=0x856800`, `u32le@0=0x855a2f`, `declared_end=0x800+0x855a2f=0x85622f`, `last_nonzero_end=0x856227`, **8 zero bytes** at `[0x856227,0x85622f)`, further 1489 padding zeros in total before the same footer.
+- The identical end-of-container footer is `68 65 50 0e 01 00 00 00` at `payload_length-8`; it is **outside** the declared region in both variants.
+- The Primary bytes immediately before the 8-byte zero run include an intelligible startup script line ending `/bin/login" vt100 on\n`, a NUL, and eight nonzero bytes `b1 97 95 25 f7 3f a1 53`. Recovery ends instead with `... 05 4e 38 fb ee` (high-entropy data). The last 8 nonzero bytes are **unidentified**; do not label them a signature or checksum without proof.
+
+This reinforces that `u32@0` is a container-relative length covering the region beginning at `0x800`, including exactly 8 trailing zeros for both observed images; it does **not** include final flash padding or the 8-byte footer. It does not yet tell us the meaning of the nonzero 8-byte tail or whether either image is otherwise compressed/encrypted.
+
+`tools/fpk1/probe_stage1_integrity.py` now reports exact significant-data end and declared-region final eight bytes. The next reverse-engineering priority is correlating `u32@0` and the fixed footer with the real installer or HSP image writer, and discovering the Recovery-specific encoding indicated by the mode field `u32@0x258` (1 vs 2).

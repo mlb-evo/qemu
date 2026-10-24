@@ -520,3 +520,15 @@ User executed `validate_stage1_lzf_elf_segments.py` against original firmware. R
 This is strong evidence for LZF-compatible **local** encoding. However `all_file_extents_available` covers the segment entries parsed within the bounded seeded decode, not an independent proof of ELF integrity, complete source-file extents, hashes or a valid Stage1 imagefs. A run can begin within a larger compressed stream, and the decoder deliberately inserts a synthetic initial zero byte. **Do not claim an executable has been faithfully recovered or boot original QNX from these bytes yet.**
 
 Next: identify true compressed stream or chunk boundary from container metadata, eliminate synthetic history, then validate ELF program-header contents and file integrity; in parallel revisit the encoded Stage1 `imagefs` catalog. No proprietary bytes committed.
+
+## Search for LZF starts with empty history (following validated local ELF data)
+
+Added `tools/fpk1/find_stage1_lzf_starts.py`: bounded forensic search for a possible *real* LZF stream start in the 2048 bytes before six previously identified ELF-adjacent runs (`0x131913`, `0x18da01`, `0xf1bbb`, `0x112367`, `0x19421c`, `0x1c14f8`). Unlike `probe_stage1_lzf_local.py`, the decoder begins with **empty** output and rejects any backwards reference to unavailable bytes. For each candidate source offset, it requires a decoded complete ELF32 little-endian ARM header, reports candidates and consumes at most 8 MiB output per hypothesis. This is a falsifiable search for stream boundaries, **not** proof of framing: matches can arise from valid LZF suffix parsing starting inside a larger stream. Zero hits is also inconclusive, as true chunk starts might lie farther back and real framing may provide dictionary context.
+
+Run locally:
+```sh
+cd /Users/pavelk/workspace/other/qemu-mhi2
+git pull --ff-only
+python3 tools/fpk1/find_stage1_lzf_starts.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-lzf-boundaries.json
+```
+Inspect `targets[].valid_candidate_count` and `targets[].candidate_starts`. Preserve the distinction between locally valid ELF structure and authenticated/full-image recovery.

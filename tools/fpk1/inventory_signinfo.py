@@ -37,7 +37,10 @@ def main():
                 "stored_bytes":packed,
                 "uncompressed_bytes_in_signinfo":unpacked,
                 "externally_compressed":packed!=unpacked,
-                "stored_size_matches_remaining_bytes":len(raw)-start==packed,
+                "bytes_after_declared_flashdata":len(raw)-(start+packed),
+                "declared_data_begins_with":raw[start:start+8].hex(),
+                "declared_data_ends_with":raw[start+packed-8:start+packed].hex(),
+                "bytes_after_declared_data":raw[start+packed:].hex(),
                 "signed_member_length":len(raw),
             })
     output=json.dumps(results,indent=2)+"\n"

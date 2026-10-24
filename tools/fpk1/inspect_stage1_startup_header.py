@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Inspect QNX startup_header fields of the original Stage1 IFS.
+
+This is intentionally a header probe, not a decompressor. Uses offsets from
+QNX sys/startup.h and reports candidate physical bounds for validation.
+"""
+import argparse, json, struct, zipfile
+from pathlib import Path
+
+MAGIC=0x00ff7eeb
+FLAG_COMPRESSION={0:"none",4:"zlib",8:"lzo",12:"ucl"}
+
+def inspect(data,at):
+    u16=lambda pos:struct.unpack_from("<H",data,at+pos)[0]
+    u32=lambda pos:struct.unpack_from("<I",data,at+pos)[0]
+    flags1=data[at+5]
+    fields={
+        "signature":hex(u32(0)),
+        "version":data[at+4],
+        "flags1":hex(flags1),
+        "flags2":hex(data[at+6]),
+        "header_size":u16(8),
+        "machine":u16(10),
+        "startup_vaddr":hex(u32(12)),
+        "paddr_bias":hex(u32(16)),
+        "image_paddr":hex(u32(20)),
+        "ram_paddr":hex(u32(24)),
+        "ram_size":u32(28),
+        "startup_size":u32(32),
+        "stored_size":u32(36),
+        "imagefs_paddr":hex(u32(40)),
+        "imagefs_size":u32(44),
+        "preboot_size":u16(48),
+        "compression_kind":FLAG_COMPRESSION.get(flags1&0x1c,"unknown"),
+        "compression_bits":hex(flags1&0x1c),
+    }
+    return fields
+
+def main():
+    p=argparse.ArgumentParser()
+    p.add_argument("archive",type=Path)
+    p.add_argument("--json",type=Path)
+    a=p.parse_args()
+    with zipfile.ZipFile(a.archive) as z:
+        names=[n for n in z.namelist() if n.endswith("/stage1_ifs.img")]
+        if len(names)!=1:raise ValueError("Stage1 not uniquely found")
+        data=z.read(names[0])[0xc2:]
+    hits=[]
+    magic=struct.pack("<I",MAGIC)
+    pos=0
+    while (pos:=data.find(magic,pos))>=0:
+        if pos+256<=len(data):
+            hdr=inspect(data,pos)
+            hdr.update(offset=hex(pos),
+                       candidate_image_base=hex(pos-hdr["preboot_size"]) if pos>=hdr["preboot_size"] else None,
+                       stored_extent_in_bounds=(pos-hdr["preboot_size"]>=0 and pos-hdr["preboot_size"]+hdr["stored_size"]<=len(data)))
+            hits.append(hdr)
+        pos+=4
+    result={"member":names[0],"coordinates":"HSP raw member + 0xc2","headers":hits}
+    txt=json.dumps(result,indent=2)+"\n"
+    print(txt,end="")
+    if a.json:a.json.write_text(txt)
+
+if __name__=="__main__":main()

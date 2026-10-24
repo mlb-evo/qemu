@@ -569,3 +569,9 @@ User supplied full `inspect_stage1_lzf_phdr_values.py` output (eight unseeded ca
 **Correction:** previous counters of 8 plausible ELF32 ARM program headers and 8/8 with two PT_LOAD refer to earlier, weaker, non-independent checks, and do **not** establish eight valid ELF files. An unseeded LZF suffix can contain recognizable ELF-looking fragments while the table is unusable. Full Stage1 has not been decoded.
 
 Updated `tools/fpk1/validate_stage1_unseeded_lzf.py` to require meaningful program-header types, at least one PT_LOAD, PT_LOAD file-size/memory-size ordering and alignment congruence, and present file extents, recording reasons under `strict_valid_elf_count` and `rejection_reasons`. The next step is to determine actual LZF framing and byte alignment before trusting file catalogs or QEMU load addresses.
+
+## Zero candidates after strict ELF validation: identify overfiltering
+
+User ran updated `validate_stage1_unseeded_lzf.py`: all eight empty-history suffix starts reported `elf_valid_count=0` and `strict_valid_elf_count=0`. Inspection showed the new preliminary check required `e_ident[7:16]` to be all zero, which is too aggressive for forensic discovery and can discard partly damaged/non-standard QNX headers before reporting the PHDR defects. Fixed this in `a782d94`: nonzero identification tail is a **diagnostic reason**, while the core header match and semantic PHDR checks are distinct. The result remains **no proven recovered ELF**; the user should rerun and inspect the rejection reasons rather than treating 0 discovered candidates as definitive evidence against LZF.
+
+Prior PHDR dumps independently show impossible PT_LOAD sizes and unknown segment types, so accepting a shallow header is still not enough for successful validation.

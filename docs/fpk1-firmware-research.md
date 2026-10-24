@@ -307,3 +307,13 @@ The members with declared transport compression are:
 All three IFS entries (stage1 normal, stage1 recovery, stage2) have matching compressed/uncompressed sizes *in SignInfo*. That is no claim about internal IFS packing. A decisive next step is to decompress `app.img` and `stage3.img` directly from the **SignInfo-specified** byte ranges, checking stream EOF and exact output size, then identify the resulting image partition signatures. KSS will require its own compression/container interpretation.
 
 Added `tools/fpk1/probe_signinfo_zlib.py` for a read-only check of all members with declared compression (256 MiB per-image output cap). It reports only size, zlib EOF, unused bytes and prefix; it does not write proprietary decompressed data. No success result is asserted until it is run on the original archive.
+
+## Confirmed Stage3/app zlib transport, exact output
+
+User ran `probe_signinfo_zlib.py` against Q7 2018 archive:
+- `app.img` stored 1,577,543 → 209,715,200 bytes; `status=ok`, `eof=true`, `unused_bytes=0`.
+- `stage3.img` stored 7,335,155 → 209,715,200 bytes; `status=ok`, `eof=true`, `unused_bytes=0`.
+- Both unpacked byte streams begin with the same first 16 bytes `eb1090000000000010000000f83f0600`. This establishes identical prefixes, **not** identical images or a known filesystem/partition layout.
+- `KSSApplication.bin` and `KSSFlashDriver.bin` rejected raw zlib-at-offset-zero (errors `incorrect header check` and `unknown compression method`). They may use other wrappers, compression methods, or mixed raw/compressed regions.
+
+Added `tools/fpk1/inspect_decompressed_partitions.py`: read-only exact SignInfo zlib unpacking for these two members, 4-KiB nonzero range inventory, SHA256, and magic offset candidates. No extracted image files are written. Magic matches can occur by chance inside binary payloads and are **not sufficient** to declare a filesystem; offsets 0x438/0x1fe/0x200 are independently reported to test conventional ext/MBR/GPT placements. Follow-up: compare hashes, nonzero extents and verified partition format before choosing QEMU eMMC geometry.

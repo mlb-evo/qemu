@@ -744,6 +744,11 @@ config MHI2_HARMAN
     depends on TEGRA30
     select MMX_IOC
 
+config FPK1
+    bool
+    default y
+    depends on TEGRA30
+
 config AXIADO_SOC
     bool
     select ARM_GIC

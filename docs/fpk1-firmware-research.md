@@ -317,3 +317,11 @@ User ran `probe_signinfo_zlib.py` against Q7 2018 archive:
 - `KSSApplication.bin` and `KSSFlashDriver.bin` rejected raw zlib-at-offset-zero (errors `incorrect header check` and `unknown compression method`). They may use other wrappers, compression methods, or mixed raw/compressed regions.
 
 Added `tools/fpk1/inspect_decompressed_partitions.py`: read-only exact SignInfo zlib unpacking for these two members, 4-KiB nonzero range inventory, SHA256, and magic offset candidates. No extracted image files are written. Magic matches can occur by chance inside binary payloads and are **not sufficient** to declare a filesystem; offsets 0x438/0x1fe/0x200 are independently reported to test conventional ext/MBR/GPT placements. Follow-up: compare hashes, nonzero extents and verified partition format before choosing QEMU eMMC geometry.
+
+## App/stage3 expanded 200 MiB disk reconnaissance (user measurements)
+
+The two independently verified zlib-expanded images have different SHA256 values: app `274e12cf205c89b77af2c15562645a7917b850b41e4dec632e5600d4c61c8b78` and stage3 `b6abab7b536e69032491a6ae5e8245ea2395398a58a08ece48e3a4e0704976f3`. Their first 64 bytes are identical and both have `55 aa` at byte offset `0x1fe`, an MBR/boot-sector signature candidate. At offset `0x200` neither has `EFI PART`, so conventional GPT is unsupported. An isolated `55aa` **does not establish** a valid MBR partition table, filesystem, or FAT format.
+
+Primary nonzero extents in app are sparse: `0x0..0x1000`, `0x2000..0x4000`, `0x9000..0xb000`, `0xd2000..0xd3000`, `0xd8000..0xda000`, `0x1a2000..0x348000`, and `0xc7ff000..0xc800000` (4KiB resolution). Stage3 has 79 reported extents and more used regions. Both have nonzero bytes close to the end of their respective 200-MiB output, indicating that trimming at the early dense areas would be unsafe.
+
+Added `tools/fpk1/inspect_disk_partitions.py` to parse the four standard MBR records at `0x1be`, validate status, type, sector count, start/end LBA against the actual 409,600 sectors, and inspect the first sector at each plausible partition start. No claim of FAT, ext, or other filesystem should be made until partition descriptors and superblocks are validated. The tool does not write binary images.

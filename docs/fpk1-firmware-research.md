@@ -81,3 +81,15 @@ Before inventing another IFS decoder, examine these files in the same repository
 - `tools/mhi2/qnx6_image.py`, `qnx6_read.py`: QNX6 disk filesystem tools; distinguish them from the QNX boot `imagefs` format.
 
 **Correction to earlier research assumptions:** the provisional FPK1 Stage2 directory parser should be validated against the 16-bit entry lengths and file-mode-dependent name offsets of the existing imagefs implementation, rather than declaring all 344 entries structurally verified. In particular, an uncompressed logical length is not evidence for any specific codec. Next: write fixture-based tests for an FPK1 read-only directory extractor based on the existing imagefs routines, then probe Stage2.1 for raw LZO blocks only with explicit validated sizes and boundaries.
+
+## Corrected imagefs record parsing (cross-checked on original FPK1)
+
+The same **16-bit record-length** and **file-type-aware name offset** from the existing MHI2 QNX parser are valid for FPK1 STAGE2.2. Direct binary validation now gives:
+
+- Header at STAGE2.2 `+0x890`: `imagefs\\x04`; declared logical image size `0x01bb5e34`; data start `0x59dc`; directory starts at header-relative `0x5c` (region `+0x8ec`, not `+0x908`).
+- **345 catalog entries total**, of which **344 are regular files** and **1 is a non-regular entry**. Directory ends at STAGE2.2 `+0x6268`.
+- **7 of 344 regular files** fit completely into the stored region; the remaining **337** have at least part of their span outside. Maximum logical file end: `0x1bb5e2f`, five bytes short of the declared logical image size `0x1bb5e34`.
+
+This corrects earlier wording that called all 344 entries the full catalog and incorrectly identified `+0x908` as the catalog beginning: that offset is the **first regular-file entry**, not the directory header's beginning. The independently matching maximum file end and declared logical image size show that the imagefs metadata is internally consistent, while its backing bytes still require reconstruction.
+
+`tools/fpk1/inspect_stage2_imagefs.py` was revised to follow the MHI2 layout instead of treating the entry size as a 32-bit integer. The earlier file-boundary findings for the 344 regular files are preserved.

@@ -29,7 +29,7 @@ def decode(src,start,limit=LIMIT):
             if dist>len(out):return out,p,"invalid backreference"
             if len(out)+n>limit:return out,p,"output limit"
             if dist==1:out.extend(bytes([out[-1]])*n)
-            elif dist>=n:out.extend(out[-dist:-dist+n])
+            elif dist>=n:out.extend(out[len(out)-dist:len(out)-dist+n])
             else:
                 for _ in range(n):out.append(out[-dist])
     return out,p,None

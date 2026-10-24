@@ -27,13 +27,22 @@ def inspect(name,raw):
             qnx_magic_at=data.find(bytes.fromhex("eb7eff00")),
             imagefs_at=data.find(b"imagefs"))
         declared=struct.unpack_from("<I",data,0)[0]
-        result["length_relation"]=(declared<=len(data)-0x800 and
-                                   len(data)-declared>=0x800)
-        if result["length_relation"] and data.endswith(FOOTER):
-            result["declared_end"]=f"0x{0x800+declared:x}"
+        # A length that merely fits is insufficient: stage2_nand is a
+        # known counterexample. Confirm the shared IFS header and all bytes
+        # after the declared end through the footer are zero.
+        end = 0x800 + declared
+        has_common_header = struct.unpack_from("<I", data, 4)[0] == 0x00a00800
+        plausible_length = 0x800 <= end <= len(data)-8
+        padding_is_zero = (plausible_length and
+                           not any(data[end:-8]))
+        result["length_relation"] = plausible_length
+        result["ifs_container_candidate"] = (
+            has_common_header and plausible_length and padding_is_zero
+            and data.endswith(FOOTER))
+        if plausible_length:
+            result["declared_end"]=f"0x{end:x}"
             result["zero_bytes_from_declared_end_to_footer"]=(
-                len(data)-8-(0x800+declared)
-                if not any(data[0x800+declared:-8]) else None)
+                len(data)-8-end if padding_is_zero else None)
     return result
 
 def main():

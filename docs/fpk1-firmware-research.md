@@ -683,3 +683,9 @@ Added tools/fpk1/check_stage1_entry_mapping.py for cautious numeric ARM conditio
 ## Stage1 ELF entrypoint checks after corrected LZF
 
 User ran `map_stage1_decoded_elf_entries.py`: for LZF suffix start 0x1318fc, 24 strict ARM ELF candidates, all 24 entry addresses fall within a PT_LOAD range; for 0x18d9fe, 18 strict candidates, all 18 map to PT_LOAD. This is additional internal consistency evidence but not proof of execution or independent files (suffix sets overlap). Sample entry values include 0xba8, 0xb18, 0x447c, 0x100f2c, 0x100ecc and 0x101728. These resemble typical per-executable entry VAs and must not be confused with early image startup target 0x80a06b98. Added `tools/fpk1/inventory_stage1_decoded_elf.py` for read-only ELF type, PT_LOAD, entry file offset, byte prefix and surrounding filename clue inventory. Filename clues are not authenticated path catalog entries.
+
+## Read-only decoded Stage1 ELF dependency inventory
+
+User confirmed 24 structural ARM ELF candidates in the corrected Stage1 LZF suffix (four ET_DYN and twenty ET_EXEC, each with two PT_LOAD segments). Added `tools/fpk1/identify_stage1_elf_dependencies.py` to collect ELF type, entry, PT_INTERP and the DT_NEEDED/DT_SONAME/DT_RPATH/DT_RUNPATH names by translating DT_STRTAB virtual addresses using PT_LOAD mappings. The tool reads the local firmware ZIP, decodes only the known bounded suffix in memory, and writes JSON metadata only. String values found in dynamic metadata are not a verified imagefs catalog or file path. Added firmware-independent synthetic tests `tools/fpk1/test_identify_stage1_elf_dependencies.py` for PT_INTERP, DT_NEEDED, DT_SONAME and absent DT_STRTAB.
+
+Run: `python3 -m unittest discover -s tools/fpk1 -p 'test_identify_stage1_elf_dependencies.py' -v` and `python3 tools/fpk1/identify_stage1_elf_dependencies.py <firmware.zip> --json /tmp/fpk1-elf-dependencies.json`. Actual local firmware and test results must be confirmed by the user.

@@ -134,3 +134,11 @@ Reviewed `tools/mhi2/build_audi.py` (the target of the `build_firmware.py` shim)
 5. Writes generated `run.sh` referencing built `qemu-system-arm`, bridges and prepared media.
 
 **FPK1 implication:** the MHI2 construction path crucially relies on captured, device-specific NOR/IRAM/BCT and a formatted eMMC template. An update ZIP alone cannot be substituted for those inputs. We can reuse parsing and packing algorithms when layouts match, but cannot assume MHI2 bootstraps, partition IDs, Quickboot CMAC, or `MMX2/.../70/default/` update paths are interchangeable with FPK1. The immediate task is to map FPK1's update components to NOR/eMMC partitions and determine whether a valid FPK1 BootROM-to-AVP handoff can be reconstructed or supplied.
+
+## FPK1 Quickboot comparison against the actual MHI2 assembler
+
+Examined **both** `KI_FPK_AU536/gss-qb-primary/8/default/qb_primary.img` and `gss-qb-recovery/8/default/qb_recovery.img` from the supplied archive. Each file is 100,805 bytes; stripping the candidate 194-byte HSP wrapper leaves **100,611 bytes**. Those two payloads are **byte-for-byte identical**, although their signed HSP envelopes differ. Both payloads begin with `30 40 2D E9 00 30 A0 E3`, which looks like ARM instructions rather than the two u32 sizes expected by MHI2.
+
+MHI2 `prepare.py` parses the first 8 bytes as `(stage2_size,stage1_size)` and requires `8 + stage2_size + stage1_size == len(raw)`. FPK1 payloads do **not** meet this invariant, so applying the MHI2 Quickboot split to FPK1 would be incorrect. It remains to be established how FPK1's Quickboot is loaded and whether an appropriate AVP/BCT handoff can be reconstructed. The common payload does **not** demonstrate identical runtime behavior of the primary/recovery paths.
+
+Reproduce with `python3 tools/fpk1/inspect_quickboot.py /path/to/FPK1-update.zip --json qb-report.json`. No firmware bytes have been committed.

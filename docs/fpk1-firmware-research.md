@@ -489,3 +489,9 @@ cd /Users/pavelk/workspace/other/qemu-mhi2
 git pull --ff-only
 python3 tools/fpk1/probe_stage1_lzf.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-lzf.json
 ```
+
+## Whole-tail LZF probes failed; isolate token grammar
+
+User ran `probe_stage1_lzf.py` on candidate starts `0x0`, `0x800`, `0x808`, `0x810`, `0x820`, `0x900`, `0x1000`, `0x2000`, `0xe000`, `0xe100`, `0xe500`, and `0x10bc0`; all failed immediately with `backreference before stream start`. These failures reject the simple assumption that each guessed offset is the beginning of a standalone continuous LZF stream; they do not independently disprove local LZF syntax. No original Stage1 contents have yet been successfully decompressed.
+
+Added `tools/fpk1/probe_stage1_lzf_local.py` to test token grammar from known repeated-triplet starts with a deliberately synthetic single zero-byte history and bounded 16-KiB output. Its `plausible_elf32_arm` metric is valuable evidence if positive, but a seeded local decode is **not** proof of actual compressed stream boundaries or correct file bytes. All results are metadata only; no firmware binary saved. Run `python3 tools/fpk1/probe_stage1_lzf_local.py <archive.zip> --json /tmp/fpk1-stage1-lzf-local.json`.

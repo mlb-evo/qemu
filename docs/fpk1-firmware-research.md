@@ -203,3 +203,11 @@ Added `tools/fpk1/compare_stage1_headers.py` to compare ordinary/recovery Stage1
 ```sh
 python3 tools/fpk1/compare_stage1_headers.py /path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-headers.json
 ```
+
+## Stage1 primary/recovery comparison (local macOS extraction)
+
+The `compare_stage1_headers.py` tool was executed locally against the original Q7 2018 update. Primary: HSP raw 2,060,482 B, candidate unwrapped 2,060,288 B; **one** QNX startup magic at payload `0x808`. Recovery: HSP raw 8,743,106 B, candidate unwrapped 8,742,912 B; **no** occurrences of that QNX startup magic. This is only a signature-search observation: **do not conclude recovery cannot contain QNX**, as alternate offsets/wrapping and transforms have not been identified.
+
+The primary header has `startup_size=0x400001a1`, `stored_size=0x04004007`, exceeding the complete stored payload and violating `startup_size <= stored_size`; the regular `sys/startup.h` representation therefore fails invariants. Crucially, the whole `startup_header` occupies 256 bytes **from signature at 0x808 through 0x907**. Bytes near `0x83c`, `0x900` and ARM-prologue-like subsequences within that header are **not** independent evidence of executable startup code. The `startup_vaddr=0x80a06b98` is genuinely embedded as an entry address in the header and is followed by anomalous bytes at file-relative `0x6b98`; the AVP trace demonstrates a bad, unsatisfied handoff when the raw payload is directly loaded.
+
+Keep two independent hypotheses: (a) QNX-header lookalike inside a transformed FPK1 blob, or (b) a real QNX header with vendor-specific packing/relocation. Neither is established by a magic match alone. Do not patch header bytes or claim a working IFS until an original loader/format specification confirms its representation. Primary next step: inspect image/container layout and recovery's first 0x1000 bytes, compare byte statistics and aligned prefixes, and test whether candidate lengths/addresses can be independently justified. Source definition: https://qnx.com/developers/docs/6.4.0/neutrino/building/load_process.html

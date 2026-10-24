@@ -741,3 +741,38 @@ Added `tools/fpk1/classify_stage1_unknown_regions.py` to classify those gaps by 
 User ran `classify_stage1_unknown_regions.py`. Significant meaningful strings occur in previously unexplained regions: after ELF +0xf834: `NAME=libcam.so`, `DESCRIPTION=Generic CAM library`, date 2015/10/07, `STATE=stable`; after +0x131964: `NAME=deva-nvaudio`, 2017-09-25 build metadata; after +0x1723d3: `NAME=devc-ser8250-tegra2`, `DESCRIPTION=Character device driver for the 8250 chipset`; after +0x1217a8: `NAME=i2c-tegra2`, `DESCRIPTION=Tegra2 I2C Driver`. Other regions feature flash symbols (`initialize_flash_dma`, `init_flash_params`) and mount messages. These findings indicate some supposed gaps contain ELF text, build metadata or data beyond the PHDR-derived minimum extent. The NAME strings are concrete, but ownership of a specific preceding ELF remains a proximity hypothesis until validated using section and filename metadata.
 
 Added `tools/fpk1/index_stage1_qnx_build_metadata.py` to scan all decoded bytes for QNX NAME/DESCRIPTION/DATE/STATE/HOST/USER metadata and report proximity to the preceding ELF, plus candidates for names. This does not claim filesystem catalog recovery. User should execute locally and inspect all 24 mappings.
+
+## Stage1 decoded QNX build-name inventory (user-verified strings)
+
+User ran `index_stage1_qnx_build_metadata.py`: 148 build metadata records, 23 of 24 strict ARM ELF candidates have a proximal `NAME=` field. Mapping is **proximity-based**; do not report the names as authenticated imagefs catalog file paths or as proven ELF ownership.
+
+| Decoded ELF offset | Proximal NAME= |
+| --- | --- |
+| 0x1834 | libnvnordma.so |
+| 0x5834 | libnvmnand.so |
+| 0xf834 | libcam.so |
+| 0x6421a | cam-disk.so |
+| 0x88843 | tinit |
+| 0xaca81 | mount |
+| 0xb1b8e | slogger |
+| 0xb5b8e | pipe |
+| 0xbbb8e | ksh |
+| 0xf54a0 | devg-nvbootprofiler |
+| 0xf94a0 | bootprofiler |
+| 0x10569b | nvmemctrl |
+| 0x10869b | devg-nvsku |
+| 0x10c69b | devg-nvos |
+| 0x11069b | devg-nvrm |
+| 0x1137a8 | devg-nvgpio |
+| 0x1187a8 | devg-nvclock |
+| 0x11f7a8 | (no NAME= found) |
+| 0x1217a8 | i2c-tegra2 |
+| 0x131964 | deva-nvaudio |
+| 0x1723d3 | devc-ser8250-tegra2 |
+| 0x1854f3 | i2s_init |
+| 0x1884f3 | display_init |
+| 0x18b4f3 | clock_init |
+
+Multiple DESCRIPTION strings occur in proximity windows: e.g. `libcam.so` also sees "Generic filesystem support library"; `cam-disk.so` also sees "QNX6 filesystem library"; `tinit` also sees "Process crash dump file creation daemon"; `deva-nvaudio` also sees "mmc/sd disk driver". These additional DESCRIPTION strings **must not** be attributed to the closest NAME without establishing metadata-record boundaries. They imply additional components/build records or metadata bleed across multiple objects.
+
+Next priority: parse bounded build-record clusters anchored at NAME= and stop at the next NAME= or ELF start, report unassociated records separately, and correlate with validated SONAME/DT_NEEDED without inferring QNX imagefs names.

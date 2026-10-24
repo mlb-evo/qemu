@@ -15,7 +15,7 @@ class IdentifyELFTests(unittest.TestCase):
         struct.pack_into("<IIIIIIII", data, 52, 1, 0, 0x1000, 0, 1024, 1024, 5, 4)
         struct.pack_into("<IIIIIIII", data, 84, 2, 0x180, 0x1180, 0, 48, 48, 4, 4)
         struct.pack_into("<IIIIIIII", data, 116, 3, 0x280, 0x1280, 0, 16, 16, 4, 1)
-        entries = [(5,0x1200),(10,64),(1,1),(14,13),(0,0)]
+        entries = [(5,0x1200),(10,64),(1,1),(14,11),(0,0)]
         for i,(tag,value) in enumerate(entries):
             struct.pack_into("<II",data,0x180+8*i,tag,value)
         data[0x200:0x200+32] = b"\0libc.so.3\0libsample.so\0" + b"\0"*8

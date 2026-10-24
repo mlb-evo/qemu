@@ -23,7 +23,7 @@ def inspect(data):
     declared=struct.unpack_from("<I",data)[0]
     result={"size":len(data),"length_field":declared,
             "qnx_magic_0x808":data[0x808:0x80c].hex(),
-            "imagefs_marker_offsets":[hex(i) for i in range(len(data)) if False],
+            "imagefs_marker_offsets":[],
             "windows":[],"block_summaries":{}}
     for at in WINDOWS:
         if at>=len(data):continue

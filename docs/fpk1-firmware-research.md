@@ -109,3 +109,16 @@ The embedded Stage2.2 `imagefs\\x04` header reports logical size `0x01bb5e34`, w
 Reproduce with `python3 tools/fpk1/probe_stage2_regions.py /path/to/update.zip --json results.json`; the new script records sample offsets, entropy, common bytes and SHA-256 so hypotheses can be compared against future firmware builds.
 
 **Next actionable target:** correlate directory data offsets with stored-byte extents; search for block-index metadata using verified record boundaries before attempting LZO1Z. Revisit Stage1 QNX startup for boot viability in parallel.
+
+## Audit of the actual MHI2 firmware preparation pipeline
+
+The repository's `tools/mhi2/build_firmware.py` is only a shim into `build_audi.py`; `build_audi.py` validates one of the supported MHI2 trains, invokes `prepare.py` with a captured NOR/IRAM/eMMC bootstrap, calls `extract_main_ifs.py` on `MMX2/mifs-stage2/70/default/mifs-stage2.img`, and then calls `prepare_ui.py`. This is an **MHI2 variant-70 workflow**, not a generic loader for arbitrary HSP-wrapped FPK1 update archives.
+
+Two **distinct** compression schemes exist in the MHI2 scripts:
+
+1. `extract_main_ifs.py`: main IFS starts `LZOZ`, block size at +4, compressed-length table at +8..+0x7ff, compressed blocks at +0x800 aligned to 512 bytes; uses LZO1Z.
+2. `prepare_ui.py`: kernel partition has a fixed `0x800`-byte image header and a **zlib** stream at `+0x800`. The decoded image contains QNX startup/imagefs. This path must not be confused with the LZOZ main IFS.
+
+Comparison of the original FPK1 `stage1_ifs.img`, `stage1_RECOVERY_ifs.img`, and `stage2_ifs.img` after stripping the *candidate* `0xc2` HSP prefix found **neither the `LZOZ` nor `ANDROID!` marker** in these three payloads. Probes for both zlib-wrapped and raw deflate streams at payload offsets `0`, `0x800`, `0x808`, `0x880`, `0x8a0`, `0x1000` did not yield a viable output >100 bytes in the first 128 KiB. These are bounded negative results, **not** proof that the images do not contain any deflate-compressed blocks.
+
+Reproduce: `python3 tools/fpk1/compare_mhi2_wrappers.py /path/to/FPK1-update.zip --json report.json`. The next useful work is to identify FPK1's block layout from the contained imagefs and partition metadata rather than assume the MHI2 wrapper. Existing imagefs parsing logic **is directly reusable once logical bytes can be reconstructed**.

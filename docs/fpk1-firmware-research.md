@@ -661,3 +661,9 @@ User output: HSP member 0x1f70c2 bytes; inner payload 0x1f7000 bytes, matching t
 User observed initial header: inner +0x0 = 0x1f656c, +0x4 = 0x00a00800, +0x1c = 0x800, +0x258 = 2, +0x3f8 = 0xe8. Nonzero entries around +0x7f4..+0x7fc need contextual analysis. ASCII arguments at +0x38 include a serial-console parameter. Inner +0x800 starts with 0cc08fe2 00f09ce5, ARM little-endian boot stub, immediately followed by the familiar QNX-related signature eb7eff00. These observations corroborate the +0x800 transition to code, not to the first LZF token or necessarily to the entire QNX startup header.
 
 Added `tools/fpk1/inspect_stage1_startup_region.py` to report early ARM words in a user-configurable window and exact occurrence offsets for QNX markers. This is a preparatory raw-evidence step; true compression framing and IFS catalog remain unverified.
+
+## Stage1 ARM stub direct branch interpretation
+
+User-local startup probe shows inner +0x800 LE word 0xe28fc00c (ARM ADD ip, pc, #12), +0x804 0xe59cf000 (LDR pc, [ip]), and +0x814 0x80a06b98. Under ARM-state PC+8 semantics, the first instruction takes ip = instruction_address(+0x800)+8+12 = +0x814 and the second loads PC from that literal word. Thus 0x80a06b98 is a candidate physical/virtual branch target **provided the stub is executed in ARM state at its intended mapping**. +0x81c is 0x80a00808, plausibly an address relationship to the startup header at inner +0x808, but a mapping is not yet validated. qnx_magic +0x808, startup-nvidia-tegra3-mm at +0x109de, imagefs strings at +0xe530 and +0x10bdd. Do not conflate magic-string occurrences with validated file catalog offsets.
+
+Added `tools/fpk1/inspect_stage1_arm_entry.py` to calculate target and test explicit candidate memory bases against image offsets. Its candidates are hypotheses, not boot configuration.

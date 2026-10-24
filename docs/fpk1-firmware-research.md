@@ -160,3 +160,11 @@ The first 0x78 bytes of FPK1 Quickboot contain four ARM `BL` instructions with *
 A cross-file scan of all `.img` and `.bin` members in the supplied archive found little-endian 32-bit literal values `0x8401891c`, `0x84068088` and `0x84068083` **only within the two Quickboot files** (which have identical payloads), not in the other update images. That limits simple literal-matching as a method of identifying the linked companion binary; it does not rule out other representations, compiled code, or files absent from the update.
 
 Reproduce using `python3 tools/fpk1/audit_quickboot_linkage.py /path/to/update.zip --json results.json`. **Do not** set the Tegra AVP PC to this blob's first instruction until its actual loading context is understood. Next priority: identify the installed Quickboot memory position and dependency in FPK1 firmware/update metadata or on-device dumps; in parallel resolve the Stage1 ARM startup header/boot script.
+
+## Stage1 candidate validated against QNX 6.5 startup_header definition
+
+Used the field order and exact 256-byte `struct startup_header` described in QNX 6.5 *Building Embedded Systems*, rather than offset guesses (https://qnx.com/developers/docs/6.4.0/neutrino/building/load_process.html and https://www.qnx.com/developers/docs/6.5.0SP1.update/index.html). At payload offset `0x808`: signature `0x00ff7eeb`, version `0x2001`, flags1 `1`, flags2 `8`, header_size `0x100`, machine `0x28` (ARM), startup_vaddr `0x80a06b98`, image_paddr `0x80a00808`. These are plausible *candidate* metadata.
+
+**However**, the same layout yields `startup_size=0x400001a1` and `stored_size=0x04004007`; both exceed the ~2-MB stored Stage1 payload, and startup_size > stored_size. This contradicts the QNX startup-header invariants. Do not assume `0x80a06b98` is an operational entry address, and do not feed this candidate directly into QEMU. Potential explanations (not established): modified header, false-positive embedded signature, or additional transformation/relocation.
+
+Reproduce using `python3 tools/fpk1/validate_stage1_startup_header.py /path/to/FPK1-update.zip --json stage1-header.json`. Immediate next check: compare the 256-byte header against QNX `dumpifs` on native equipment or BSP code, and inspect image start/base semantics before any boot attempt.

@@ -152,3 +152,11 @@ File-relative branches in the first 0x78 bytes: `0x1c -> 0x50`, `0x20 -> -0x54bf
 The literal pool contains addresses in the Tegra DRAM range used by the MHI2 machine (`0x80000000` and above), but this is **not** evidence that the exact MHI2 layout or the `0x480e0000` AVP reset PC applies to FPK1. The primary and recovery payloads are identical in the researched update. Reproduce with `python3 tools/fpk1/probe_quickboot_arm.py /path/to/update.zip --json /tmp/qb-arm.json`.
 
 **Next step**: determine if the Quickboot blob is a component intended to be linked/copied into an existing larger loader using FPK1 update metadata or if it has a nonzero load bias. To get first boot, investigate Stage1 startup and AVP handoff before trying to jump to the first instruction of this Quickboot blob.
+
+## Quickboot linkage cross-file verification
+
+The first 0x78 bytes of FPK1 Quickboot contain four ARM `BL` instructions with **negative file-relative targets** (in addition to internal control flow): `0x20 -> -0x54bf8`, `0x28 -> -0x56708`, `0x44 -> -0x54bf8`, `0x4c -> -0x56708`. These are approximately 340–354 KiB before the start of the payload, whereas the payload itself is only 100,611 bytes. This makes standalone execution beginning at file offset zero unsafe to assume: the code expects linked routines outside the provided payload, or a more complex load/relocation arrangement. No load base or valid execution entry has been established.
+
+A cross-file scan of all `.img` and `.bin` members in the supplied archive found little-endian 32-bit literal values `0x8401891c`, `0x84068088` and `0x84068083` **only within the two Quickboot files** (which have identical payloads), not in the other update images. That limits simple literal-matching as a method of identifying the linked companion binary; it does not rule out other representations, compiled code, or files absent from the update.
+
+Reproduce using `python3 tools/fpk1/audit_quickboot_linkage.py /path/to/update.zip --json results.json`. **Do not** set the Tegra AVP PC to this blob's first instruction until its actual loading context is understood. Next priority: identify the installed Quickboot memory position and dependency in FPK1 firmware/update metadata or on-device dumps; in parallel resolve the Stage1 ARM startup header/boot script.

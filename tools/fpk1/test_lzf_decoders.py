@@ -32,6 +32,12 @@ class LZFTests(unittest.TestCase):
     def test_nonoverlap_reference(self):
         # 'ABCD' then copy previous four at distance four
         self.check(b"\x03ABCD\x40\x03",b"ABCDABCD")
+    def test_nonoverlap_shorter_than_distance(self):
+        # Five literal bytes, then copy three from five bytes back.
+        self.check(b"\x04ABCDE\x20\x04",b"ABCDEABC")
+    def test_equal_distance_and_length_three(self):
+        self.check(b"\x02ABC\x20\x02",b"ABCABC")
+
     def test_overlap_reference(self):
         # 'AB', then copy six at distance two
         self.check(b"\x01AB\x80\x01",b"ABABABAB")

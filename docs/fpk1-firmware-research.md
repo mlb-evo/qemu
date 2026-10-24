@@ -221,3 +221,11 @@ A user's independent scan of the original update yields two candidate HSP-stripp
 - Entropy of Primary 4-KiB windows at payload +`0x800`, +`0x1000`, +`0x2000` = 6.582, 6.699, 6.720 bits/byte, while Recovery reports 7.913, 7.920, 7.913 bits/byte. Recovery may be compressed or encrypted; this does **not** distinguish those hypotheses.
 
 New `tools/fpk1/compare_stage1_containers.py` compares first 0x800 bytes excluding the length field, finds the first other difference, measures short-region entropy, and reports raw length-field residuals. Running it on the same archive will determine exactly how much of the apparent header is shared. Do not interpret the QNX magic in the primary as a sufficient demonstration of a valid unpacked bootable IFS.
+
+## Stage1 control-field differences (user-verified byte diff)
+
+Primary and recovery unwrapped headers differ at exactly 17 byte positions in `[0x04,0x800)`: `0x258` is a 32-bit little-endian field with values **2** vs **1**; `0x25c..0x25f` holds `0x9ca5b5ee` vs `0x8953d25f`; `0x7f4..0x7ff` is a distinct **12-byte** field per image. All earlier header fields match. Payload begins at `0x800` in both; primary starts with QNX ARM stub, recovery starts with high-entropy data.
+
+Both files end in the identical eight-byte sequence `68 65 50 0e 01 00 00 00`, preceded by zero padding. This is a potential footer marker, **not yet a decoded record**. Payload byte-counts exceed the little-endian field at +0 by `0xa94` (primary) and `0xdd1` (recovery); neither proves the field's purpose or an exact payload boundary.
+
+The proximity of mode-like u32 `0x258`, another u32 `0x25c`, and 12 bytes just before the payload suggests a common structured update container. **Do not label those bytes encryption nonce, HMAC, IV or CRC until validated.** Read-only `tools/fpk1/probe_stage1_integrity.py` tests several standard CRC32 / Adler32 ranges against the u32 field and reports footer/zero-padding characteristics for both images.

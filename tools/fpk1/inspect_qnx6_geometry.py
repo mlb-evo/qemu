@@ -33,16 +33,16 @@ def root(b,off):
 def check(buf,offset):
     b=buf[offset:offset+512]
     if len(b)!=512 or struct.unpack_from("<I",b)[0]!=MAGIC:return {"error":"bad magic"}
-    blocksize,ninodes,freeinodes,nblocks,freeblocks,allocgroup=struct.unpack_from("<6I",b,0x2c)
+    blocksize,ninodes,freeinodes,nblocks,freeblocks,allocgroup=struct.unpack_from("<6I",b,0x30)
     base=0x3000
-    second=base+blocksize*nblocks
-    roots={name:root(b,0x44+80*i) for i,name in enumerate(("inode","bitmap","longfile","unknown"))}
+    second=base+blocksize*nblocks if blocksize in (512,1024,2048,4096) else len(buf)
+    roots={name:root(b,0x48+80*i) for i,name in enumerate(("inode","bitmap","longfile","unknown"))}
     return {"offset":hex(offset),"crc_valid":struct.unpack_from("<I",b,4)[0]==crc32_be(b[8:]),
             "serial":struct.unpack_from("<Q",b,8)[0],"blocksize":blocksize,
             "num_inodes":ninodes,"free_inodes":freeinodes,
             "num_blocks":nblocks,"free_blocks":freeblocks,"allocgroup":allocgroup,
             "data_block_zero":hex(base),"predicted_secondary_superblock":hex(second),
-            "predicted_secondary_in_bounds":second+512<=len(buf),
+            "predicted_secondary_in_bounds":blocksize in (512,1024,2048,4096) and second+512<=len(buf),
             "roots":roots}
 def main():
     p=argparse.ArgumentParser()

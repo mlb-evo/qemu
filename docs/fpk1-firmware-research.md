@@ -667,3 +667,9 @@ Added `tools/fpk1/inspect_stage1_startup_region.py` to report early ARM words in
 User-local startup probe shows inner +0x800 LE word 0xe28fc00c (ARM ADD ip, pc, #12), +0x804 0xe59cf000 (LDR pc, [ip]), and +0x814 0x80a06b98. Under ARM-state PC+8 semantics, the first instruction takes ip = instruction_address(+0x800)+8+12 = +0x814 and the second loads PC from that literal word. Thus 0x80a06b98 is a candidate physical/virtual branch target **provided the stub is executed in ARM state at its intended mapping**. +0x81c is 0x80a00808, plausibly an address relationship to the startup header at inner +0x808, but a mapping is not yet validated. qnx_magic +0x808, startup-nvidia-tegra3-mm at +0x109de, imagefs strings at +0xe530 and +0x10bdd. Do not conflate magic-string occurrences with validated file catalog offsets.
 
 Added `tools/fpk1/inspect_stage1_arm_entry.py` to calculate target and test explicit candidate memory bases against image offsets. Its candidates are hypotheses, not boot configuration.
+
+## Stage1 candidate load base inferred from startup pointer
+
+User provided Stage1 ARM stub pointer at inner +0x814 = 0x80a06b98 and QNX-related header pointer at +0x81c = 0x80a00808. Since the QNX magic is at inner +0x808, the latter exactly matches an image loaded at base 0x80a00000. Under that mapping the ARM stub at +0x800 becomes 0x80a00800 and its literal branch target corresponds to inner +0x6b98. This is a coherent placement hypothesis; neither actual execution, memory controller setup, nor QEMU feasibility are yet established.
+
+Added `tools/fpk1/inspect_stage1_entry_code.py` to report bytes and raw words around this target and optionally disassemble them as ARM little-endian if Capstone is installed. This is read-only and does not export firmware. The direct entry-point bytes should be evaluated before treating the hypothesized mapping as proven.

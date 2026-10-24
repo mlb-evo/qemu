@@ -501,3 +501,22 @@ Added `tools/fpk1/probe_stage1_lzf_local.py` to test token grammar from known re
 User ran `probe_stage1_lzf_local.py`: of 56 repeated-triplet starts, 31 produce decoded `7fELF` magic and 9 produce initially plausible ELF32 little-endian ARM headers (machine=40, version=1, ELF header size=52). Seven particularly useful candidates decode without local backreference error: `0xf1bbb`, `0x112367`, `0x131913`, `0x164d17`, `0x18da01`, `0x19421c`, `0x1c14f8`. Two others (`0x1765ee`, `0x18b4e0`) do produce plausible header fields but the longer local stream later hits a bad backreference.
 
 This substantially strengthens the LZF identification beyond control-token matching; it does **not** yet establish a true stream start, a decompressed filesystem or a complete ELF file, because the local decoder starts with a synthetic one-byte zero history. Added `tools/fpk1/validate_stage1_lzf_elf_segments.py`, which checks decoded ELF program headers (PHDR alignment, type and size, PT_LOAD existence, and available byte extents) within the bounded seed-decoded output. A missing segment due to hitting the bound is inconclusive, not disproof. Use results to prioritize finding actual framing.
+
+## Stage1 LZF decoded ELF program-header validation (user result)
+
+User executed `validate_stage1_lzf_elf_segments.py` against original firmware. Results: **8** decoded ELF candidates have structurally valid ELF32 ARM program headers; **all 8 have two PT_LOAD segments**; **2** have all reported segment file ranges inside the bounded locally decoded buffer. Candidates:
+
+| Original primary candidate-inner start | PHDR valid | PT_LOAD | All PHDR file extents locally present | Local decode error |
+| --- | --- | ---: | --- | --- |
+| 0xf1bbb | yes | 2 | no | none |
+| 0x112367 | yes | 2 | no | none |
+| 0x131913 | yes | 2 | yes | none |
+| 0x164d17 | yes | 2 | no | none |
+| 0x18b4e0 | yes | 2 | no | invalid backreference |
+| 0x18da01 | yes | 2 | yes | none |
+| 0x19421c | yes | 2 | no | none |
+| 0x1c14f8 | yes | 2 | no | none |
+
+This is strong evidence for LZF-compatible **local** encoding. However `all_file_extents_available` covers the segment entries parsed within the bounded seeded decode, not an independent proof of ELF integrity, complete source-file extents, hashes or a valid Stage1 imagefs. A run can begin within a larger compressed stream, and the decoder deliberately inserts a synthetic initial zero byte. **Do not claim an executable has been faithfully recovered or boot original QNX from these bytes yet.**
+
+Next: identify true compressed stream or chunk boundary from container metadata, eliminate synthetic history, then validate ELF program-header contents and file integrity; in parallel revisit the encoded Stage1 `imagefs` catalog. No proprietary bytes committed.

@@ -8,6 +8,7 @@
 #include "qemu/osdep.h"
 #include "qemu/units.h"
 #include "qemu/error-report.h"
+#include "qemu/cutils.h"
 #include "qapi/error.h"
 #include "hw/core/boards.h"
 #include "hw/arm/tegra30.h"

@@ -41,9 +41,10 @@ def analyze(raw):
         "declared_region_start": "0x800",
         "declared_region_end_exclusive":hex(declared_end),
         "footer_start":hex(footer_start),
-        "footer_in_declared_region":declared_end==footer_start,
-        "declared_region_followed_by_zero_padding_and_footer":
-            declared_end==footer_start-padding,
+        "declared_end_offset_from_zero_padding_start":
+            declared_end-(footer_start-padding),
+        "declared_end_offset_from_footer_start":
+            declared_end-footer_start,
         "declared_size_matches_payload_minus_header_padding":
             declared==len(d)-0x800-padding,
         "declared_size_matches_payload_minus_header_padding_footer":

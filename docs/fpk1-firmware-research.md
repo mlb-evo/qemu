@@ -408,3 +408,16 @@ Added `tools/fpk1/inspect_boot_reference_context.py` for strictly bounded hex + 
 User-run `inspect_boot_reference_context.py` inspected Stage1 candidate-inner offsets around `0x794e0` and `0x79542`. Nearby ASCII-like runs include `ksh` at `0x794d7`, `mount_nand` at `0x794e0`, `waitfor_eso` at `0x79515`, `PATH=` at `0x79534`, `:/stage3` at `0x79542`, `IPL_CONFIG_DIR=/config` at `0x79558`, and `kdgui_2dmgr` at `0x795c1`. However hex shows extensive interleaved non-printable bytes and near-word fragments such as `mount_nand 2e 20 16 61 43 60`; the area is **not directly readable shell script**. Do not reconstruct a `mount_nand /stage3` command from string proximity. It may be compressed, tokenized, or binary application data: codec and interpretation unknown.
 
 NEXT: identify encoding/block boundaries and map offsets into candidate Stage1 QNX imagefs file spans before assigning these bytes to startup script or loader. Repeat offset conventions: candidate inner = signed FLASHDATA+8 = HSP raw+0xc2. Direct analysis of a byte string is not proof of control flow.
+
+## Stage1 imagefs catalog mapping probe
+
+Added `tools/fpk1/map_stage1_imagefs_references.py` to search the unwrapped primary Stage1 IFS for exact `imagefs\\x04` headers. It validates candidate logical and directory offsets, 16-bit aligned record lengths, file type and name fields, file extents and the terminating entry, using the existing QNX imagefs layout. Only **validated** catalogs are used to assign the observed `ksh`, `mount_nand`, `waitfor_eso`, `:/stage3`, `IPL_CONFIG_DIR=/config` and `kdgui_2dmgr` offsets to a particular file extent or directory region.
+
+**Not yet tested against the original ZIP**. If no valid catalogs are found, that is a bounded negative result, not proof of a specific compression scheme. Earlier Stage1 candidate `imagefs` string at about `0xe530` lacked independent proof it was a valid filesystem header. If an identified regular-file extent extends past the stored bytes, the mapping is metadata-only and the file cannot simply be extracted as contiguous bytes.
+
+Run:
+```sh
+cd /Users/pavelk/workspace/other/qemu-mhi2
+git pull --ff-only
+python3 tools/fpk1/map_stage1_imagefs_references.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-imagefs-mapping.json
+```

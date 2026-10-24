@@ -609,3 +609,15 @@ Reproduce fixture suite:
 python3 -m unittest discover -s tools/fpk1 -p 'test_lzf_decoders.py' -v
 ```
 Then rerun `validate_stage1_unseeded_lzf.py` on original archive. Tests and reruns not yet confirmed on the user's Mac after this change.
+
+## Corrected LZF decoder yields structurally valid Stage1 ARM ELF segments
+
+After the nonoverlap/equal-distance backreference slicing fix, user reran `validate_stage1_unseeded_lzf.py`. **Major positive result**:
+- unseeded starts `0x1318fc`, `0x131910`, `0x131911`: decoded 1,638,062 / 1,638,043 / 1,638,042 bytes; 30 preliminary ELF candidates each, **24 strict-valid** each;
+- `0x18d9fe`, `0x18d9ff`: 912,204 / 912,203 decoded; 21 candidate, **18 strict-valid**;
+- `0x194216`: 858,160 decoded; 18 candidate, **15 strict-valid**;
+- `0x1c14f5`, `0x1c14f6`: 515,896 / 515,895 decoded; 10 candidate, **9 strict-valid**.
+
+These sets overlap in compressed-source coordinates and are NOT 24+18+15+9 unique files. They demonstrate genuine, repeatable LZF decoding of many structural ARM ELF headers and PHDR extents; previous corrupted-PHDR reports arose at least in substantial part from the decoder's negative-index slicing bug.
+
+All starts still terminate with `truncated literal` at physical candidate-inner EOF, so neither actual compressed stream boundary nor complete unwrapped imagefs has been established. Next prioritize mapping the reconstructed stream to logical imagefs metadata/file names and finding the original chunk/stream start, with bounded data checks and no proprietary binary commits. The Stage1 QNX startup header's standard-layout mismatch also remains unresolved; do not infer boot entry or image base from those invalid size fields.

@@ -597,3 +597,15 @@ Run from the repository root:
 python3 -m unittest discover -s tools/fpk1 -p 'test_lzf_decoders.py' -v
 ```
 If fixtures pass but strict ELF checks stay zero, prioritize the encoded-data framing, possible dictionary reset/data chunk boundaries or outer container interpretation over adjusting the ELF validator to accept invalid PHDRs.
+
+## LZF decoder bug exposed by firmware-free regression test
+
+User ran the 10 synthetic `test_lzf_decoders.py` fixtures on macOS: nine passed, but `test_nonoverlap_reference` failed: encoded `03 41 42 43 44 40 03` should decode `ABCDABCD` and incorrectly returned `ABCD`. Root cause in **both** decoders: the optimized case `distance >= length` used `out[-distance:-distance+n]`; when `distance==length`, this is `out[-4:0]` (empty), and some unequal cases truncate as well due to Python's negative/zero slicing semantics.
+
+Fixed the two implementations (`probe_stage1_lzf.py` and `validate_stage1_unseeded_lzf.py`) to slice from an explicit positive index `len(out)-distance` to `len(out)-distance+n`, and added regression fixtures for `distance>length` and `distance==length`. The previous Stage1 LZF decoded ELF counts, segment validity findings, and compression-to-EOF sizes **must be recomputed** after this decoder correction: decoded offsets may have shifted and bytes may be missing from earlier outputs. Do not rely on the previous 'all strict ELF invalid' verdict as final until rerun.
+
+Reproduce fixture suite:
+```sh
+python3 -m unittest discover -s tools/fpk1 -p 'test_lzf_decoders.py' -v
+```
+Then rerun `validate_stage1_unseeded_lzf.py` on original archive. Tests and reruns not yet confirmed on the user's Mac after this change.

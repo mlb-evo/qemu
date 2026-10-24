@@ -645,3 +645,9 @@ The lack of decoded imagefs text in an LZF *suffix* says nothing conclusive abou
 ## Stage1 LZF end boundary traced consistently
 
 User ran `trace_stage1_lzf_tail.py` on original image. Four suffix decodings from `0x1318fc`, `0x18d9fe`, `0x194216`, `0x1c14f5` agree: last complete token ends at `0x1f6ffb`, next token begins at `0x1f6ffb` with control `0x0e` (15 literal bytes required), and EOF is `0x1f7000`. Last nonzero byte is `0x1f6ffc`. The four sources share their later compressed suffix, so this agreement confirms decoder convergence, *not* independent framing evidence. A candidate encoded block endpoint is `0x1f6ffb`, leaving five bytes `[0x1f6ffb:0x1f7000]`; contents/meaning are still unverified. An explicit bounded decoder test against `0x1f6ffb` and header-length cross-check are next.
+
+## Explicit-end Stage1 LZF check confirms clean suffix (original user run)
+
+User ran `check_stage1_lzf_endpoint.py` on the primary Stage1 member. Candidate-inner length `0x1f7000`, bounded suffix end `0x1f6ffb`, trailer five bytes `0e01000000`. Empty-history decoding from four candidate starts terminates exactly at `0x1f6ffb` with `error=null`: 24/30 strict/shallow ELF matches at start `0x1318fc`, 18/21 from `0x18d9fe`, 15/18 from `0x194216`, 9/10 from `0x1c14f5`. The shared suffixes are overlapping, not disjoint. Inner first LE word `0x1f656c` differs from physical size `0x1f7000` by `0xa94`. The trailer's trailing four bytes read as LE 1, but this is an unverified interpretation. **A clean decode to a chosen endpoint confirms an LZF token boundary, not the original compression framing or IFS layout.** Decoded imagefs marker remains absent in this suffix.
+
+Added `tools/fpk1/inspect_stage1_length_fields.py` to expose the full HSP wrapper prefix, first inner 256 bytes, trailing 64 bytes, and correlations of selected size values with early header words. Header bytes are user-local only; do not commit the proprietary payload.

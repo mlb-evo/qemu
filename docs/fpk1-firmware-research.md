@@ -655,3 +655,9 @@ Added `tools/fpk1/inspect_stage1_length_fields.py` to expose the full HSP wrappe
 ## Stage1 size correlation
 
 User output: HSP member 0x1f70c2 bytes; inner payload 0x1f7000 bytes, matching two HSP length words at raw offsets 0x10 and 0x14. Inner first word 0x1f656c differs by 0xa94 bytes. Clean LZF suffix token boundary is 0x1f6ffb, followed by 0e01000000. Meaning of that trailer and first word remain unverified. Early inner header contains boot arguments with serial console configuration. Prioritize decoding header layout and true LZF block framing.
+
+## Stage1 early boot header and ARM startup inspection
+
+User observed initial header: inner +0x0 = 0x1f656c, +0x4 = 0x00a00800, +0x1c = 0x800, +0x258 = 2, +0x3f8 = 0xe8. Nonzero entries around +0x7f4..+0x7fc need contextual analysis. ASCII arguments at +0x38 include a serial-console parameter. Inner +0x800 starts with 0cc08fe2 00f09ce5, ARM little-endian boot stub, immediately followed by the familiar QNX-related signature eb7eff00. These observations corroborate the +0x800 transition to code, not to the first LZF token or necessarily to the entire QNX startup header.
+
+Added `tools/fpk1/inspect_stage1_startup_region.py` to report early ARM words in a user-configurable window and exact occurrence offsets for QNX markers. This is a preparatory raw-evidence step; true compression framing and IFS catalog remain unverified.

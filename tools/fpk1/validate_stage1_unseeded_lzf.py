@@ -38,14 +38,14 @@ def scan_elf(buf):
     """Conservative ELF32 ARM check; validate PHDR semantics, not merely bounds."""
     out=[];at=0
     allowed={0,1,2,3,4,6,7,0x6474e550,0x6474e551,0x6474e552}
-    while (at:=buf.find(b"\\x7fELF",at))>=0:
+    while (at:=buf.find(b"\x7fELF",at))>=0:
         if at+52<=len(buf):
             ident=buf[at:at+16]
             typ,machine,version=struct.unpack_from("<HHI",buf,at+16)
             entry,phoff,shoff,flags=struct.unpack_from("<IIII",buf,at+24)
             ehsize,entsize,n,shentsize,shnum,shstrndx=struct.unpack_from("<HHHHHH",buf,at+40)
-            header_ok=(ident[:7]==b"\\x7fELF\\x01\\x01\\x01" and
-                ident[7:16]==b"\\x00"*9 and typ in (1,2,3) and machine==40 and version==1 and
+            header_ok=(ident[:7]==b"\x7fELF\x01\x01\x01" and
+                typ in (1,2,3) and machine==40 and version==1 and
                 ehsize==52 and entsize==32 and 0<n<=128 and phoff>=52 and
                 phoff+n*32<=len(buf)-at)
             if header_ok:
@@ -90,6 +90,7 @@ def main():
         rows.append({"start":hex(start),"encoded_end":hex(end),"encoded_consumed":end-start,
                      "decoded_size":len(buf),"decode_error":error,
                      "elf_valid_count":len(elfs),
+                     "elf_magic_count":buf.count(b"\x7fELF"),
                      "elf_with_complete_loads":sum(e["all_pt_load_present"] and e["all_pt_load_size_ok"] for e in elfs),
                      "strict_valid_elf_count":sum(e["strict_elf_valid"] for e in elfs),
                      "elfs":elfs[:12]})

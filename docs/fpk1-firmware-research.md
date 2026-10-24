@@ -270,3 +270,18 @@ User-run `inventory_hsp_payloads.py` on the actual FPK1 ZIP found **three** payl
 Other HSP-wrapped components have different layouts: Quickboot is ARM code at payload +0; app and stage3 have apparently high-entropy bytes at +0; `stage2_nand.img` has `u32@0=0xe8` and no common `0x00a00800` word. An earlier `length_relation=true` for `stage2_nand.img` was a **false positive from a too-weak inequality**, not evidence of this container family. The inventory tool now explicitly reports `ifs_container_candidate`, requiring the shared header word, bounded declared length, zero-fill from declared end to footer, and common footer.
 
 **Do not infer that mode 1 means recovery or encryption:** Stage2 uses mode 1 while normal Stage1 uses mode 2. Next investigation should prioritize how the update installer processes these three IFS members and how their inner bytes correspond to logical QNX structures.
+
+## Signed update metadata separates KSS compression from Stage1/Stage2 packaging
+
+Directly inspected the original Q7 2018 ZIP `*_SignInfo.xml` descriptors and their matching HSP-wrapped members. `START-BYTE-FLASHDATA=186` for the checked images, whereas the research scripts' current candidate payload begins at **0xc2 = 194**. The eight-byte difference must be explained before claiming exact externally signed data boundaries; the 0xc2 assumption is a *separate* inner-payload hypothesis.
+
+Update metadata:
+- `gss-stage1/.../stage1_ifs.img`, block 50: `COMPRESSED-SIZE=2060288`, `UNCOMPRESSED-SIZE=2060288`.
+- `gss-stage1-recovery/.../stage1_RECOVERY_ifs.img`, block 51: both `8742912`.
+- `gss-stage2/.../stage2_ifs.img`, block 52: both `23056384`.
+- `kss-application/.../KSSApplication.bin`, block 16: `599730` stored vs `1048564` unpacked.
+- `kss-flashdriver/.../KSSFlashDriver.bin`, block 1: `866` stored vs `1144` unpacked.
+
+Thus update **transport-level compression** is declared for KSS app and flashdriver but *not* for the three IFS members. This **does not** rule out compression/encryption internal to the Stage1/Stage2 containers. KSS flashdriver data at candidate payload +0 starts `01 50 b7 0c 04 bf...` and appears Thumb-like; KSS application data starts `01 00 00 01 08 f1...`. Neither is an ELF and neither contains the literal `imagefs` or `IFSPTTBL`; there is no evidence yet that these KSS files parse the IFS container or decode its mode field. They may be packed before execution.
+
+Added `tools/fpk1/inventory_signinfo.py` to independently verify all original SignInfo stored/unpacked sizes and external data-start offsets. The previous speculative proposal to look for raw IFS-parser literals in KSS must be revisited: first establish transport decompression of KSS or identify the relevant firmware updater in Stage2.

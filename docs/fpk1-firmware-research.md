@@ -633,3 +633,11 @@ git pull --ff-only
 python3 tools/fpk1/inspect_decoded_stage1_imagefs.py AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-decoded-imagefs.json
 ```
 Priority next: identify true stream framing and the missing leading portion of the compressed image before booting the decoded startup/ELF.
+
+## Decoded Stage1 suffix: no imagefs marker, EOF only four bytes after token error
+
+User ran `inspect_decoded_stage1_imagefs.py` from `0x1318fc`. Decoded size 1,638,062; 30 shallow ARM ELF candidates, 24 strict-valid; decoded `imagefs` text matches **zero**. Last consumed encoded position `0x1f6ffc` vs candidate inner length `0x1f7000`, four bytes remaining, failure `truncated literal`. Last consumed raw bytes: `...00006865500e`. This does not show where the failed token **begins**: `encoded_stop` is the pointer after reading its control byte. Do not assume `0x0e` is necessarily the failing control without tracing the token boundary. If it is, the decoder asks for fifteen literal bytes, but only four remain; physical EOF is not a verified end-of-stream marker.
+
+Added `tools/fpk1/trace_stage1_lzf_tail.py` to report exact failed-token start/control, last fully decoded token boundary, physical last nonzero byte, decoded output count, and nearby token boundaries from several valid candidate starts. The script traces lengths rather than allocating the entire decoded output and does not export firmware data. Run `python3 tools/fpk1/trace_stage1_lzf_tail.py <archive.zip> --json /tmp/fpk1-lzf-tail.json`.
+
+The lack of decoded imagefs text in an LZF *suffix* says nothing conclusive about imagefs in the missing earlier portion. The next stage remains true compression block start/end recovery.

@@ -36,9 +36,15 @@ def analyze(raw):
     footer=d[-8:]
     padding=len(d[:-8])-len(d[:-8].rstrip(b"\\x00"))
     declared_end=0x800+declared
+    significant_end=len(d[:-8].rstrip(b"\\x00"))
     footer_start=len(d)-8
     return {
         "declared_region_start": "0x800",
+        "significant_data_end_exclusive":hex(significant_end),
+        "declared_end_minus_significant_end":declared_end-significant_end,
+        "last_8_bytes_before_trailing_zeros":d[max(0,significant_end-8):significant_end].hex(),
+        "declared_last_8_bytes":d[declared_end-8:declared_end].hex(),
+        "declared_ends_in_eight_zeros":d[declared_end-8:declared_end]==bytes(8),
         "declared_region_end_exclusive":hex(declared_end),
         "footer_start":hex(footer_start),
         "declared_end_offset_from_zero_padding_start":

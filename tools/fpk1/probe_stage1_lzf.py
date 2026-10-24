@@ -33,7 +33,12 @@ def decode(src,limit=LIMIT):
             if distance>len(out):raise ValueError(f"backreference before stream start at {p:#x} distance {distance} out {len(out)}")
             if len(out)+n>limit:raise ValueError("output size limit")
             # LZF references may overlap, e.g. E0 FF 00 repeats previous byte.
-            for _ in range(n):out.append(out[-distance])
+            if distance==1:
+                out.extend(bytes([out[-1]])*n)
+            elif distance>=n:
+                out.extend(out[-distance:-distance+n])
+            else:
+                for _ in range(n):out.append(out[-distance])
     return bytes(out)
 
 def elf_candidates(data):
@@ -77,7 +82,7 @@ def main():
                             "decoded_first_32":decoded[:32].hex(),
                             "elf_magic_count":len(elfs),"valid_elf32_arm_count":sum(e["valid_elf32_arm"] for e in elfs),
                             "elf_examples":elfs[:12],
-                            "imagefs_magic_offsets":[hex(i) for i in range(len(decoded)) if False]})
+                            "imagefs_magic_offsets":[]})
             item=results[-1]
             for needle in (b"imagefs\x04",b"#imagefs"):
                 cursor=0

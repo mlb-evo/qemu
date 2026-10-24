@@ -293,3 +293,17 @@ For the original Stage1 Primary, `raw_length=2060482`, `START-BYTE-FLASHDATA=186
 **Migration caution:** keep historical research offsets explicitly labelled `candidate inner payload offsets (raw+0xc2)`. To match SignInfo, prepend the eight-byte leading marker and omit the eight-byte trailer. This changes logical lengths, padding interpretations, and the previous assertion that `u32@0` ends eight bytes into the zero run: previous analyses apply to an eight-byte-shifted representation and MUST NOT be promoted to validated format specifications. E.g., file offset `raw+0x8ca` is candidate-inner `0x808` but SignInfo FLASHDATA-relative `0x810`. The ARM stub remains at raw offset `0x8c2`, or candidate-inner `0x800`, but signed-data-relative `0x808`.
 
 The user-provided AVP trace remains a legitimate experiment on the **candidate inner image**, not proof that the update installer uses that inner representation without transformation. Prefer computing both offsets in future tools and never stripping the HSP header with an unexplained constant alone.
+
+## SignInfo full inventory: actual outer zlib candidates
+
+User-run `inventory_signinfo.py` confirmed each HSP member has **exactly 8 bytes after** its declared `START-BYTE-FLASHDATA=186` plus `COMPRESSED-SIZE`; those bytes are universally `6865500e01000000`. This is strong evidence for an external update-wrapper trailer, not an inner IFS footer.
+
+The members with declared transport compression are:
+- `app.img` (block 55): 1,577,543 stored → **209,715,200** uncompressed bytes; signed FLASHDATA begins `78 9c ec dd...` (zlib stream signature).
+- `stage3.img` (block 54): 7,335,155 stored → **209,715,200** bytes; begins `78 9c ec dd...`.
+- `KSSApplication.bin` (block 16): 599,730 stored → **1,048,564** bytes; begins `00 04 f0 1f e5...`, **not** zlib at byte 0.
+- `KSSFlashDriver.bin` (block 1): 866 stored → **1,144** bytes; begins `00 00 00 00 04 99...`, **not** zlib at byte 0.
+
+All three IFS entries (stage1 normal, stage1 recovery, stage2) have matching compressed/uncompressed sizes *in SignInfo*. That is no claim about internal IFS packing. A decisive next step is to decompress `app.img` and `stage3.img` directly from the **SignInfo-specified** byte ranges, checking stream EOF and exact output size, then identify the resulting image partition signatures. KSS will require its own compression/container interpretation.
+
+Added `tools/fpk1/probe_signinfo_zlib.py` for a read-only check of all members with declared compression (256 MiB per-image output cap). It reports only size, zlib EOF, unused bytes and prefix; it does not write proprietary decompressed data. No success result is asserted until it is run on the original archive.

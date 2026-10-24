@@ -421,3 +421,9 @@ cd /Users/pavelk/workspace/other/qemu-mhi2
 git pull --ff-only
 python3 tools/fpk1/map_stage1_imagefs_references.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-imagefs-mapping.json
 ```
+
+## Stage1 ordinary imagefs catalog probe: negative
+
+User executed `map_stage1_imagefs_references.py` against the signed Stage1 primary: **no validated imagefs catalog**. The single exact `imagefs\\x04`-style candidate was at candidate-inner offset `0x10bdd`, rejected for its directory offset; consequently boot references at `0x794d7`, `0x794e0`, `0x79515`, `0x79542`, `0x79558`, `0x795c1` remain unmapped. This invalidates the simple assumption that Stage1 can be parsed as a contiguous Stage2.2-style imagefs starting at that marker. It **does not** prove any specific compression or that QNX filesystem metadata is absent.
+
+Next probe `tools/fpk1/probe_stage1_qnx_headers.py` records bounded raw bytes and u32 values near Stage1's QNX startup signature and `imagefs` markers to identify actual wrapper/header layouts before writing another catalog parser. The candidate-inner offset system remains raw HSP +`0xc2`. No original image material committed.

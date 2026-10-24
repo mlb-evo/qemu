@@ -641,3 +641,7 @@ User ran `inspect_decoded_stage1_imagefs.py` from `0x1318fc`. Decoded size 1,638
 Added `tools/fpk1/trace_stage1_lzf_tail.py` to report exact failed-token start/control, last fully decoded token boundary, physical last nonzero byte, decoded output count, and nearby token boundaries from several valid candidate starts. The script traces lengths rather than allocating the entire decoded output and does not export firmware data. Run `python3 tools/fpk1/trace_stage1_lzf_tail.py <archive.zip> --json /tmp/fpk1-lzf-tail.json`.
 
 The lack of decoded imagefs text in an LZF *suffix* says nothing conclusive about imagefs in the missing earlier portion. The next stage remains true compression block start/end recovery.
+
+## Stage1 LZF end boundary traced consistently
+
+User ran `trace_stage1_lzf_tail.py` on original image. Four suffix decodings from `0x1318fc`, `0x18d9fe`, `0x194216`, `0x1c14f5` agree: last complete token ends at `0x1f6ffb`, next token begins at `0x1f6ffb` with control `0x0e` (15 literal bytes required), and EOF is `0x1f7000`. Last nonzero byte is `0x1f6ffc`. The four sources share their later compressed suffix, so this agreement confirms decoder convergence, *not* independent framing evidence. A candidate encoded block endpoint is `0x1f6ffb`, leaving five bytes `[0x1f6ffb:0x1f7000]`; contents/meaning are still unverified. An explicit bounded decoder test against `0x1f6ffb` and header-length cross-check are next.

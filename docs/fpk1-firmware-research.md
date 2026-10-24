@@ -262,3 +262,11 @@ Direct inspection across the update's HSP-wrapped `.img`/`.bin` entries establis
 - `qb_primary.img` begins with ARM instructions immediately after HSP; `app.img`, `stage3.img`, and others show diverse bytes at identical offsets. Applying `u32@0` or `mode@0x258` as universal HSP fields would be wrong.
 
 Added `tools/fpk1/inventory_hsp_payloads.py` to audit the format differences and the cross-image trailer without writing proprietary binaries. Follow-up: group only images that have verified common envelope features, inspect their respective metadata and staging algorithms, and avoid blind encryption claims.
+
+## Full HSP inventory: candidate IFS family vs other payloads
+
+User-run `inventory_hsp_payloads.py` on the actual FPK1 ZIP found **three** payloads sharing `u32le@0x04=0x00a00800`: Stage1 Primary (`mode@0x258=2`, size `0x1f656c`), Stage1 Recovery (`mode=1`, size `0x855a2f`), and Stage2 IFS (`mode=1`, size `0x15fc138`). For all three, the declared extent starts at `0x800`, ends before a zero-filled tail, and is followed by the shared eight-byte external footer. The common footer is an HSP packaging feature and alone is **not** sufficient to identify a filesystem.
+
+Other HSP-wrapped components have different layouts: Quickboot is ARM code at payload +0; app and stage3 have apparently high-entropy bytes at +0; `stage2_nand.img` has `u32@0=0xe8` and no common `0x00a00800` word. An earlier `length_relation=true` for `stage2_nand.img` was a **false positive from a too-weak inequality**, not evidence of this container family. The inventory tool now explicitly reports `ifs_container_candidate`, requiring the shared header word, bounded declared length, zero-fill from declared end to footer, and common footer.
+
+**Do not infer that mode 1 means recovery or encryption:** Stage2 uses mode 1 while normal Stage1 uses mode 2. Next investigation should prioritize how the update installer processes these three IFS members and how their inner bytes correspond to logical QNX structures.

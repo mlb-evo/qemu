@@ -252,3 +252,13 @@ Both HSP-stripped Stage1 variants satisfy an identical arithmetic relation, now 
 This reinforces that `u32@0` is a container-relative length covering the region beginning at `0x800`, including exactly 8 trailing zeros for both observed images; it does **not** include final flash padding or the 8-byte footer. It does not yet tell us the meaning of the nonzero 8-byte tail or whether either image is otherwise compressed/encrypted.
 
 `tools/fpk1/probe_stage1_integrity.py` now reports exact significant-data end and declared-region final eight bytes. The next reverse-engineering priority is correlating `u32@0` and the fixed footer with the real installer or HSP image writer, and discovering the Recovery-specific encoding indicated by the mode field `u32@0x258` (1 vs 2).
+
+## Cross-image control field evidence (original Q7 ZIP)
+
+Direct inspection across the update's HSP-wrapped `.img`/`.bin` entries establishes two important corrections:
+
+- The eight-byte trailer `68 65 50 0e 01 00 00 00` occurs **in the HSP-stripped representation of many different components**, including `qb_primary.img`, `qb_recovery.img`, `stage1_ifs.img`, `stage1_RECOVERY_ifs.img`, `stage2_ifs.img`, `stage2_nand.img`, `stage3.img`, `app.img` and the other HSP-wrapped binaries checked. It is **not specific to Stage1**. Its origin may be the signed update packaging itself rather than an IFS container terminator; no encoding definition is established.
+- `stage2_ifs.img` shares the candidate Stage1 envelope shape: LE word at payload +4 = `0x00a00800`, u32 at +`0x258` = **1**, and u32 at +`0x25c` = `0x6c920e6e`. Primary Stage1 has mode **2**, Recovery Stage1 mode **1**. Thus mode 1 is **not exclusive to recovery**. Stage2's 12 bytes at `0x7f4` terminate with `IFSPTTBL`, unlike Stage1. These fields are likely specific to an update-image envelope; do not classify 1/2 as encryption/cipher modes without an installer-side decode.
+- `qb_primary.img` begins with ARM instructions immediately after HSP; `app.img`, `stage3.img`, and others show diverse bytes at identical offsets. Applying `u32@0` or `mode@0x258` as universal HSP fields would be wrong.
+
+Added `tools/fpk1/inventory_hsp_payloads.py` to audit the format differences and the cross-image trailer without writing proprietary binaries. Follow-up: group only images that have verified common envelope features, inspect their respective metadata and staging algorithms, and avoid blind encryption claims.

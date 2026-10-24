@@ -621,3 +621,15 @@ After the nonoverlap/equal-distance backreference slicing fix, user reran `valid
 These sets overlap in compressed-source coordinates and are NOT 24+18+15+9 unique files. They demonstrate genuine, repeatable LZF decoding of many structural ARM ELF headers and PHDR extents; previous corrupted-PHDR reports arose at least in substantial part from the decoder's negative-index slicing bug.
 
 All starts still terminate with `truncated literal` at physical candidate-inner EOF, so neither actual compressed stream boundary nor complete unwrapped imagefs has been established. Next prioritize mapping the reconstructed stream to logical imagefs metadata/file names and finding the original chunk/stream start, with bounded data checks and no proprietary binary commits. The Stage1 QNX startup header's standard-layout mismatch also remains unresolved; do not infer boot entry or image base from those invalid size fields.
+
+## Inspect decoded Stage1 LZF suffix for imagefs records
+
+Added `tools/fpk1/inspect_decoded_stage1_imagefs.py`: decode in memory from a candidate Stage1 source offset (default `0x1318fc`, currently yielding 24 structurally validated ARM ELF candidates with the fixed decoder), search the **decoded** byte stream for `imagefs\\x04`, and apply QNX imagefs catalog constraints (header extents, 16-bit record boundaries, file names, regular-file extents, terminating record). It also reports compressed-source EOF/error and the number of strict ELF hits in that same decoded output. No proprietary binary is written. The script has **not yet been run against the original archive**, and presence/absence of the catalog in a suffix is not conclusive about the full logical Stage1 IFS.
+
+Run:
+```sh
+cd /Users/pavelk/workspace/other/qemu-mhi2
+git pull --ff-only
+python3 tools/fpk1/inspect_decoded_stage1_imagefs.py AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-decoded-imagefs.json
+```
+Priority next: identify true stream framing and the missing leading portion of the compressed image before booting the decoded startup/ELF.

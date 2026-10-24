@@ -673,3 +673,9 @@ Added `tools/fpk1/inspect_stage1_arm_entry.py` to calculate target and test expl
 User provided Stage1 ARM stub pointer at inner +0x814 = 0x80a06b98 and QNX-related header pointer at +0x81c = 0x80a00808. Since the QNX magic is at inner +0x808, the latter exactly matches an image loaded at base 0x80a00000. Under that mapping the ARM stub at +0x800 becomes 0x80a00800 and its literal branch target corresponds to inner +0x6b98. This is a coherent placement hypothesis; neither actual execution, memory controller setup, nor QEMU feasibility are yet established.
 
 Added `tools/fpk1/inspect_stage1_entry_code.py` to report bytes and raw words around this target and optionally disassemble them as ARM little-endian if Capstone is installed. This is read-only and does not export firmware. The direct entry-point bytes should be evaluated before treating the hypothesized mapping as proven.
+
+## Raw Stage1 entry mapping unresolved
+
+User confirms base-hypothesis arithmetic: 0x80a06b98 - 0x80a00000 = inner +0x6b98; header pointer 0x80a00808 matches the QNX signature at +0x808. However raw words at +0x6b98 start 0xdb400202, 0xfb21d72f, 0xe5674003, 0x021b20c7, which do not resemble a confident ARM startup entry sequence. It remains possible the target refers to a relocated/uncompressed logical image, or that the interpretation of stub/header is incomplete. Do not mark this as executable code or wire it as QEMU PC without a real disassembly and mapping proof.
+
+Added tools/fpk1/check_stage1_entry_mapping.py for cautious numeric ARM condition-code/branch-pattern comparisons between raw entry region and decoded suffix, explicitly noting that suffix offsets cannot be mapped directly to original offsets without container framing.

@@ -22,12 +22,10 @@ def analyze(raw):
         "payload_from_0x800":d[0x800:],
         "payload_0x800_to_declared":d[0x800:declared],
         "payload_0x800_to_eof_minus_8":d[0x800:-8],
-        "payload_from_0x800_to_last_nonzero":d[0x800:d.rfind(next((bytes([b]) for b in reversed(d) if b),b"\xff"))+1] if False else b"",
         "whole_payload":d,
         "header_0_to_0x7f4":d[:0x7f4],
         "header_0x4_to_0x7f4":d[4:0x7f4],
     }
-    del regions["payload_from_0x800_to_last_nonzero"]
     checks=[]
     for name,buf in regions.items():
         crc=zlib.crc32(buf)&0xffffffff

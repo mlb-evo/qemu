@@ -188,3 +188,18 @@ These facts establish a **possible design pattern** for FPK1: keep common Tegra3
 4. For diagnostics use CPU tracing and unimplemented-MMIO logs at the first validated handoff. A working `procnto` is the first boot milestone, not successful ARM execution alone.
 
 No execution of FPK1 firmware in QEMU has yet been demonstrated.
+
+## Live FPK1 Stage1 AVP trace and QNX header validation (Mac smoke test)
+
+User-built QEMU macOS `fpk1` diagnostic machine passed a meaningful instruction test: AVP CPU #5 executed a generated `mov r0,#42; b .` payload, resulting in `R0=0x2a` and `PC=0x80010004`. Thus AVP ARM execution is demonstrated, independently of OEM firmware boot.
+
+With **HSP-stripped Stage1** (length `0x1f7000`) loaded verbatim at hypothetical `0x80a00000`, the first two words at file offset `0x800` are `E28FC00C; E59CF000`: a valid ARM entry stub. The stub fetched `0x80a06b98` from file offset `0x814` and did branch there, as corroborated by the actual QEMU `in_asm,exec` trace. It subsequently traversed seemingly invalid code and zero-filled RAM (`0x81a073a8`, then further to `0x82ce0800`). **This does not establish a usable QNX startup image.** The observed execution is a bad boot / wrong layout, not a successful OS handoff.
+
+The QNX 6.5 source-defined `startup_header` at payload `0x808` has signature `0x00ff7eeb`, version `0x2001`, header size `0x100`, machine `0x28`, and startup_vaddr `0x80a06b98`. However, decoding its remaining 32-bit fields according to `sys/startup.h` yields `startup_size=0x400001a1`, `stored_size=0x04004007`; neither fits the `0x1f7000` bytes available. Under standard QNX IPL semantics, the startup executable must be copied **uncompressed**, even when the rest of the IFS is compressed; this makes blindly searching for zlib at the entry address unproductive. Reference: https://qnx.com/developers/docs/6.4.0/neutrino/building/load_process.html (QNX startup_header and IPL semantics).
+
+A user-run bounded probe at payload offsets `0x0`, `0x800`, `0x808`, `0x900`, `0x1000`, `0x2000`, `0x6b98` found no meaningful zlib/raw-deflate stream; a raw-deflate false positive at `0x900` returned only 5 bytes. Pattern scanning ARM prologues also found many unaligned hits, so they are not reliable entry candidates.
+
+Added `tools/fpk1/compare_stage1_headers.py` to compare ordinary/recovery Stage1 QNX startup-header **invariants** and report raw fields, without claiming a compression method or executable load point. Reproduction (from the repository root):
+```sh
+python3 tools/fpk1/compare_stage1_headers.py /path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-stage1-headers.json
+```

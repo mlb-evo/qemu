@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Validate Stage2.2 imagefs extents against an extracted region; stdlib only.
+"""Read-only QNX imagefs catalog inspection of an extracted FPK1 STAGE2.2.
 
-Input must be the *Stage2.2 region* (not the original HSP update image).
-No binary firmware is committed to this repository.
+Uses the QNX record layout already implemented by
+tools/mhi2/extract_main_ifs.py and tools/mhi2/glforward/ifs_resource.py.
+This tool does not attempt to decompress or alter proprietary firmware.
 """
 import argparse
 import json
@@ -10,46 +11,55 @@ import struct
 from pathlib import Path
 
 def inspect(data):
-    base = data.find(b"imagefs")
-    if base < 0:
-        raise ValueError("imagefs marker not found")
-    # Previously identified Stage2.2 imagefs header; avoid accepting a
-    # coincidental occurrence elsewhere without its expected relative offset.
-    if base != 0x890:
-        raise ValueError(f"unexpected imagefs marker offset: {base:#x}")
-    pos = 0x908
-    records = []
-    while pos + 36 <= len(data):
-        size, flags, mode, uid, gid, mtime, offset, length = struct.unpack_from("<8I", data, pos)
-        if size < 36 or size > 2048 or size % 4 or pos + size > len(data):
+    base = 0x890
+    if data[base:base+8] != b"imagefs\x04":
+        raise ValueError("Expected QNX imagefs v4 at STAGE2.2 +0x890")
+    logical_size, data_start, directory = struct.unpack_from("<III", data, base+8)
+    if directory < 24 or base+directory >= len(data):
+        raise ValueError("Invalid directory offset")
+    pos = base + directory
+    rows = []
+    while pos+2 <= len(data):
+        reclen = struct.unpack_from("<H", data, pos)[0]
+        if reclen == 0:
             break
-        name_raw = data[pos+32:pos+size].split(b"\x00", 1)[0]
-        if not name_raw or any(c < 32 or c > 126 for c in name_raw):
-            break
-        name = name_raw.decode("ascii")
-        absolute_start = base + offset
-        absolute_end = absolute_start + length
-        records.append(dict(path=name, record_at=pos, offset=offset, length=length,
-                            absolute_start=absolute_start, absolute_end=absolute_end,
-                            in_bounds=(absolute_end <= len(data))))
-        pos += size
-    return dict(imagefs_base=base, region_size=len(data), table_end=pos,
-                record_count=len(records),
-                fully_in_bounds=sum(x["in_bounds"] for x in records),
-                beyond_region=sum(not x["in_bounds"] for x in records),
-                max_logical_end=max((x["offset"]+x["length"] for x in records), default=0),
-                records=records)
+        if reclen < 24 or reclen % 4 or pos + reclen > len(data):
+            raise ValueError(f"Invalid directory record at {pos:#x}")
+        mode = struct.unpack_from("<I", data, pos+8)[0]
+        regular = (mode & 0xf000) == 0x8000
+        name_at = 32 if regular else 24
+        if reclen < name_at+1:
+            raise ValueError(f"Truncated record at {pos:#x}")
+        rawname = data[pos+name_at:pos+reclen].split(b"\x00",1)[0]
+        if not rawname or b"/../" in rawname or rawname.startswith(b"/"):
+            raise ValueError(f"Invalid name at {pos:#x}")
+        row = {"path":rawname.decode("utf-8","replace"),"record_at":pos,
+               "record_size":reclen, "mode":oct(mode)}
+        if regular:
+            off,size = struct.unpack_from("<II", data, pos+24)
+            start,end = base+off,base+off+size
+            row.update(offset=off, length=size, physical_start=start,
+                       physical_end=end, fully_present=end<=len(data))
+        rows.append(row)
+        pos += reclen
+    regular = [r for r in rows if "length" in r]
+    return {"imagefs_base":base, "declared_logical_size":logical_size,
+            "data_start":data_start,"directory_offset":directory,
+            "region_size":len(data),"catalog_end":pos,
+            "total_entries":len(rows),"regular_files":len(regular),
+            "fully_present":sum(r["fully_present"] for r in regular),
+            "out_of_bounds":sum(not r["fully_present"] for r in regular),
+            "max_logical_file_end":max((r["offset"]+r["length"] for r in regular),default=0),
+            "entries":rows}
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument("stage2_2", type=Path)
-    p.add_argument("--json", type=Path)
+    p.add_argument("stage2_2",type=Path)
+    p.add_argument("--json",type=Path)
     args=p.parse_args()
     result=inspect(args.stage2_2.read_bytes())
-    summary={k:v for k,v in result.items() if k!="records"}
-    print(json.dumps(summary, indent=2))
-    if args.json:
-        args.json.write_text(json.dumps(result, indent=2)+"\n")
+    print(json.dumps({k:v for k,v in result.items() if k!="entries"},indent=2))
+    if args.json: args.json.write_text(json.dumps(result,indent=2)+"\n")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()

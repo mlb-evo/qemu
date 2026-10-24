@@ -587,3 +587,13 @@ Commit `a8fd13a` restores actual escape sequences `b"\\x7fELF"` and `b"\\x01"` a
 User reran corrected `validate_stage1_unseeded_lzf.py`. Counts by start: `0x1318fc`, `0x131910`, `0x131911` each 39 raw decoded ELF magic, 6 shallow candidates, **0 strict**; `0x18d9fe`/`0x18d9ff` each 29/4/0; `0x194216` 26/3/0; `0x1c14f5`/`0x1c14f6` each 15/2/0. Rejection details repeatedly identify invalid PT_LOAD semantics (`invalid_PT_LOAD:0`), impossible or unknown PHDR types (`0x22cc`, `0x70000001`, `0x280034`), out-of-bounds PHDR extents, and often `no_PT_LOAD`. The same logical candidate content appears from slightly different decoder starts, shifted by small offsets; these are not eight independent recovered files.
 
 Conclusion: LZF-compatible token grammar is strongly supported, but no recovered *valid ELF32 ARM executable* and no verified complete Stage1 imagefs. **Do not characterize shallow decoded header matches as valid executables or QEMU boot assets.** Avoid searching more arbitrary suffix offsets as the principal next step. Instead identify codec stream framing/starting state from the original image container and check whether the decoded bytes represent a transformed or packed IFS representation. A successful independent LZF decoder test plus comparison to known valid ELF/IFS format should precede boot experiments.
+
+## LZF decoder correctness gate: synthetic fixture tests
+
+Added `tools/fpk1/test_lzf_decoders.py`, a firmware-independent `unittest` suite covering literal runs including ELF-prefix bytes, LZF match distances 1/2/4, overlapping and non-overlapping backreferences, extended 264-byte `e0ff00` matches, repeated long matches, invalid backward references, truncated literals and decoded-size caps. For every success case, compares `probe_stage1_lzf.decode` to `validate_stage1_unseeded_lzf.decode` on the same synthetic wire bytes; for error cases checks explicit failure behavior. These are implementation checks, **not** independent third-party LZF vectors or proof that FPK1 Stage1 uses standalone LZF framing. The test suite is not yet claimed to have run in GitHub CI.
+
+Run from the repository root:
+```sh
+python3 -m unittest discover -s tools/fpk1 -p 'test_lzf_decoders.py' -v
+```
+If fixtures pass but strict ELF checks stay zero, prioritize the encoded-data framing, possible dictionary reset/data chunk boundaries or outer container interpretation over adjusting the ELF validator to accept invalid PHDRs.

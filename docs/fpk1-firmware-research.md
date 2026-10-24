@@ -532,3 +532,16 @@ git pull --ff-only
 python3 tools/fpk1/find_stage1_lzf_starts.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-lzf-boundaries.json
 ```
 Inspect `targets[].valid_candidate_count` and `targets[].candidate_starts`. Preserve the distinction between locally valid ELF structure and authenticated/full-image recovery.
+
+## Empty-history LZF suffix candidate starts (user result)
+
+User executed `find_stage1_lzf_starts.py`, 2048-byte lookback from six selected runs. Four targets have **8 total** starts from which the current LZF grammar decoder reaches an ELF32 ARM header with empty history:
+
+- run `0x131913`: `0x1318fc`, `0x131910`, `0x131911` (decoded 8020, 8001, 8000 bytes)
+- run `0x18da01`: `0x18d9fe`, `0x18d9ff` (3769, 3768)
+- run `0x19421c`: `0x194216` (10641)
+- run `0x1c14f8`: `0x1c14f5`, `0x1c14f6` (7742, 7741)
+
+Targets `0xf1bbb` and `0x112367` yielded none in the tested lookback. These are unseeded decodings, but several candidate offsets are adjacent to the run and **not proven true compression framing boundaries**. Source bytes following the point where the previous probe stops may contain more data, and actual chunk starts could be farther away.
+
+Added `tools/fpk1/validate_stage1_unseeded_lzf.py` to decode forward up to 16 MiB from each of the eight starts, then validate ELF32 ARM program-header tables and the locally available PT_LOAD file extents, reporting stops and output sizes. This is still a suffix test, not authenticated full Stage1 recovery. Run `python3 tools/fpk1/validate_stage1_unseeded_lzf.py <archive.zip> --json /tmp/fpk1-lzf-unseeded-validation.json`.

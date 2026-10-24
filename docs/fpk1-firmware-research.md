@@ -381,3 +381,18 @@ A user ran `inspect_qnx6_startup_text.py` and supplied actual text from the sign
 `/etc/mcd.mnt` (431 B) specifies USB mass-storage matching `/dev/umass[0-9]*` mounted in `/fs/usb%0` as `dos`; it **does not** describe the origin of the system `/stage3` mount. The external network script `/etc/scripts/extnet.sh` defaults to `en0`, uses DHCP iff `/mnt/persist_fpk/use_dhcp` exists, otherwise static `172.16.250.220/24` (subject to override `/mnt/persist_fpk/use_static`). Build label in `/etc/build_version.txt` is `SOP4_AU536_AU491 e.solutions 2018/06/22-15:20`, release `C1_AU736_0378_1280_prod`; `img_ver.txt` contains `232` in both app and stage3. These version and network values are observations, not emulator defaults.
 
 Architecture implication: Stage3 scripts **presuppose** QNX kernel/userland, /stage3 mount, /dev/nvgpio, /config and several /mnt paths. They cannot directly boot on bare AVP. The hard-coded `0x48000000,64M` command gives a concrete flash memory window to investigate in Tegra30 / FPK1 QEMU, but driver options alone do not establish the exact hardware type or bus. Prioritize parsing Stage1/Stage2 boot scripts and mount commands, then hardware dependency mapping and a staged boot plan. Do not run service scripts on host macOS.
+
+## Stage3 script dependencies constrain Stage1/Stage2 boot investigation
+
+Observed `stage3.sh` does **not** establish how Stage3 was mounted: it simply assumes `/stage3/bin/startup-common.sh` and other existing system paths. In turn `startup-common.sh` assumes `/dev/nvgpio/vcm_usb_on1`, `/etc/inetd.conf`, USB rules, and preexisting QNX facilities. Therefore the origin of `/stage3`, `/mnt/temp_fpk`, `/mnt/persist_fpk`, `/config` and the initial `procnto` handoff is a **Stage1/Stage2** problem, not something to solve by executing Stage3 scripts directly in QEMU.
+
+Added `tools/fpk1/probe_early_boot_references.py` to search three early-stage signed FLASHDATA payloads for specific ASCII mount, QNX process, and stage-launch references. It includes exact raw-member offsets, SignInfo-relative offsets and historical candidate-inner offsets, so comparisons do not repeat the old off-by-eight confusion. **This is a read-only string-reference inventory; matches alone do not prove execution or successful decompression.** The output needs to be obtained on the original firmware ZIP before any concrete early-boot call graph can be claimed.
+
+To run on macOS:
+```sh
+cd /Users/pavelk/workspace/other/qemu-mhi2
+git pull --ff-only
+python3 tools/fpk1/probe_early_boot_references.py /Users/pavelk/workspace/other/qemu-mhi2/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip --json /tmp/fpk1-early-boot-references.json
+```
+
+The existing `tools/fpk1/inspect_stage2_imagefs.py` remains relevant: STAGE2.2's catalog has a verified imagefs directory, but most regular-file data spans exceed the stored extent. **Do not assume that an in-image search absence means a filename or command is absent from the logical Stage2 filesystem** without reconstructing the encoding.

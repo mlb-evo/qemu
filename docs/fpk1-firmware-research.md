@@ -229,3 +229,13 @@ Primary and recovery unwrapped headers differ at exactly 17 byte positions in `[
 Both files end in the identical eight-byte sequence `68 65 50 0e 01 00 00 00`, preceded by zero padding. This is a potential footer marker, **not yet a decoded record**. Payload byte-counts exceed the little-endian field at +0 by `0xa94` (primary) and `0xdd1` (recovery); neither proves the field's purpose or an exact payload boundary.
 
 The proximity of mode-like u32 `0x258`, another u32 `0x25c`, and 12 bytes just before the payload suggests a common structured update container. **Do not label those bytes encryption nonce, HMAC, IV or CRC until validated.** Read-only `tools/fpk1/probe_stage1_integrity.py` tests several standard CRC32 / Adler32 ranges against the u32 field and reports footer/zero-padding characteristics for both images.
+
+## Stage1 declared-size arithmetic invariant
+
+User-run `probe_stage1_integrity.py` found no CRC32 or Adler32 equality with `u32@0x25c` in six tested regions per variant. **This rejects only those exact hypotheses**, not other checksum ranges/algorithms.
+
+An exact invariant occurs in *both* candidate payloads:
+`len(payload) - u32le(payload,0) = 0x800 + trailing_zero_run_before_last_8_bytes`.
+Primary: `0xa94=0x800+660`; recovery: `0xdd1=0x800+1489`. Both share an 8-byte footer `6865500e01000000` preceded by those zeros. The relation is strong evidence for a fixed 0x800-byte container header and a recorded length associated with content and trailing layout. **However, the declared end `0x800+size` is actually 8 bytes *into* the zero run (not the footer), so neither an exact footer-inclusion rule nor padding alignment has been established.** Do not trim, repackage, or boot based on an invented boundary.
+
+`tools/fpk1/probe_stage1_integrity.py` now reports this size identity and the distances from declared end to both the beginning of the zero run and the footer. Next: inspect last nonzero bytes before the padding, probe exact header/footer semantics in the installer code and further images.

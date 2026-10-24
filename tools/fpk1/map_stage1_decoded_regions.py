@@ -8,43 +8,56 @@ from pathlib import Path
 from validate_stage1_unseeded_lzf import decode,scan_elf
 
 def extent(data,at):
+    """Return PHDR end and bounded section end; reject impossible SHDRs."""
     ehsize,phentsize,phnum,shentsize,shnum,_=struct.unpack_from("<HHHHHH",data,at+40)
     phoff,shoff=struct.unpack_from("<II",data,at+28)
-    end=at+max(ehsize,phoff+phentsize*phnum)
+    ph_end=at+max(ehsize,phoff+phentsize*phnum)
     for i in range(phnum):
         p=struct.unpack_from("<IIIIIIII",data,at+phoff+i*phentsize)
-        end=max(end,at+p[1]+p[4])
-    if shoff and shentsize==40 and 0<shnum<=2048 and at+shoff+shentsize*shnum<=len(data):
-        end=max(end,at+shoff+shentsize*shnum)
-        for i in range(shnum):
-            off=at+shoff+i*40
-            typ=struct.unpack_from("<I",data,off+4)[0]
-            section_off,section_size=struct.unpack_from("<II",data,off+16)
-            if typ!=8:
-                end=max(end,at+section_off+section_size)
-    return end
+        if p[0] in (1,2,3,4,6,7):
+            ph_end=max(ph_end,at+p[1]+p[4])
+    section_end=None
+    issue=None
+    if shoff and shnum:
+        if shentsize!=40 or shnum>2048 or at+shoff+40*shnum>len(data):
+            issue="invalid_section_table"
+        else:
+            section_end=at+shoff+40*shnum
+            for i in range(shnum):
+                off=at+shoff+i*40
+                typ=struct.unpack_from("<I",data,off+4)[0]
+                fileoff,size=struct.unpack_from("<II",data,off+16)
+                if typ!=8:
+                    candidate=at+fileoff+size
+                    if candidate>len(data):
+                        issue="section_extent_out_of_bounds"
+                        section_end=None
+                        break
+                    section_end=max(section_end,candidate)
+    return ph_end,section_end,issue
 
 def summarize(buf):
     candidates=[e for e in scan_elf(buf) if e["strict_elf_valid"]]
     rows=[]
     for i,e in enumerate(candidates):
         at=e["at"]
-        end=extent(buf,at)
+        phend,shend,issue=extent(buf,at)
         nextat=candidates[i+1]["at"] if i+1<len(candidates) else len(buf)
-        capped=min(end,len(buf))
-        between=buf[capped:nextat] if capped<=nextat else b""
-        nonzero=sum(x!=0 for x in between)
-        first_nonzero=next((capped+j for j,x in enumerate(between) if x!=0),None)
-        last_nonzero=next((capped+j for j in range(len(between)-1,-1,-1) if between[j]!=0),None)
-        rows.append({"elf":hex(at),"type":struct.unpack_from("<H",buf,at+16)[0],
-                     "extent_end":hex(end),"minimum_file_bytes":end-at,
+        if shend is not None and shend>nextat:
+            issue="section_extent_overlaps_next_elf"
+        end=shend if shend is not None and shend<=nextat else phend
+        if end>nextat:
+            issue="program_extent_overlaps_next_elf"
+        between=buf[end:nextat] if end<=nextat else b""
+        rows.append({"elf":hex(at),"phdr_extent_end":hex(phend),
+                     "section_extent_end":hex(shend) if shend is not None else None,
+                     "section_issue":issue,
+                     "usable_extent_end":hex(end) if end<=nextat else None,
+                     "minimum_file_bytes":end-at if end<=nextat else None,
                      "next_elf":hex(nextat) if i+1<len(candidates) else None,
-                     "between_bytes":max(0,nextat-capped),
-                     "between_nonzero":nonzero,
-                     "between_first_nonzero":hex(first_nonzero) if first_nonzero is not None else None,
-                     "between_last_nonzero":hex(last_nonzero) if last_nonzero is not None else None,
-                     "overlaps_next":end>nextat,
-                     "extent_inside_decoded":end<=len(buf)})
+                     "between_bytes":len(between),
+                     "between_nonzero":sum(v!=0 for v in between),
+                     "overlaps_next":end>nextat})
     return rows
 
 def main():

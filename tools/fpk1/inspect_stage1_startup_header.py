@@ -55,9 +55,16 @@ def main():
     while (pos:=data.find(magic,pos))>=0:
         if pos+256<=len(data):
             hdr=inspect(data,pos)
+            version_ok=hdr["standard_header_version_valid"]
+            sizes_ok=(256<=hdr["startup_size"]<=hdr["stored_size"]<=len(data))
+            address_ok=(hdr["ram_size"]>=hdr["startup_size"] and hdr["imagefs_size"]<=hdr["ram_size"])
             hdr.update(offset=hex(pos),
-                       candidate_image_base=hex(pos-hdr["preboot_size"]) if pos>=hdr["preboot_size"] else None,
-                       stored_extent_in_bounds=(pos-hdr["preboot_size"]>=0 and pos-hdr["preboot_size"]+hdr["stored_size"]<=len(data)))
+                       standard_size_fields_plausible=sizes_ok,
+                       standard_address_fields_plausible=address_ok,
+                       standard_header_interpretation_valid=(version_ok and sizes_ok and address_ok),
+                       note="Raw fields only; invalid standard layout must not drive boot/load bounds" if not(version_ok and sizes_ok and address_ok) else "Standard layout plausibly valid",
+                       candidate_image_base=hex(pos-hdr["preboot_size"]) if version_ok and sizes_ok and pos>=hdr["preboot_size"] else None,
+                       stored_extent_in_bounds=(version_ok and sizes_ok and pos>=hdr["preboot_size"] and pos-hdr["preboot_size"]+hdr["stored_size"]<=len(data)))
             hits.append(hdr)
         pos+=4
     result={"member":names[0],"coordinates":"HSP raw member + 0xc2","headers":hits}

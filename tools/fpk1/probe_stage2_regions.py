@@ -34,7 +34,7 @@ def inspect(payload):
     windows=[
         ("stage21_metadata",0x880,0x2000),
         ("stage21_middle",0x100000,0x110000),
-        ("stage21_tail",second_start-0x2000,second_start-0x1000),
+        ("stage21_tail",second_start-0x1000,second_start),
         ("stage22_head",second_start,second_start+0x1000),
         ("stage22_middle",0xa00000,0xa10000),
         ("stage22_tail",second_start+second_stored-0x1000,second_start+second_stored)

@@ -1359,3 +1359,111 @@ Next: inspect kernel initialization/secondary-CPU state and establish whether
 startup-script commands run. Add process/console evidence before claiming a
 usable QNX system, then connect the known SIFS/eMMC dependencies to real backing
 images and verify the required device behavior.
+
+## ARM64 host SIGILL removed; startup.script programs execute
+
+The apparent two-CPU stop from the previous experiment was an observation of
+an early SMP rendezvous, not proof that the remaining CPUs could never enter
+QNX. At 0xfe0762f4 code compares the word at 0xfe0b5888 against the configured
+CPU count at 0xfe0b5880 (4, initialized from syspage header +6). CPUs 2/3 at
+0xfc411e30 poll the syspage SMP mailbox at 0xfc41014c. Virtual-memory inspection
+on all four G CPUs translates that mailbox to the same physical 0x8002414c.
+The callout consumes its entry with LDREX/STREX; 0xfe08ddf0 is the kernel's
+secondary entry. These are runtime words/instructions, not recovered symbols.
+Later runs pass this rendezvous; the sampled counter also changes afterwards.
+
+### A separate host instruction-encoding defect
+
+macOS crash reports for the failing local ARM64 build locate SIGILL in TCG's
+translation buffer, called by `cpu_tb_exec`, not a guest Undefined Instruction
+exception. The faulting native word is **0x1ad506d4**. The register min/max
+constants in `tcg/aarch64/tcg-target.c.inc` put the operation bits in the wrong
+positions. The local Clang assembler independently produces these words for
+`w0,w1,w2` operands:
+
+| Instruction | Assembled word | Correct base word |
+| --- | --- | --- |
+| smax | 0x1ac26020 | 0x1ac06000 |
+| umax | 0x1ac26420 | 0x1ac06400 |
+| smin | 0x1ac26820 | 0x1ac06800 |
+| umin | 0x1ac26c20 | 0x1ac06c00 |
+
+The host reports `hw.optional.arm.FEAT_CSSC=1`, so TCG selects these instructions.
+Only the four base constants change; immediate forms and feature detection are
+unchanged. This is a local research-fork fix, not an upstream contribution.
+Rebuilding the same binary removes the reproduced SIGILL.
+
+`check_tcg_shifts.py` supplies a firmware-free ARM guest exercising 48 register
+LSL/LSR/ASR cases, both signs and counts 0, 1, 31, 32, 40, 255, 256, 257.
+A branch before each shift prevents constant folding across the setup and the
+shift. It compares all stored results and requires a completion marker. The
+original encoding build terminates before completing the test (QMP pipe closes);
+the corrected build passes all 48 cases on this CSSC host. This runtime check
+exercises UMIN lowering; the assembler comparison validates all four constants.
+On other host architectures the same guest checks their shift semantics.
+
+### Positive execution evidence for four startup commands
+
+With the corrected build, synthetic CPU0/ATAG handoff and
+`--tcg-thread single --icount-shift 0`, a bounded 2,000 ms host-time run captures
+entry blocks for the following verified Stage1 files:
+
+| Catalog file | Linked ELF entry | Exact prefix matched |
+| --- | --- | --- |
+| bin/slogger | 0x00100f90 | 32 bytes |
+| bin/profiling/devg-nvbootprofiler | 0x00100d10 | 32 bytes |
+| bin/sifsloader | 0x00101e70 | 32 bytes |
+| bin/driver/devb-mmcsd-tegra3-devlite | 0x001023c8 | 32 bytes |
+
+Each match requires an `exec` record for the entry and the actual instruction
+bytes from `in_asm`, compared against the corresponding PT_LOAD file bytes. Each is unique at that
+entry within the complete Stage1 catalog. An address in the common 0x00100000
+program range alone is insufficient, since different processes reuse virtual
+addresses. The probe reports ambiguous matches explicitly and gives no match
+when a QEMU disassembler omits the raw `OBJD-T` byte format.
+
+These files occur in the decoded startup.script in the same launch sequence.
+This demonstrates execution of its early commands, including **sifsloader**;
+it does not demonstrate their successful initialization, daemon readiness or
+SIFS mounts. No flash or disk has been attached in this experiment. The UART
+capture remains empty; there is no entry match for the serial driver in this
+bounded observation.
+
+The captured trace also contains a Data Abort from **EL0 to EL1**, first reported
+on CPU0 with DFAR 0x000fdcf0 and DFSR 0x807. This differs from the earlier
+EL1 startup faults. It must not be classified as a fatal process crash merely
+from the exception: demand paging and recovery have not been distinguished.
+The run continues, stops at its requested duration, and QEMU exits by QMP quit.
+
+### Reproduction and remaining work
+
+```sh
+make -C build-fpk1 -j6 qemu-system-arm
+python3 tools/fpk1/check_tcg_shifts.py --qemu ./build-fpk1/qemu-system-arm
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --boot-cpu cpu0 --memory-handoff \
+  --tcg-thread single --icount-shift 0 --kernel-state \
+  --trace-limit-kib 8192 --run-ms 2000 --json /tmp/fpk1-program-entries.json
+```
+
+Kernel-state mode logs `in_asm,int,exec` for the kernel entry and low program
+addresses, omitting startup/SMP spin loops from instruction/execution logging.
+The default 256 KiB trace bound can stop this profile before the program entries;
+use the explicit larger bound for this comparison. The maximum trace bound is
+8 MiB (with a bounded read allowance and an explicit truncation flag); run time
+is limited to 10 seconds. These limits measure host time/trace size, not guest
+boot completion. `icount` changes guest time advancement and scheduling, and is
+reported in the metadata. Kernel-state sampling is guarded by the exact decoded
+Stage1 SHA256; other firmware cannot silently reuse these addresses. Timer/GIC
+reads are debug views of CPU0's bank and do not imply other CPUs have identical
+banked state.
+
+Validation: **57** firmware-independent unit tests, the diagnostic machine smoke
+check, and all 48 guest shift cases pass. New tests reject invalid clock/trace
+settings, wrong firmware profiles, wrong entry bytes/addresses, short evidence, missing execution records
+and ambiguous stubs. Firmware bytes and temporary images/traces are not added
+to Git. The user's pre-existing `.gitignore` changes remain separate.
+
+Next: trace sifsloader's actual mapping/access outcome and the eMMC driver's
+initialization/wait path; establish service readiness and supply validated
+storage backing before claiming Stage2 mounts or a usable console.

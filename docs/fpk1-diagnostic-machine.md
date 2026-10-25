@@ -89,3 +89,15 @@ The exact kernel entry `0xfe054a58` is traced, and CPU0/CPU1 are sampled inside
 kernel code without the earlier Data Aborts. The console remains empty; running
 startup-script commands and services is still unverified. These are synthetic
 handoff experiments, not a reconstruction of the real FPK1 bootloader.
+
+
+The corrected ARM64 CSSC backend and an explicit instruction-count clock now
+allow matching execution of early startup.script programs, including
+sifsloader. For this newer bounded profile use `--kernel-state --icount-shift 0
+--trace-limit-kib 8192` in addition to the CPU0/memory/single-TCG options above.
+See the firmware research notes for byte-level entry evidence and the distinction
+between program entry and service readiness. The independent regression is:
+
+```sh
+python3 tools/fpk1/check_tcg_shifts.py --qemu ./build-fpk1/qemu-system-arm
+```

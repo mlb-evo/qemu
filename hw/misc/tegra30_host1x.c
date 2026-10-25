@@ -23,11 +23,14 @@ static void host1x_update(Tegra30Host1xState *s)
     qemu_set_irq(s->irq, !!(s->regs[0x3040 / 4] & s->enabled));
 }
 
+static void host1x_run_all(Tegra30Host1xState *s);
+
 void tegra30_host1x_increment(Tegra30Host1xState *s, unsigned id)
 {
     if (s && id < 32) {
         s->regs[(0x3400 + id * 4) / 4]++;
         host1x_update(s);
+        host1x_run_all(s);
     }
 }
 
@@ -139,6 +142,14 @@ static bool host1x_method(Tegra30Host1xState *s, unsigned ch,
         return id < 32 && (int32_t)(s->regs[(0x3400 + id * 4) / 4] -
                                     (value & 0xffffff)) >= 0;
     }
+    if (cls == 1 && method == 9) {
+        /* WAIT_SYNCPT_BASE: syncpt[31:24] >= base[23:16] + offset[15:0]. */
+        unsigned id = value >> 24, base = (value >> 16) & 0xff;
+        uint32_t threshold = base < 8 ? s->regs[(0x3600 + base * 4) / 4] : 0;
+        threshold = (threshold + (value & 0xffff)) & 0xffffff;
+        return id < 32 && (int32_t)(s->regs[(0x3400 + id * 4) / 4] -
+                                    threshold) >= 0;
+    }
     if (cls == 1 && (method == 0xb || method == 0xc)) {
         unsigned id = value >> 24;
         if (id >= 8) {
@@ -150,6 +161,22 @@ static bool host1x_method(Tegra30Host1xState *s, unsigned ch,
         } else {
             s->regs[(0x3600 + id * 4) / 4] += value & 0xffffff;
         }
+        return true;
+    }
+    if (cls == 0x60 && getenv("TEGRA_GR3D_DISCARD")) {
+        /* Diagnostic: retire GR3D jobs without rendering; method 0 is INCR_SYNCPT. */
+        if (method == 0) {
+            tegra30_host1x_increment(s, value & 0xff);
+        }
+        return true;
+    }
+    if (cls == 1) {
+        /*
+         * Unknown host1x-class methods (e.g. INDOFF, or client data sent
+         * while the class is still host1x) are dropped instead of stalling
+         * the channel, which would block every later syncpoint.
+         */
+        qemu_log_mask(LOG_UNIMP, "host1x: ignored class 1 method %x\n", method);
         return true;
     }
     qemu_log_mask(LOG_UNIMP, "host1x: unsupported class %x method %x\n", cls, method);
@@ -267,13 +294,52 @@ static bool host1x_stream(Tegra30Host1xState *s, unsigned ch,
     return *get == end;
 }
 
-static void host1x_channel_run(Tegra30Host1xState *s, unsigned ch)
+static void host1x_channel_step(Tegra30Host1xState *s, unsigned ch)
 {
     unsigned base = ch * 0x4000;
     unsigned budget = 4096;
     if (!(s->regs[(base + 0x24) / 4] & 1)) {
         host1x_stream(s, ch, &s->regs[(base + 0x1c) / 4],
                      s->regs[(base + 0x18) / 4], 0, &budget);
+    }
+}
+
+/*
+ * A channel stalled on a syncpoint wait resumes when any syncpoint moves.
+ * Increments made while a channel executes are deferred to avoid recursion.
+ */
+static void host1x_run_all(Tegra30Host1xState *s)
+{
+    if (s->running) {
+        s->rerun = true;
+        return;
+    }
+    s->running = true;
+    for (unsigned pass = 0; pass < 64; pass++) {
+        s->rerun = false;
+        for (unsigned ch = 0; ch < 8; ch++) {
+            if (s->regs[(ch * 0x4000 + 0x1c) / 4] != s->regs[(ch * 0x4000 + 0x18) / 4]) {
+                host1x_channel_step(s, ch);
+            }
+        }
+        if (!s->rerun) {
+            break;
+        }
+    }
+    s->running = false;
+}
+
+static void host1x_channel_run(Tegra30Host1xState *s, unsigned ch)
+{
+    if (s->running) {
+        s->rerun = true;
+        return;
+    }
+    s->running = true;
+    host1x_channel_step(s, ch);
+    s->running = false;
+    if (s->rerun) {
+        host1x_run_all(s);
     }
 }
 
@@ -340,6 +406,7 @@ static void host1x_reset(DeviceState *dev)
     s->enabled = 0;
     memset(s->gr2d, 0, sizeof(s->gr2d));
     memset(s->channel_class, 0, sizeof(s->channel_class));
+    s->running = s->rerun = false;
     qemu_set_irq(s->irq, 0);
 }
 

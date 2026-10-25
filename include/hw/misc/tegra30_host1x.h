@@ -13,6 +13,8 @@ struct Tegra30Host1xState {
     Tegra30MCState *mc;
     uint32_t channel_class[8];
     uint32_t gr2d[3][0x80];
+    /* Channel execution is in progress / a syncpoint moved meanwhile. */
+    bool running, rerun;
 };
 void tegra30_host1x_increment(Tegra30Host1xState *s, unsigned id);
 #endif

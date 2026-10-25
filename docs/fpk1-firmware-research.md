@@ -1467,3 +1467,113 @@ to Git. The user's pre-existing `.gitignore` changes remain separate.
 Next: trace sifsloader's actual mapping/access outcome and the eMMC driver's
 initialization/wait path; establish service readiness and supply validated
 storage backing before claiming Stage2 mounts or a usable console.
+
+## Bootloader command line, eMMC and boot to Stage3
+
+The previous NOR/storage experiment (`--stage2-nor --storage-trace`) shows
+sifsloader reading NOR and decoding STAGE2.1, but the UART then only printed
+`i2s_init: Invalid Project 0` and `display_init: Invalid Project -1`. Two
+missing inputs explain this; supplying both lets the original startup.script
+run through Stage2 into the Stage3 fallback without patching any firmware.
+
+### Board identity is passed by Quickboot on the command line
+
+`devg-nvsku` publishes `/dev/nvsku/{project,sku,rev,...}` from syspage asinfo
+entries (`nvsku`, `nvprod`, `serial_info`, `is_e1888`). The Stage1 startup
+creates those entries from the ATAG command line: at 0x80a00dfc it parses
+`tegraprof=`, `nvsku=`, `lp=`, `SkuVer=`, `ProdInfo=`, `ProdVer=`,
+`is_e1888=`, `mem=` and `emmc_skipinit=` (buffer 0x80a19f00), and also looks
+for ATAG types 0x5441000f and 0x54410006. Fields are split on `-` and parsed
+as decimal (0x80a031d0): field 1 is the project, field 2 the SKU, field 3 the
+revision. Startup accepts projects **0xf19c (61852)** and **0xf1a2 (61858)**;
+61852 matches the `embedded-qnx-p1852` BSP path. The Quickboot payload
+(`qb_primary.img`, identical in `qb_recovery.img`) contains the producer
+formats verbatim: `nvsku=%03d-%05d-%04d-%03d SkuVer=%c%c`,
+`ProdInfo=%03d-%05d-%04d-%03d ProdVer=%c%c`, `is_e1888=%d `, `mem=%uM@%uM `
+and `emmc_skipinit=1 `, i.e. NVIDIA `699-<project>-<sku>-<rev>` part numbers.
+
+`display_init` accepts SKU 1, 2, 5 and 8 for both projects; `i2s_init` only
+auto-configures SKU2 or SKU5. `devg-nvgpio` has two GPIO tables: one with
+`start_mode_to_gss`, `hsk_to_kss`, `most_*` and `vcm_usb_on1` (which Stage3's
+startup-common.sh waits for), another with head-unit lines (`nad_*`, `ipod_*`,
+SD). Four 120 s runs with identical other inputs:
+
+| nvsku project-SKU | Result |
+| --- | --- |
+| 61852-2, 61858-2 | `display_init: Unable to set modes`, LVDS serializer I2C errors, `gss_ipc: Unable to determine KSS mode!` |
+| 61852-5, 61858-5 | `display_init: successfully set modes`, `KSS Application mode`, Stage2 apps start |
+
+SKU5 is therefore used. Project 61852 vs 61858 produced no observable
+difference; 61852 is chosen from the BSP path, not proven. Revision 200,
+`SkuVer=A0` and `is_e1888=0` are placeholders. `run_stage1_console.py
+--board-info` supplies this synthetic line (`BOARD_CMDLINE`).
+
+### STAGE2.2 and the mounts need an eMMC
+
+With SKU5, sifsloader prints `NandDma: Device '/dev/emmc0' appeared`, then
+`Failed to load image STAGE2.2`: as established in the SIFS table, STAGE2.2
+part 1 lives on raw eMMC at byte 0x200200, i.e. `stage2_nand.img`'s
+`ESO_BIN` payload at 0x200000. `mount -t qnx6 -a` (mount_nand.sh) needs the
+fstab partitions `emmc0t177.3..7`.
+
+`hw/arm/fpk1.c` now attaches an optional `TYPE_EMMC` card to SDMMC4
+(0x78000600) when `-drive if=sd,index=0,...` is given, like `mhi2-harman`;
+without the drive the machine is unchanged. `create_fpk1_emmc.py` assembles a
+sparse 1 GiB image from the archive: `stage2_nand` payload at 0x200000, MBR
+with three type-177 primaries (`t177`, `.1`, `.2`, left unformatted) and an
+extended chain of five type-177 logicals: `.3`–`.5` empty 32 MiB QNX6
+volumes (with `dumps/`), `.6` the zlib-expanded `stage3.img`, `.7` `app.img`.
+Partition placement and t177.0..2 contents are synthetic.
+
+fs-qnx6 reports errno 302 ("Corrupted file system detected") for a QNX6 volume
+smaller than its partition. Measured on four variants: volumes sized exactly to
+the partition mount with or without spare inodes and a `dumps/` directory,
+while the same volume 2.8 MiB smaller fails. Growing a volume via
+`qnx6_image.build(partition_blocks=...)` leaves blocks beyond the bitmap and
+produced `No space left on device`; the tool instead grows free data blocks
+until the image size matches.
+
+### Measured boot
+
+```sh
+python3 tools/fpk1/create_fpk1_emmc.py <firmware.zip> /tmp/fpk1-emmc.img
+python3 tools/fpk1/run_stage1_console.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --icount-shift 0 --board-info \
+  --emmc /tmp/fpk1-emmc.img --seconds 240 --json /tmp/fpk1-console.json
+```
+
+The run uses the same CPU0/ATAG handoff and synthetic Stage2 NOR, without
+instruction tracing (`-d unimp,guest_errors` only), and attaches the eMMC with
+`snapshot=on`. Without `-icount shift=0` the UART stayed empty for 60 s, so
+the clock setting matters. Observed console milestones (host seconds):
+
+| t | Evidence |
+| --- | --- |
+| 1.0 | `Generic SDHCI ... MMC:170 QEMU!!` (eMMC enumerated) |
+| 1.8 | `display_init: successfully set modes` |
+| 2.8–5.8 | `gss_ipc`: KSS application mode, startup finished |
+| 8.0 | `login:` prompt on the serial console |
+| 10.8 | gtf2/EAL `Variant: fpk1`; `display_create_window` fails |
+| 62.5 | AliveManager: `hmi`, `kdgui_2dmgr`, `diagnosis`, `swdlclient` failed to start |
+| 65.1 | `--- Error with gtf2 detected. Starting stage 3... ---` |
+| 65–71 | Stage3: USB init, USB Ethernet with TCP/IP, INIC driver, `CHALLENGE: Running on port 22111` |
+
+No `Corrupted file system`, mount or STAGE2.2 load error appears; audio
+samples from STAGE2.2 are found. The Stage3 handoff happens through the
+30 s `gtf2_error_fallback.sh` path because gtf2 never becomes ready.
+
+### Remaining blockers
+
+1. **Graphics**: `kdInitializeNV`/`display_create_window` fail
+   (`KD_EOPNOTSUPP`, then `KD_ENOMEM`); `kdgui_2dmgr_ready` never appears.
+   The NVIDIA display/host1x/2D path is not emulated. This is the next
+   priority, as gtf2 is the cluster HMI.
+2. I2C peripherals: TLV320DAC3100 DAC (`audio_player` requests reboot), MOST
+   INIC over I2C (`NSR_E_NO_COMM` loop), LVDS serializers, `devg-nvtmon`.
+3. `/var/swdl` missing for swdlclient; `devf` finds no flash device.
+4. Frequent unimplemented CAR reads (0x8c, 0x9c, 0xbc, 0x30c, ...) and
+   APB_MISC offset 0x324c polling; not yet linked to a failure.
+
+These are runs with a synthetic bootloader handoff, board identity, NOR and
+eMMC layout; they show the original Stage1/2/3 scripts and binaries executing,
+not a faithful FPK1 board model.

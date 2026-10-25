@@ -101,3 +101,21 @@ between program entry and service readiness. The independent regression is:
 ```sh
 python3 tools/fpk1/check_tcg_shifts.py --qemu ./build-fpk1/qemu-system-arm
 ```
+
+## Board identity, eMMC and Stage3
+
+The machine accepts an optional eMMC on SDMMC4 via
+`-drive if=sd,index=0,format=raw,file=...` (absent by default). With the
+synthetic Quickboot-style command line (`nvsku=699-61852-0005-200 ...`) and an
+eMMC assembled from the update archive, the original scripts boot through
+Stage2 to the Stage3 fallback; gtf2 fails at the unemulated NVIDIA graphics.
+
+```sh
+python3 tools/fpk1/create_fpk1_emmc.py <firmware.zip> /tmp/fpk1-emmc.img
+python3 tools/fpk1/run_stage1_console.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --icount-shift 0 --board-info \
+  --emmc /tmp/fpk1-emmc.img --seconds 240 --json /tmp/fpk1-console.json
+```
+
+See "Bootloader command line, eMMC and boot to Stage3" in the
+[firmware research](fpk1-firmware-research.md) for evidence and limits.

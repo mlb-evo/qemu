@@ -13,6 +13,10 @@
 #include "hw/core/boards.h"
 #include "hw/arm/tegra30.h"
 #include "hw/core/loader.h"
+#include "hw/core/qdev-properties.h"
+#include "hw/sd/sd.h"
+#include "system/blockdev.h"
+#include "system/block-backend.h"
 #include "system/address-spaces.h"
 #include "system/reset.h"
 
@@ -127,6 +131,18 @@ static void fpk1_init(MachineState *machine)
             exit(1);
         }
         memory_region_set_readonly(&ms->nor, true);
+    }
+
+    /*
+     * Optional diagnostic eMMC on SDMMC4 (QNX "mnand", ioport 0x78000600),
+     * e.g. -drive if=sd,index=0,format=raw,file=emmc.img. Absent by default.
+     */
+    DriveInfo *emmc_di = drive_get(IF_SD, 0, 0);
+    if (emmc_di) {
+        DeviceState *emmc = qdev_new(TYPE_EMMC);
+        qdev_prop_set_drive(emmc, "drive", blk_by_legacy_dinfo(emmc_di));
+        qdev_realize_and_unref(emmc, qdev_get_child_bus(soc->sdmmc[3], "sd-bus"),
+                               &error_fatal);
     }
 
     /*

@@ -847,3 +847,91 @@ Added read-only `tools/fpk1/inspect_stage1_sifsloader.py`. The ELF at suffix-loc
 Current user-provided evidence **does not yet determine** the SIFS partition-table binary layout, checksum primitive, compression scheme, or whether SIFS images use the same LZF token format seen in the Stage1 suffix. Strings mentioning `libnvnordma.so`/`libnvmnand.so` are clues about interfaces, not DT_NEEDED dependencies. No QEMU boot claim can be made on that evidence alone.
 
 Run `python3 tools/fpk1/inspect_stage1_sifsloader.py <firmware.zip> --json /tmp/fpk1-sifsloader.json` and review `strings`, `segments` and `elf`. Further reverse engineering should target the ELF code paths that reference partition-version, decompressor-block and checksum diagnostics, and cross-check any format proposal against independently observed archive bytes.
+
+## Work-mode verification: SIFS table, Adler-32 and complete Stage2 images
+
+Executed against the local `AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip`
+(45,883,438 bytes; SHA-256
+`bd00b54fd523ad3c07ad14e6c0a76e8d6e3a5a80dfc83dba3b22e0c14d1565a0`).
+These results supersede earlier uncertainty about this update's Stage2 framing;
+they do not establish the Stage1 startup format or a general SIFS specification.
+
+`inspect_stage1_sifsloader.py --code-evidence` uses optional Capstone to report
+selected ARM instruction windows, translated through executable PT_LOAD ranges.
+Within the suffix-local loader ELF at +0xfb4a0, the code shows:
+
+- VA `0x102b18`: table version at header +8 must equal 2. Header +0xc is the
+  partition count (at most 16), and +0x10 is the following table byte count.
+- VA `0x102c38`: each partition has at most four parts. A partition record is
+  an eight-byte name plus a u32 part count, followed by that many 32-byte parts.
+  VA `0x102de4` advances each part by 0x20; records are **variable length**.
+  The previous two-fixed-44-byte-record interpretation omitted a NAND part.
+- VA `0x103068` onwards: a compressed block has four LE u32 fields: checksum,
+  magic `0x41303200`, compressed length, uncompressed length. Payload starts at
+  +0x10. The loader calls VA `0x104c98` with seed 1 over block +4 for
+  `compressed_length + 12` bytes, comparing the result against block +0.
+- VA `0x104c98`: the checksum routine maintains two sums with modulus 65521
+  (`0xfff1`) and combines them as low/high 16-bit halves: Adler-32. VA
+  `0x103120` calls the decompressor at `0x104980`, then checks output length.
+
+These are static code observations. Some embedded diagnostic-string pointers do
+not resolve to the expected text under a naive ELF VA-to-decoded-byte mapping;
+no direct string cross-references or faithful reconstruction of the entire loader
+are claimed. The format interpretation is independently checked against real
+Stage2 bytes, all block checksums, and actual LZO output.
+
+Coordinate correction: Stage2's `CIFS` prefix begins at **raw ZIP-member +0xba**.
+The old probes start at raw +0xc2, eight bytes later. Thus IFSPTTBL is at
+CIFS +0x800 (old coordinate +0x7f8); the 32-byte header ends at CIFS +0x820.
+The following table has 120 bytes and ends at CIFS +0x898, the NOR part-data
+base. Existing probe offsets remain in their older convention; do not mix them.
+
+| Image / part | Storage | Compressed | Offset field | Stored bytes | Logical bytes | Chunk bytes |
+| --- | --- | --- | --- | --- | --- | --- |
+| STAGE2.1 / 0 | NOR | yes | 0 | 0x93cc87 | 0x174d718 | 0x40000 |
+| STAGE2.2 / 0 | NOR | no | 0x93cc90 | 0xcbf400 | 0 (unused) | 0 |
+| STAGE2.2 / 1 | NAND | yes | 0x200200 | 0x88c0f4 | 0xef6a34 | 0x40000 |
+
+NOR offsets are relative to CIFS +0x898, **not** to CIFS +0. In particular the
+uncompressed STAGE2.2 part starts at CIFS +0x93d528, directly on `imagefs\x04`.
+The NAND update has `ESO_BIN\0` at raw +0xba; its first compressed block starts
+at payload +0x200 (raw +0x2ba). Mapping flash offset 0x200200 to that position
+implies a flash base of 0x200000 for this member. This mapping is specific to the
+observed update; it is corroborated by every block checksum and output size.
+
+Added `verify_sifs_partitions.py`, invoked through the existing loader inspector:
+
+```sh
+# Standard-library-only table and checksum checks:
+python3 tools/fpk1/inspect_stage1_sifsloader.py <firmware.zip> --verify-stage2
+# In an environment with capstone and lzokay installed:
+python3 tools/fpk1/inspect_stage1_sifsloader.py <firmware.zip> \
+  --code-evidence --verify-stage2 --decompress --json /tmp/fpk1-sifs-verified.json
+python3 -m unittest discover -s tools/fpk1 -p 'test_*.py' -v
+python3 tools/fpk1/check_machine.py --qemu ./build-fpk1/qemu-system-arm
+```
+
+Actual results: **72/72 Adler-32 checks pass**, and all **37 NOR + 35 NAND**
+compressed blocks decode successfully with `lzokay`. This establishes compatibility
+with that LZO decoder, without claiming exact compressor provenance. Each block's
+output length and both complete imagefs header sizes match. STAGE2.2 is formed by
+concatenating its uncompressed NOR part and decoded NAND part, in table order.
+
+| Complete in-memory image | Size | SHA-256 |
+| --- | --- | --- |
+| STAGE2.1 | 24,434,456 (0x174d718) | `cc0d8fbfea80e0903036d8336c217985a72e3cdd2466bb2281e6a02e4b67da85` |
+| STAGE2.2 | 29,056,564 (0x1bb5e34) | `e9eab3346af5a92775e402d71572d30a0d317cdaf5a08e85b89727fd85095f00` |
+
+Both checksum-only and full-decompression modes were run. All **30** firmware-free
+unit tests pass, including new variable-record, truncation, corrupted checksum,
+block-header, partial-final-chunk and logical-size checks. The existing QEMU
+smoke test also passes using the already built `build-fpk1/qemu-system-arm`:
+machine listing, required-address diagnostics, invalid entry rejection and a
+synthetic ARM loop. This is an initialization check, **not a QNX firmware boot**;
+no new QEMU compilation was performed in this run. No proprietary binaries are
+written or included in the commit; reconstructed images exist only in memory.
+
+Next: inspect the verified Stage2 imagefs directories in memory for startup
+scripts and dependency paths, then connect these findings to the unresolved
+Stage1 startup and hardware handoff. Stage1 LZF suffix decoding and Stage2 LZO
+blocks are separate observations and must not be equated.

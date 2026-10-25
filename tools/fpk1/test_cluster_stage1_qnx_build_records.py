@@ -11,8 +11,9 @@ class BuildRecordTests(unittest.TestCase):
         self.assertEqual(rows[0]["fields"]["DESCRIPTION"],"first component")
         self.assertEqual(rows[1]["fields"]["NAME"],"second")
         self.assertNotIn("second component",str(rows[0]))
-    def test_skip_embedded_name(self):
-        self.assertEqual(collect(b"xxxNAME=fake\x00"),[])
+    def test_prefixed_name(self):
+        rows=collect(b"QNX_BUILD_PREFIX_NAME=driver\x00DESCRIPTION=driver component\x00")
+        self.assertEqual(rows[0]["fields"]["NAME"],"driver")
     def test_boundary_on_nonfield(self):
         rows=collect(b"\x00NAME=one\x00DESCRIPTION=test\x00binary\x00DATE=bad\x00")
         self.assertEqual(len(rows),1)

@@ -106,7 +106,9 @@ def member(archive, suffix, signature):
     return raw[WRAPPER:]
 
 
-def verify_archive(path, decompress=False):
+def verify_archive(path, decompress=False, *, inspect_image=None):
+    if inspect_image is not None and not decompress:
+        raise ValueError("Image inspection requires complete decompression")
     with zipfile.ZipFile(path) as archive:
         nor = member(archive, "stage2_ifs.img", b"CIFS")
         nand = member(archive, "stage2_nand.img", b"ESO_BIN\0")
@@ -135,9 +137,11 @@ def verify_archive(path, decompress=False):
             imagefs_size, = words(image, 8, 1)
             if imagefs_size != len(image):
                 raise ValueError("Reconstructed imagefs size mismatch")
+        inspection = inspect_image(bytes(image)) if inspect_image is not None else None
         images.append(dict(name=partition["name"], parts=results,
                            imagefs_size=imagefs_size,
-                           imagefs_sha256=hashlib.sha256(image).hexdigest() if complete else None))
+                           imagefs_sha256=hashlib.sha256(image).hexdigest() if complete else None,
+                           **({"inspection": inspection} if inspect_image is not None else {})))
     return dict(profile="Q7 0378; CIFS-relative coordinates", wrapper_bytes=WRAPPER,
                 table={k: v for k, v in table.items() if k != "partitions"},
                 nand_flash_base=nand_flash_base, images=images,

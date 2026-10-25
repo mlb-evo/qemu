@@ -935,3 +935,105 @@ Next: inspect the verified Stage2 imagefs directories in memory for startup
 scripts and dependency paths, then connect these findings to the unresolved
 Stage1 startup and hardware handoff. Stage1 LZF suffix decoding and Stage2 LZO
 blocks are separate observations and must not be equated.
+
+## Verified Stage2 catalogs and the Stage3 script handoff
+
+Added `tools/fpk1/inspect_stage2_catalogs.py` for the fully reconstructed images.
+It uses the SIFS verifier's optional in-memory inspection callback, so no image
+or extracted file needs to be written. It validates the imagefs additive u32
+checksum (zero modulo 2^32), bounded catalog terminator, record extents, canonical
+paths, regular-file extents and symbolic-link string lengths before reporting
+metadata. The firmware-independent tests exercise checksum corruption, malformed
+records, unsafe/duplicate paths, out-of-bounds files, missing terminators and
+bad symlink lengths.
+
+Executed on the same Q7 0378 archive identified in the preceding section:
+
+| Image | All records | Regular files | Directories | Symlinks | ELF files |
+| --- | --- | --- | --- | --- | --- |
+| STAGE2.1 | 178 | 157 | 3 | 18 | 76 (62 ET_DYN, 14 ET_EXEC) |
+| STAGE2.2 | 345 | 344 | 1 | 0 | 2 (ET_EXEC) |
+
+Both additive checksums equal zero. All 501 regular-file spans are present in
+memory and inside the reconstructed image data. Each of the 78 ELF files passes
+the existing strict ARM program-header validation **within its own catalog file
+extent**; metadata cannot bleed into the following file. All 16 ET_EXEC objects
+request `/usr/lib/ldqnx.so.2`. STAGE2.2's executables are `bin/mostcoreapp` and
+`bin/imgdec`; most of its other files are resources. The previous report that only
+7 of its 344 files fit applied to the incomplete stored-byte view, not to these
+verified reconstructed images.
+
+The root directory is a valid empty-name record. Symlinks require a different
+layout from directories: two u16 lengths at record +24/+26, then the name at +28
+and the target immediately after it. On all 18 observed links, the name length
+**includes** its NUL and target length **excludes** its NUL. Treating all nonregular
+names as starting at +24 produces control characters and false paths.
+
+Catalog-confirmed links include:
+
+- `stage3` → `/mnt/stage3`
+- `bin/sh` → `/bin/ksh`
+- `etc/scripts` → `/stage3/etc/scripts`
+- `etc/usblauncher` → `/stage3/etc/usblauncher`
+- `lib/libsocket.so` → `libsocket.so.3` (relative target)
+- `lib/libecpp-ne.so` → `libecpp-ne.so.4`
+- `lib/libz.so` → `libz.so.2`
+
+Three allowlisted Stage2.1 shell scripts were read from validated file extents:
+
+| Path | Bytes | Observed behavior |
+| --- | --- | --- |
+| `bin/start_stage3.sh` | 222 | Checks `/tmp/stage3_started`, returns if present, otherwise creates it, waits for `/stage3/bin/stage3.sh`, then invokes that script with `/bin/ksh`. |
+| `bin/gtf2_error_fallback.sh` | 172 | Sleeps 30 seconds; exits if the marker exists; otherwise invokes `/bin/start_stage3.sh`. This is a fallback path if the script itself is launched. |
+| `bin/copy_tmp_core_dumps.sh` | 97 | Waits for `/mnt/temp_fpk/dumps/`, then copies `/tmp/*.core` there. |
+
+The marker check and creation are separate shell commands, not an atomic lock.
+The script contents do not establish who first invokes `start_stage3.sh`, whether
+the fallback is armed, or when `/mnt/stage3` is actually mounted.
+
+The optional `--with-stage3` cross-check uses the existing read-only QNX6 volume
+reader on `stage3.img`. It confirms `/bin/stage3.sh` (359 bytes) and
+`/bin/startup-common.sh` (953 bytes). Static script handoff:
+
+1. Stage2 `start_stage3.sh` waits for and invokes `/stage3/bin/stage3.sh`.
+2. Stage3 `stage3.sh` invokes `/stage3/bin/startup-common.sh`, then names services
+   including `devg-nvtmon`, `diagnosis`, `fds`, core-dump handling and `grengme`.
+3. `startup-common.sh` sets `LIBPATH` to `/lib:/stage3/lib` and `PATH` to
+   `/bin:/stage3/bin`. Its commands start USB initialization, `io-pkt-v4-hc`,
+   `inetd`, a RAM disk/PPS, USB launchers, INIC support and other services.
+   Several waits require real device nodes, e.g. `/dev/nvgpio/vcm_usb_on1` and
+   `/dev/io-usb/io-usb-most`; their presence under QEMU is not established.
+
+This describes script contents and call relationships, **not successful runtime
+execution**. It exposes additional device/service dependencies beyond decompression.
+
+ELF DT_NEEDED across Stage2 references **37 distinct library names**; **31** have
+at least one regular-file or symlink basename match in these catalogs. Six do
+not: `libc.so.3`, `libm.so.2`, `libnvclockapi.so`, `libnvos.so`, `libnvrm.so`,
+`libnvrm_graphics.so`. The exact `/lib/<name>` paths were also absent from the
+inspected Stage3 volume, as were `/usr/lib/ldqnx.so.2` and `/bin/ksh`. This does
+not exclude other paths, installed content or providers in Stage1. Basename
+presence is not runtime linker resolution; mount order and inherited search
+paths must still be established. Stage1's partial suffix already contains a
+`ksh` build record, but its original imagefs path is still unverified.
+
+Reproduce in an environment with `lzokay` installed:
+
+```sh
+python3 tools/fpk1/inspect_stage2_catalogs.py <firmware.zip> \
+  --with-stage3 --json /tmp/fpk1-stage2-catalogs.json
+python3 -m unittest discover -s tools/fpk1 -p 'test_*.py' -v
+```
+
+The JSON contains catalog metadata, bounded ELF dependency metadata, five
+allowlisted script texts with SHA-256 values, and exact Stage3 path-check results.
+No credential-file contents, executable payloads or reconstructed filesystem
+images are exported. Local validation passes: all **38** tests, real-archive
+catalog/ELF/script inspection, all **72** underlying SIFS block checksums and LZO
+length checks, plus the pre-existing checksum-only inspector mode after the
+callback extension. No QEMU implementation changed or new boot attempt was made.
+
+Next priority is the earlier boot chain: recover a complete Stage1 imagefs and
+its startup script/core-library paths, identify the caller of the Stage3 scripts
+and the mounts it prepares, and establish the CPU/entry/hardware handoff before
+attempting QNX execution.

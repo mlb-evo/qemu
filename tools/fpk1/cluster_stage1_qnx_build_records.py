@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Find bounded QNX build records and rank association to recovered Stage1 ELF.
 
-Each record starts at a NUL-terminated NAME= string, contains adjacent
+Each record starts at a NAME= string (possibly preceded by a build-info prefix), contains adjacent
 NUL-terminated key/value strings, and ends at next NAME or a large separation.
 Metadata ownership is inferred and never equated with an imagefs catalog.
 """
@@ -16,9 +16,10 @@ MAX_GAP=128
 
 def collect(buf):
     results=[]
-    for match in re.finditer(rb"(?:^|\x00)(NAME=[\x20-\x7e]{1,240})\x00",buf):
+    for match in re.finditer(rb"(NAME=[\x20-\x7e]{1,240})\x00",buf):
         at=match.start(1)
-        if at and buf[at-1]!=0:continue
+        # QNX build strings may carry a printable compiler-identification prefix.
+        # Do not require the byte before NAME to be NUL.
         name=match.group(1)[5:].decode("ascii")
         cursor=match.end(1)+1
         fields={"NAME":name}

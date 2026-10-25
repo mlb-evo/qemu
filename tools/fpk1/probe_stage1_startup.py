@@ -5,6 +5,8 @@ Private temporary boot image, synthetic ATAGs, console and traces are removed
 on exit. CPU0/ATAG options are diagnostic inputs, not a real bootloader model.
 """
 import argparse
+import hashlib
+import zipfile
 import json
 from pathlib import Path
 import re
@@ -16,6 +18,8 @@ import time
 
 from inspect_stage1_framed import decode_archive, startup_layout
 from inspect_stage2_catalogs import parse_catalog
+from inspect_stage1_runtime import CHECKPOINTS, storage_evidence
+from verify_sifs_partitions import member, verify_archive
 
 
 def receive(proc):
@@ -115,20 +119,45 @@ def match_entry_traces(text, image, catalog):
     return candidates
 
 
+def write_stage2_nor(archive, destination):
+    """Verified CIFS payload at the startup-script NOR offset; erased padding."""
+    verification = verify_archive(archive)
+    with zipfile.ZipFile(archive) as source:
+        payload = member(source, 'stage2_ifs.img', b'CIFS')
+    offset, capacity = 0x1d60000, 64 << 20
+    if offset + len(payload) > capacity:
+        raise ValueError('Stage2 does not fit the diagnostic NOR window')
+    with destination.open('wb') as stream:
+        erased = bytes([255]) * (1 << 20)
+        remaining = offset
+        while remaining:
+            amount = min(remaining, len(erased))
+            stream.write(erased[:amount])
+            remaining -= amount
+        stream.write(payload)
+    destination.chmod(0o600)
+    return dict(physical_base='0x48000000', capacity=capacity, payload_offset=hex(offset),
+                payload_size=len(payload), payload_sha256=hashlib.sha256(payload).hexdigest(),
+                image_size=offset + len(payload), verified_images=[r['name'] for r in verification['images']],
+                caution='Synthetic NOR assembled from the verified update payload; no original full flash dump or flash write emulation.')
+
+
 def probe(archive, qemu, run_ms=200, cbar=None, *, boot_cpu='avp',
           atag_cmdline=None, trace_faults=False, tcg_thread=None,
-          kernel_state=False, icount_shift=None, trace_limit_kib=256):
+          kernel_state=False, icount_shift=None, trace_limit_kib=256,
+          stage2_nor=False, storage_trace=False):
     if (not 1 <= run_ms <= 10000 or boot_cpu not in ('avp', 'cpu0') or
             (cbar is not None and not 0 <= cbar <= 0xffffffff) or
             tcg_thread not in (None, 'single', 'multi') or not 16 <= trace_limit_kib <= 8192 or
+            (storage_trace and trace_faults) or
             (icount_shift is not None and
              (not 0 <= icount_shift <= 10 or tcg_thread != 'single'))):
         raise ValueError('Invalid experiment configuration')
     tags = build_atags(atag_cmdline) if atag_cmdline is not None else None
     decoded, framing = decode_archive(archive)
-    if kernel_state and framing['decoded_sha256'] != (
+    if (kernel_state or stage2_nor or storage_trace) and framing['decoded_sha256'] != (
             'adec09b69c71719a6e9d5db944e1467c335e3054e1c4aae5c02c7a93b0edd503'):
-        raise ValueError('Kernel-state addresses only apply to the verified primary Stage1 profile')
+        raise ValueError('Storage/kernel-state addresses only apply to the verified primary Stage1 profile')
     layout = startup_layout(decoded)
     image = decoded[layout['decoded_imagefs_offset']:]
     catalog = parse_catalog(image)
@@ -151,6 +180,10 @@ def probe(archive, qemu, run_ms=200, cbar=None, *, boot_cpu='avp',
             # Avoid logging every startup/SMP spin-loop iteration with exec.
             filters = f'{entry:#x}..{entry + 128:#x},0x100000..0x200000'
             logging += ',exec'
+        if storage_trace:
+            points = sorted(set(CHECKPOINTS) | {entry, 0x100f90, 0x100d10, 0x101e70, 0x1023c8})
+            filters = ','.join(f'{point:#x}..{point + 3:#x}' for point in points)
+            logging = 'in_asm,int,exec,cpu,nochain'
         if trace_faults:
             filters = '0x80a013ac..0x80a0145b,0x80a0cbfc..0x80a0ccfc'
             logging += ',cpu'
@@ -158,6 +191,13 @@ def probe(archive, qemu, run_ms=200, cbar=None, *, boot_cpu='avp',
                    '-m', '512M', '-bios', str(bios), '-display', 'none', '-serial', f'file:{console}',
                    '-monitor', 'none', '-nic', 'none', '-S', '-qmp', 'stdio',
                    '-d', logging, '-dfilter', filters, '-D', str(trace)]
+        nor_metadata = None
+        if storage_trace:
+            command += ['-trace', 'enable=sdhci_send_command', '-trace', 'enable=sdhci_error']
+        if stage2_nor:
+            norfile = root / 'nor.bin'
+            nor_metadata = write_stage2_nor(archive, norfile)
+            command[2] += ',nor-image=' + str(norfile)
         if icount_shift is not None:
             command += ['-icount', f'shift={icount_shift}']
         if cbar is not None:
@@ -225,6 +265,9 @@ def probe(archive, qemu, run_ms=200, cbar=None, *, boot_cpu='avp',
                                           ('l2_table', 0x80a1a794), ('memory_option', 0x80a19f24)):
                         memory[name] = qmp(proc, 'human-monitor-command',
                                            {'command-line': f'xp /8wx {address:#x}', 'cpu-index': cpu})
+                    if storage_trace:
+                        memory['sdmmc4'] = qmp(proc, 'human-monitor-command', {
+                            'command-line': 'xp /64wx 0x78000600', 'cpu-index': cpu})
                     if kernel_state:
                         for name, cmd in (
                                 ('cpu_counts', 'x /4wx 0xfe0b5880'),
@@ -274,6 +317,8 @@ def probe(archive, qemu, run_ms=200, cbar=None, *, boot_cpu='avp',
                     tcg_thread=tcg_thread, trace_faults=trace_faults, icount_shift=icount_shift,
                     kernel_samples=kernel_samples, trace_limit_kib=trace_limit_kib,
                     catalog_entry_trace_matches=match_entry_traces(text, image, catalog),
+                    nor_backing=nor_metadata, storage_trace=storage_trace,
+                    storage_evidence=storage_evidence(text, image, catalog) if storage_trace else None,
                     trace_read_truncated=trace.exists() and trace.stat().st_size > trace_limit_kib * 1024 + 65536,
                     low_address_trace_present=any(0x100000 <= int(a, 16) < 0x200000 for a in addresses),
                     requested_run_ms=run_ms, elapsed_host_ms=round(elapsed * 1000, 3), stopped_for=stop_reason,
@@ -285,7 +330,7 @@ def probe(archive, qemu, run_ms=200, cbar=None, *, boot_cpu='avp',
                     first_fault=fault_context(text), stderr=stderr, console=console_text,
                     qemu_exit_status=proc.returncode, session_error=session_error,
                     limitations=['CPU0 and ATAGs are synthetic handoff experiments, not a bootloader model.',
-                                 'No flash/disks attached; kernel entry alone does not prove service startup.',
+                                 'No eMMC/disk attached; optional NOR backing is synthetic and read-only.',
                                  'Low-address instruction traces alone cannot identify a process or prove script execution.',
                                  'Kernel samples use addresses specific to the verified primary Stage1; MMIO reads are CPU0 debug views.'])
 
@@ -305,13 +350,16 @@ def main():
     parser.add_argument('--trace-limit-kib', type=int, default=256, help='stop at 16..8192 KiB of trace (default 256)')
     parser.add_argument('--kernel-state', action='store_true', help='sample verified-profile SMP state and trace low program addresses')
     parser.add_argument('--icount-shift', type=int, help='0..10 instruction-count clock shift; requires --tcg-thread single')
+    parser.add_argument('--stage2-nor', action='store_true', help='attach verified Stage2 CIFS at NOR offset 0x1d60000 (requires rebuilt FPK1 machine)')
+    parser.add_argument('--storage-trace', action='store_true', help='capture byte-verified sifsloader checkpoints and registers')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
     cmdline = 'mem=512M@0x80000000 ' if args.memory_handoff else args.atag_cmdline
     output = json.dumps(probe(args.archive, args.qemu, args.run_ms, args.cbar,
                              boot_cpu=args.boot_cpu, atag_cmdline=cmdline,
                              trace_faults=args.trace_faults, tcg_thread=args.tcg_thread,
-                             kernel_state=args.kernel_state, icount_shift=args.icount_shift, trace_limit_kib=args.trace_limit_kib), indent=2) + '\n'
+                             kernel_state=args.kernel_state, icount_shift=args.icount_shift, trace_limit_kib=args.trace_limit_kib,
+                             stage2_nor=args.stage2_nor, storage_trace=args.storage_trace), indent=2) + '\n'
     print(output, end='')
     if args.json:
         args.json.write_text(output)

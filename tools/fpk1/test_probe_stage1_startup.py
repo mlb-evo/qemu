@@ -50,7 +50,7 @@ class StartupProbeTests(unittest.TestCase):
         self.assertIn('DFAR 0x3', row['exception'][3])
 
     def test_invalid_experiment_bounds_before_loading_firmware(self):
-        for options in ({'run_ms': 10001}, {'trace_limit_kib': 15}, {'trace_limit_kib': 8193},
+        for options in ({'storage_trace': True, 'trace_faults': True}, {'run_ms': 10001}, {'trace_limit_kib': 15}, {'trace_limit_kib': 8193},
                         {'icount_shift': 0}, {'icount_shift': 0, 'tcg_thread': 'multi'},
                         {'icount_shift': -1, 'tcg_thread': 'single'},
                         {'icount_shift': 11, 'tcg_thread': 'single'}):
@@ -59,8 +59,9 @@ class StartupProbeTests(unittest.TestCase):
 
     def test_kernel_state_rejects_other_firmware_profile(self):
         with patch('probe_stage1_startup.decode_archive', return_value=(b'', {'decoded_sha256': 'other'})):
-            with self.assertRaisesRegex(ValueError, 'only apply to the verified'):
-                probe('other-firmware', 'missing-qemu', kernel_state=True)
+            for options in ({'kernel_state': True}, {'storage_trace': True}, {'stage2_nor': True}):
+                with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'only apply to the verified'):
+                    probe('other-firmware', 'missing-qemu', **options)
 
     def test_svc_is_not_a_fault(self):
         self.assertIsNone(fault_context('Taking exception 2 [SVC] on CPU 0\n'))

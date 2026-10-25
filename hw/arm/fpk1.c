@@ -21,6 +21,8 @@ typedef struct FPK1MachineState {
     Tegra30State *soc;
     char *load_address;
     char *entry_address;
+    char *nor_image;
+    MemoryRegion nor;
     uint64_t entry_pc;
 } FPK1MachineState;
 
@@ -46,6 +48,19 @@ static void fpk1_set_entry(Object *obj, const char *value, Error **errp)
     FPK1MachineState *s = (FPK1MachineState *)obj;
     g_free(s->entry_address);
     s->entry_address = g_strdup(value);
+}
+
+/* Explicit diagnostic NOR backing; no flash command/erase emulation. */
+static char *fpk1_get_nor_image(Object *obj, Error **errp)
+{
+    return g_strdup(((FPK1MachineState *)obj)->nor_image);
+}
+
+static void fpk1_set_nor_image(Object *obj, const char *value, Error **errp)
+{
+    FPK1MachineState *s = (FPK1MachineState *)obj;
+    g_free(s->nor_image);
+    s->nor_image = g_strdup(value);
 }
 
 static void fpk1_reset(void *opaque)
@@ -95,6 +110,25 @@ static void fpk1_init(MachineState *machine)
 
     sysbus_realize_and_unref(SYS_BUS_DEVICE(soc), &error_fatal);
 
+    if (ms->nor_image) {
+        /* Verified library parameters: 64 MiB of NOR at 0x48000000. */
+        int64_t nor_size = get_image_size(ms->nor_image, NULL);
+        if (nor_size <= 0 || nor_size > 64 * MiB) {
+            error_report("fpk1: nor-image must contain 1..64 MiB of raw NOR");
+            exit(1);
+        }
+        memory_region_init_ram(&ms->nor, OBJECT(soc), "fpk1-nor",
+                               64 * MiB, &error_fatal);
+        memset(memory_region_get_ram_ptr(&ms->nor), 0xff, 64 * MiB);
+        memory_region_add_subregion(get_system_memory(), 0x48000000, &ms->nor);
+        if (load_image_targphys(ms->nor_image, 0x48000000, 64 * MiB,
+                               &error_fatal) < 0) {
+            error_report("fpk1: failed to load diagnostic NOR image");
+            exit(1);
+        }
+        memory_region_set_readonly(&ms->nor, true);
+    }
+
     /*
      * For this initial diagnostic harness, only loading into DRAM is allowed.
      * Require the entry PC to be inside the loaded image; a real FPK1 boot
@@ -139,6 +173,10 @@ static void fpk1_machine_init(MachineClass *mc)
                                   fpk1_get_load, fpk1_set_load);
     object_class_property_add_str(OBJECT_CLASS(mc), "entry",
                                   fpk1_get_entry, fpk1_set_entry);
+    object_class_property_add_str(OBJECT_CLASS(mc), "nor-image",
+                                  fpk1_get_nor_image, fpk1_set_nor_image);
+    object_class_property_set_description(OBJECT_CLASS(mc), "nor-image",
+        "Optional raw read-only NOR image at 0x48000000 (diagnostic only)");
     mc->desc = "FPK1 experimental Tegra30 diagnostic boot (not full board)";
     mc->init = fpk1_init;
     mc->min_cpus = TEGRA30_NUM_PROCS;

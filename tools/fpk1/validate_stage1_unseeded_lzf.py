@@ -37,7 +37,8 @@ def decode(src,start,limit=LIMIT):
 def scan_elf(buf):
     """Conservative ELF32 ARM check; validate PHDR semantics, not merely bounds."""
     out=[];at=0
-    allowed={0,1,2,3,4,6,7,0x6474e550,0x6474e551,0x6474e552}
+    allowed={0,1,2,3,4,6,7,0x6474e550,0x6474e551,0x6474e552,
+             0x70000000,0x70000001}  # ARM: PT_ARM_ARCHEXT, PT_ARM_EXIDX
     while (at:=buf.find(b"\x7fELF",at))>=0:
         if at+52<=len(buf):
             ident=buf[at:at+16]

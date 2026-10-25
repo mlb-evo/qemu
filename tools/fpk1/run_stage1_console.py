@@ -12,6 +12,7 @@ import collections
 import json
 from pathlib import Path
 import re
+import os
 import shutil
 import socket
 import struct
@@ -75,7 +76,8 @@ def summarize_log(text, limit=64):
 
 def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_shift=None,
         emmc=None, extra=(), keep_dir=None, cmdline='mem=512M@0x80000000 ', log_limit_mib=64, progress=None,
-        shell=(), shell_interval=4.0, diag_shell=False, screendump=None):
+        shell=(), shell_interval=4.0, diag_shell=False, screendump=None,
+        replacements=None, glhost=None):
     if not 1 <= seconds <= 3600 or tcg_thread not in ('single', 'multi'):
         raise ValueError('Invalid run configuration')
     decoded, framing = decode_archive(archive)
@@ -92,7 +94,7 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
         machine = f'fpk1,load={load},entry={load}'
         nor = None
         if stage2_nor:
-            nor = write_stage2_nor(archive, root / 'nor.bin')
+            nor = write_stage2_nor(archive, root / 'nor.bin', replacements)
             machine += ',nor-image=' + str(root / 'nor.bin')
         command = [str(Path(qemu).resolve()), '-machine', machine, '-m', '512M',
                    '-bios', str(bios), '-display', 'none',
@@ -107,6 +109,16 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             command += ['-icount', f'shift={icount_shift}']
         if emmc:
             command += ['-drive', f'if=sd,index=0,format=raw,file={emmc},snapshot=on']
+        helper = None
+        if glhost:
+            # Same pipe transport as tools/mhi2/debug_shell_local.py.
+            for name in ('gl.in', 'gl.out'):
+                os.mkfifo(root / name, 0o600)
+            gl_in = os.open(root / 'gl.in', os.O_RDWR)
+            gl_out = os.open(root / 'gl.out', os.O_RDWR)
+            helper = subprocess.Popen([str(glhost)], stdin=gl_out, stdout=gl_in,
+                                      stderr=(root / 'glhost.log').open('wb'), cwd=root)
+            command += ['-chardev', f'pipe,id=glbridge,path={root / "gl"}']
         command += list(extra)
         lines, offset, stop = [], 0, 'duration'
         with errors.open('wb') as error_stream:
@@ -196,6 +208,12 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                 if proc.poll() is None:
                     proc.kill()
                     proc.communicate(timeout=10)
+                if helper is not None:
+                    helper.terminate()
+                    try:
+                        helper.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        helper.kill()
         text = log.read_text(errors='replace') if log.exists() else ''
         return dict(decoded_sha256=framing['decoded_sha256'], command_tail=command[command.index('-accel'):],
                     atag_cmdline=cmdline, diag_shell=diag_shell, requested_s=seconds, elapsed_s=round(elapsed, 2), stopped_for=stop,
@@ -208,7 +226,7 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
     finally:
         if keep_dir:
             keep_dir.mkdir(parents=True, exist_ok=True)
-            for name in ('console.log', 'qemu.log', 'stderr.log'):
+            for name in ('console.log', 'qemu.log', 'stderr.log', 'glhost.log'):
                 if (root / name).exists():
                     shutil.copy(root / name, keep_dir / name)
         shutil.rmtree(root, ignore_errors=True)
@@ -233,6 +251,9 @@ def main():
                         help='run ksh instead of tinit/login on the console (in-memory script change)')
     parser.add_argument('--shell-interval', type=float, default=4.0, help='seconds between shell lines')
     parser.add_argument('--screendump', type=Path, help='PPM path prefix for a final dump of the first display console')
+    parser.add_argument('--stage2-replace', action='append', default=[], metavar='PATH=FILE',
+                        help='replace a STAGE2.1 file in the synthetic NOR (e.g. lib/libEGL.so=shim.so)')
+    parser.add_argument('--glhost', type=Path, help='host GLES renderer bound to the glbridge chardev')
     parser.add_argument('--keep-dir', type=Path, help='copy console/QEMU logs here')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
@@ -240,7 +261,9 @@ def main():
                  tcg_thread=args.tcg_thread, icount_shift=args.icount_shift, emmc=args.emmc,
                  keep_dir=args.keep_dir, cmdline=BOARD_CMDLINE if args.board_info else args.cmdline,
                  shell=args.shell.read_text().splitlines() if args.shell else (),
-                 shell_interval=args.shell_interval, diag_shell=args.diag_shell, screendump=args.screendump, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
+                 shell_interval=args.shell_interval, diag_shell=args.diag_shell, screendump=args.screendump,
+                 replacements={p: Path(f).read_bytes() for p, f in (r.split('=', 1) for r in args.stage2_replace)},
+                 glhost=args.glhost, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
     text = json.dumps(result, indent=2)
     if args.json:
         args.json.write_text(text + '\n')

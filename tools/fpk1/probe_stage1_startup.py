@@ -119,11 +119,18 @@ def match_entry_traces(text, image, catalog):
     return candidates
 
 
-def write_stage2_nor(archive, destination):
-    """Verified CIFS payload at the startup-script NOR offset; erased padding."""
+def write_stage2_nor(archive, destination, replacements=None):
+    """Verified CIFS payload at the startup-script NOR offset; erased padding.
+
+    ``replacements`` ({STAGE2.1 path: bytes}) patches files in place first.
+    """
     verification = verify_archive(archive)
     with zipfile.ZipFile(archive) as source:
         payload = member(source, 'stage2_ifs.img', b'CIFS')
+    patch_report = None
+    if replacements:
+        from patch_stage2_files import patch_stage2_1
+        payload, patch_report = patch_stage2_1(payload, replacements)
     offset, capacity = 0x1d60000, 64 << 20
     if offset + len(payload) > capacity:
         raise ValueError('Stage2 does not fit the diagnostic NOR window')
@@ -139,6 +146,7 @@ def write_stage2_nor(archive, destination):
     return dict(physical_base='0x48000000', capacity=capacity, payload_offset=hex(offset),
                 payload_size=len(payload), payload_sha256=hashlib.sha256(payload).hexdigest(),
                 image_size=offset + len(payload), verified_images=[r['name'] for r in verification['images']],
+                stage2_1_replacements=patch_report,
                 caution='Synthetic NOR assembled from the verified update payload; no original full flash dump or flash write emulation.')
 
 

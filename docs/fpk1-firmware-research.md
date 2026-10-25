@@ -1577,3 +1577,78 @@ samples from STAGE2.2 are found. The Stage3 handoff happens through the
 These are runs with a synthetic bootloader handoff, board identity, NOR and
 eMMC layout; they show the original Stage1/2/3 scripts and binaries executing,
 not a faithful FPK1 board model.
+
+## Graphics: host1x fixes and the MHI2 GLES forwarding port
+
+### Native path (no shim)
+
+A login shell (`run_stage1_console.py --shell`, or `--diag-shell` which swaps
+the final `tinit` record for `ksh` in the in-memory boot script) showed
+`kdgui_2dmgr` REPLY-blocked on `devg-nvrm`, whose threads wait for a syncpoint.
+The host1x model stalled channels on GR3D (class 0x60) methods and on
+`WAIT_SYNCPT_BASE`, and never resumed a channel stalled on a wait. Fixes in
+`hw/misc/tegra30_host1x.c`: `WAIT_SYNCPT_BASE`, re-running stalled channels on
+any syncpoint increment, and dropping unknown host1x-class methods (INDOFF/
+INDDATA indirect GR3D register traffic, module 6). With
+`TEGRA_GR3D_DISCARD=1`, GR3D jobs retire (INCR_SYNCPT only): `kdgui_2dmgr`
+starts, `gtf2` creates its 1440x540 window, and dc-a scans out a black frame.
+GR3D itself is not emulated.
+
+### GLES forwarding as on MHI2
+
+MHI2 keeps the native KD/CWM/NvRm stack and replaces only `libEGL.so` and
+`libGLESv2.so` with `tools/mhi2/glforward/guest/gl_shim.c`, forwarding GLES
+over an MMIO aperture to `glhost` (Mesa/NVIDIA EGL on the host). FPK1 uses the
+same NVIDIA QNX BSP (17.52 MMX2) and the same EAL engine.
+
+- `hw/arm/fpk1.c` now has the same optional `glbridge` transport
+  (`-chardev ...,id=glbridge`; MMIO 0x5f000000, bulk RAM 0x5e000000).
+- The shim builds with `arm-none-eabi-gcc`; FPK1 binaries import 109
+  EGL/GLES symbols and the shim exports all of them. `GLBRIDGE_DEFAULT_W/H`
+  (1440x540 for FPK1) set its surface size; `glhost` takes
+  `MHI2_GL_WIDTH/HEIGHT` because clients are selected before `eglInitialize`.
+- `patch_stage2_files.py` replaces files inside STAGE2.1 of the synthetic NOR.
+  liblzo2's LZO1X-999 reproduces the original block sizes (lzokay is ~7%
+  larger and does not fit). Only the run of blocks around the edits (12 of 37)
+  is re-packed into the same slots; the imagefs checksum is rebalanced in the
+  freed file space, so the table, stored size and other bytes are unchanged,
+  and the result is verified by decoding.
+- `run_stage1_console.py --stage2-replace lib/libEGL.so=... --glhost ...`
+  starts `glhost` on a pipe chardev, as `tools/mhi2/debug_shell_local.py`.
+
+Measured (TEGRA_GR3D_DISCARD=1, board cmdline, synthetic eMMC):
+
+- `gtf2` (EAL) runs through the shim: 48 NVIDIA shader binaries
+  (`GL_NVIDIA_PLATFORM_BINARY_NV`, from `libeal.so` and `.kzb` resources),
+  textures and programs reach `glhost`. 47 match MHI2's existing Audi EAL
+  translations (`audi_shaders.h`). The remaining fragment program
+  (hash `f9b134a4613cf687`, 816 bytes, `vTexCoord`/`Color`/
+  `LayerRenderTexture`, used by `Materials/displaySupervisor`) loads from an
+  `MHI2_SHADER_CACHE` file with a guessed `texture*Color`; this translation is
+  **unverified** against the Tegra instruction stream.
+- `gtf2` issues no draw or swap; only `glhost`'s own clear reaches the frame.
+  `kdgui_2dmgr` sends `eglInitialize` and then disappears without console
+  output; `gss_ipc` reports `hmi` and `kdgui_2dmgr` failed to start-up and the
+  Stage3 fallback follows. Started by hand after boot it fails with
+  `nvdcGetWindow failed` (window already owned). Its failure under the shim is
+  the next blocker.
+- One run (with shell activity and per-client dumps) ended in a QNX kernel
+  shutdown listing `gtf2`/`traceserver`; two repeats without them did not.
+- Killing a bridge client while it holds the record lock (register 16) leaves
+  the lock taken; later clients then spin. This is inherited from the MHI2
+  transport.
+
+```sh
+arm-none-eabi-gcc -mfloat-abi=soft -mcpu=cortex-a9 -marm -fPIC -ffreestanding \
+  -fno-builtin -O2 -DGLBRIDGE_DEFAULT_W=1440 -DGLBRIDGE_DEFAULT_H=540 \
+  -c tools/mhi2/glforward/guest/gl_shim.c -o /tmp/gl-shim.o
+arm-none-eabi-ld -shared --hash-style=sysv -soname libEGL.so -o /tmp/libEGL.so /tmp/gl-shim.o
+arm-none-eabi-ld -shared --hash-style=sysv -soname libGLESv2.so -o /tmp/libGLESv2.so /tmp/gl-shim.o
+bash tools/mhi2/glforward/build_host.sh /tmp/glhost
+MHI2_GL_WIDTH=1440 MHI2_GL_HEIGHT=540 TEGRA_GR3D_DISCARD=1 \
+python3 tools/fpk1/run_stage1_console.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --icount-shift 0 --board-info \
+  --emmc /tmp/fpk1-emmc.img --stage2-replace lib/libEGL.so=/tmp/libEGL.so \
+  --stage2-replace lib/libGLESv2.so=/tmp/libGLESv2.so --glhost /tmp/glhost \
+  --seconds 120 --json /tmp/fpk1-gl.json
+```

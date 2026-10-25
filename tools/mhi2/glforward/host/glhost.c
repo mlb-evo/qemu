@@ -210,6 +210,10 @@ static int read_full(int fd, void *buf, size_t n)
 static void ensure_window(int w, int h)
 {
     if (win) return;
+    /* Clients are selected before eglInitialize; let launchers set the size. */
+    const char *ws = getenv("MHI2_GL_WIDTH"), *hs = getenv("MHI2_GL_HEIGHT");
+    if ((w <= 0 || w > 8192) && ws) w = atoi(ws);
+    if ((h <= 0 || h > 8192) && hs) h = atoi(hs);
     if (w <= 0 || w > 8192) w = DEFAULT_W;
     if (h <= 0 || h > 8192) h = DEFAULT_H;
 
@@ -454,7 +458,9 @@ static void serve(int cfd)
             if(write(STDOUT_FILENO,&status,4)!=4)return;
             break;
         }
-        case 119: request_pid=u32(p,0); break;
+        case 119: request_pid=u32(p,0);
+                  if (trace) fprintf(stderr, "glhost client pid=%u\n", request_pid);
+                  break;
         case 125: primary_display_pid=current_pid;break;
         case 122: encoder_close(request_pid,u32(p,0));break;
         case 123: case 124: {

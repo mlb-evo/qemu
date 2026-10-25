@@ -1,5 +1,13 @@
 #include "bridge_transport.h"
 
+/* Surface size without GLBRIDGE_W/H; FPK1 builds use 1440x540. */
+#ifndef GLBRIDGE_DEFAULT_W
+#define GLBRIDGE_DEFAULT_W 800
+#endif
+#ifndef GLBRIDGE_DEFAULT_H
+#define GLBRIDGE_DEFAULT_H 480
+#endif
+
 static void native_register_api(u32 api);
 void NvEglRegClientApi(unsigned api, void *unused)
 { (void)unused;native_register_api(api); }
@@ -47,9 +55,9 @@ u32 eglInitialize(void *dpy, i32 *major, i32 *minor)
     if (major) *major = 1;
     if (minor) *minor = 4;
     const char *ws = getenv("GLBRIDGE_W"), *hs = getenv("GLBRIDGE_H");
-    i32 wh[2] = { ws ? atoi(ws) : 800, hs ? atoi(hs) : 480 };
-    if (wh[0] <= 0) wh[0] = 800;
-    if (wh[1] <= 0) wh[1] = 480;
+    i32 wh[2] = { ws ? atoi(ws) : GLBRIDGE_DEFAULT_W, hs ? atoi(hs) : GLBRIDGE_DEFAULT_H };
+    if (wh[0] <= 0) wh[0] = GLBRIDGE_DEFAULT_W;
+    if (wh[1] <= 0) wh[1] = GLBRIDGE_DEFAULT_H;
     emit_iv(1, wh, 2);
     return 1;
 }

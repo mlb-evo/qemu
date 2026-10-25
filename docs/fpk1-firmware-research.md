@@ -790,3 +790,18 @@ User reported all 24 `names_by_preceding_elf` empty after running `cluster_stage
 ## Second build-record parsing failure and fix
 
 User reported `Records: 0` a second time, after removal of the left NUL requirement. The former parser also required each `NAME=` to end at a NUL terminator, whereas the earlier loose regular-expression index successfully extracted NAME fields from these bytes. Replaced the record scan with the same loose field grammar as the previously successful metadata probe (`NAME|DESCRIPTION|DATE|STATE|HOST|USER` followed by printable ASCII), assigning fields to a provisional record from each NAME until next NAME, subject to a 4096-byte gap cutoff. No NUL framing or authentic binary record boundaries are claimed; overlapping/adjacent field ownership remains uncertain. Updated unit tests to cover newline-separated and NUL-separated synthetic cases. Real firmware run pending.
+
+## Stage1 build-record grouping: 27 NAME records across 24 ELF signatures
+
+User reran the corrected clustering probe. It recovered **27 build-info NAME records**, compared with **24 strict ELF signatures**. Four ELF-to-next-ELF windows have two NAME records, and one window has none.
+
+Additional records absent from the earlier one-name-per-ELF summary:
+- decoded ELF +0xf834: `libcam.so`, `io-blk.so`
+- decoded ELF +0x6421a: `cam-disk.so`, `fs-qnx6.so`
+- decoded ELF +0x88843: `tinit`, `dumper`
+- decoded ELF +0x131964: `deva-nvaudio`, `devb-mmcsd-tegra3-devlite`
+- decoded ELF +0x11f7a8: no NAME record.
+
+Other windows: +0x1834 libnvnordma.so; +0x5834 libnvmnand.so; +0xaca81 mount; +0xb1b8e slogger; +0xb5b8e pipe; +0xbbb8e ksh; +0xf54a0 devg-nvbootprofiler; +0xf94a0 bootprofiler; +0x10569b nvmemctrl; +0x10869b devg-nvsku; +0x10c69b devg-nvos; +0x11069b devg-nvrm; +0x1137a8 devg-nvgpio; +0x1187a8 devg-nvclock; +0x1217a8 i2c-tegra2; +0x1723d3 devc-ser8250-tegra2; +0x1854f3 i2s_init; +0x1884f3 display_init; +0x18b4f3 clock_init.
+
+**Interpretation:** the prior large 'unknown' gaps contain metadata for multiple QNX components. The 27 NAME records are build metadata, not proven 27 independent files: NAME-to-ELF ownership is still proximity-based, and several ELF signatures have inconsistent section tables. Next investigation should report exact NAME byte offsets relative to each ELF and inspect whether the intervening data contain additional ELF signatures or self-contained embedded modules.

@@ -1652,3 +1652,42 @@ python3 tools/fpk1/run_stage1_console.py <firmware.zip> \
   --stage2-replace lib/libGLESv2.so=/tmp/libGLESv2.so --glhost /tmp/glhost \
   --seconds 120 --json /tmp/fpk1-gl.json
 ```
+
+### Why kdgui_2dmgr exited under the shim
+
+A diagnostic shim build (`-DGLBRIDGE_TRACE -finstrument-functions`) logs the
+first 300 shim calls per process to the console as offsets from
+`glbridge_trace_anchor` (map with `nm`; libEGL and libGLESv2 are separate
+copies of the same object, so calls into the other copy show as large
+offsets). `kdgui_2dmgr` called `eglGetDisplay`, `eglInitialize`,
+`eglChooseConfig`, `eglCreateContext`, `eglMakeCurrent`, then
+`eglDestroyContext`/`eglTerminate`. At 0x10af4c it requires
+`EGL_KHR_image`, `EGL_KHR_gl_texture_2D_image` and `GL_OES_EGL_image`; the shim
+advertised only the first and returned an empty `GL_EXTENSIONS`, so it logged
+"EGL does not support EGL_KHR_gl_texture_2D_image extension" to its trace
+logger (not the console) and exited.
+
+The shim now advertises both extensions and implements
+`EGL_GL_TEXTURE_2D_KHR` images: binding such an image with
+`glEGLImageTargetTexture2DOES` sends op 140, and `glhost` makes the target
+texture id an alias of the source's host texture (one host context per guest
+process). Rejected NvRm surface images are logged with their fields.
+
+Result: `kdgui_2dmgr` stays up, creates its NvRm surface images and serves
+`gtf2` a CWM window (`glbridge: CWM window beeb0000 publishes 1440x540`); it
+is no longer listed by `gss_ipc` as failed. Two of its own shader binaries
+(`c15b5c368e434418`, `23522ab1913cc1e6`) have no translation yet.
+
+### Next blocker: CSI capture GPIO
+
+`kdgui_2dmgr` still never creates `/dev/sem/kdgui_2dmgr_ready` (also not
+without the shim), so `gtf2` loads assets but never draws and `hmi` fails
+start-up. Its capture layer reports
+`CAL: unable to connect to GPIO_Interrupt /dev/nvgpio/csi_pass...giving up`.
+`devg-nvgpio`'s FPK table (27 entries of 0x34 bytes: name, pin, flags)
+ends with `csi_lock` (K2) and `csi_pass` (I5), but only entries 0..24 appear
+under `/dev/nvgpio`. With `TEGRA_GPIO_DEBUG=1` (new stderr trace of GPIO
+writes) the driver configures K2 and I5 as GPIO inputs with `INT_LVL`/
+`INT_CLR` writes and interrupts masked; `pidin irqs` shows a single attached
+vector 0x165. The interrupt-pin publication path, and whether the GPIO bank
+interrupt routing in the Tegra30 model satisfies it, are the next step.

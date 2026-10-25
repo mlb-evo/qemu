@@ -1,6 +1,34 @@
 #include "bridge_transport.h"
 
 /* Surface size without GLBRIDGE_W/H; FPK1 builds use 1440x540. */
+#ifdef GLBRIDGE_TRACE
+/* Diagnostic build with -finstrument-functions: log the first calls of each
+ * process as offsets from this anchor (map them with nm on the built .so). */
+__attribute__((no_instrument_function)) void glbridge_trace_anchor(void) {}
+__attribute__((no_instrument_function))
+void __cyg_profile_func_enter(void *fn, void *site)
+{
+    static unsigned calls;
+    char line[64], *q = line + sizeof(line);
+    unsigned long v[3] = { (unsigned long)getpid(),
+                           (unsigned long)((char *)fn - (char *)glbridge_trace_anchor),
+                           (unsigned long)site };
+    if (++calls > 300) return;
+    *--q = '\n';
+    for (int k = 2; k >= 0; k--) {
+        unsigned long x = v[k];
+        do { *--q = "0123456789abcdef"[x & 15]; x >>= 4; } while (x);
+        *--q = k ? ' ' : '=';
+    }
+    static const char prefix[] = "glshim pid";
+    q -= sizeof(prefix) - 1;
+    for (unsigned i = 0; i < sizeof(prefix) - 1; i++) q[i] = prefix[i];
+    write(2, q, line + sizeof(line) - q);
+}
+__attribute__((no_instrument_function))
+void __cyg_profile_func_exit(void *fn, void *site) { (void)fn; (void)site; }
+#endif
+
 #ifndef GLBRIDGE_DEFAULT_W
 #define GLBRIDGE_DEFAULT_W 800
 #endif
@@ -127,7 +155,7 @@ u32 eglReleaseThread(void) { return 1; }
 u32 eglBindAPI(u32 api) {if(api!=0x30a0){egl_error=0x300c;return 0;}bound_api=api;return 1;}
 u32 eglWaitGL(void) { return 1; }
 u32 eglWaitNative(i32 e) { (void)e; return 1; }
-const char *eglQueryString(void *dpy, i32 name) { (void)dpy; if(name==0x3055)return "EGL_KHR_image EGL_KHR_image_base EGL_NV_system_time "; return "glshim-fwd"; }
+const char *eglQueryString(void *dpy, i32 name) { (void)dpy; if(name==0x3055)return "EGL_KHR_image EGL_KHR_image_base EGL_KHR_gl_texture_2D_image EGL_NV_system_time "; return "glshim-fwd"; }
 /* EGL_NV_system_time uses the guest's monotonic nanosecond clock. */
 extern int ClockTime(int, const unsigned long long *, unsigned long long *);
 unsigned long long eglGetSystemTimeFrequencyNV(void) { return 1000000000ULL; }
@@ -400,7 +428,7 @@ const char *glGetString(u32 name)
     case 0x1F01: return "glshim-fwd-renderer";
     case 0x1F02: return "OpenGL ES 2.0 (glshim-fwd)";
     case 0x8B8C: return "OpenGL ES GLSL ES 1.00";
-    case 0x1F03: return "";
+    case 0x1F03: return "GL_OES_EGL_image";
     default:     return "";
     }
 }

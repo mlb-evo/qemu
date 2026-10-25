@@ -117,13 +117,31 @@ static void native_window_destroy(void *surface)
     }
     free(s);
 }
+/* EGL_KHR_gl_texture_2D_image: the host keeps one context per process, so an
+ * image of texture X bound to texture Y makes Y an alias of X's host texture.
+ * The magic cannot collide with NativeImage, whose first word is a width. */
+#define TEXTURE_IMAGE_MAGIC 0x54584d49u
+struct TextureImage {u32 magic,texture;};
 void *eglCreateImageKHR(void *dpy,void *ctx,u32 target,void *buffer,const i32 *attrs)
 {
     (void)dpy;(void)ctx;(void)attrs;
-    if(target!=0x3135||!buffer||!native_init()){egl_error=0x300c;return 0;}
+    if(target==0x30b1){
+        struct TextureImage *t;
+        if(!buffer||!(t=malloc(sizeof(*t)))){egl_error=0x300c;return 0;}
+        t->magic=TEXTURE_IMAGE_MAGIC;t->texture=(u32)buffer;return t;
+    }
+    if(target!=0x3135||!buffer||!native_init()){
+        char log[96];int n=snprintf(log,sizeof(log),"glbridge: eglCreateImageKHR target %x unsupported\n",target);
+        write(2,log,n);egl_error=0x300c;return 0;
+    }
     struct NvSurface *b=buffer;
     if(!b->width||!b->height||b->width>2048||b->height>2048||b->layout||b->pitch<b->width*4||
-       b->pitch>8192||b->offset>native.size(b->mem)||b->height>(native.size(b->mem)-b->offset)/b->pitch){egl_error=0x300c;return 0;}
+       b->pitch>8192||b->offset>native.size(b->mem)||b->height>(native.size(b->mem)-b->offset)/b->pitch){
+        char log[160];int n=snprintf(log,sizeof(log),
+            "glbridge: rejected NvRm surface %ux%u fmt %x layout %u pitch %u off %u kind %x mem size %u\n",
+            b->width,b->height,b->format,b->layout,b->pitch,b->offset,b->kind,native.size(b->mem));
+        write(2,log,n);egl_error=0x300c;return 0;
+    }
     struct NativeImage *image=malloc(sizeof(*image));if(!image)return 0;
     image->surface=*b;image->cached=0;image->mapped=0;image->cached_texture=0;
     image->id=native.id(b->mem);
@@ -165,6 +183,7 @@ static void native_texture_bind(u32 target,u32 texture)
 u32 eglDestroyImageKHR(void *dpy,void *p)
 {
     (void)dpy;if(!p)return 0;struct NativeImage *image=p;
+    if(((struct TextureImage *)p)->magic==TEXTURE_IMAGE_MAGIC){free(p);return 1;}
     for(unsigned i=0;i<256;i++)if(image_bindings[i].image==image){image_bindings[i].texture=0;image_bindings[i].image=0;}
     native.unmap(image->surface.mem,image->mapped,image->surface.pitch*image->surface.height);
     native.free(image->surface.mem);free(image->cached);free(image);return 1;
@@ -172,6 +191,10 @@ u32 eglDestroyImageKHR(void *dpy,void *p)
 void glEGLImageTargetTexture2DOES(u32 target,void *p)
 {
     if(!p||target!=0xde1||!native_bound_texture)return;
+    if(((struct TextureImage *)p)->magic==TEXTURE_IMAGE_MAGIC){
+        u32 alias[2]={native_bound_texture,((struct TextureImage *)p)->texture};
+        emit_iv(140,(i32 *)alias,2);return;
+    }
     unsigned slot=256;
     for(unsigned i=0;i<256;i++)if(image_bindings[i].texture==native_bound_texture){slot=i;break;}
     if(slot==256)for(unsigned i=0;i<256;i++)if(!image_bindings[i].image){slot=i;break;}

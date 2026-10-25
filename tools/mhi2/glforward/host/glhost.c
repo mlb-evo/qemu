@@ -673,6 +673,9 @@ static void serve(int cfd)
             for (uint32_t i = 0; i < n; i++) { GLuint t; glGenTextures(1, &t); gmap[u32(p,4+i*4)] = t; }
             } break;
         case 51: glBindTexture(u32(p,0), M(u32(p,4))); break;
+        case 140: /* EGLImage of texture src bound to dst: share the host texture */
+            if (u32(p,0) < MAXOBJ && u32(p,4) < MAXOBJ) gmap[u32(p,0)] = M(u32(p,4));
+            break;
         case 52: { /* glTexImage2D {target,level,ifmt,w,h,border,fmt,type,size,data} */
             uint32_t sz = u32(p,32);
             if (menu_texture_upload(52,p,len)) break;

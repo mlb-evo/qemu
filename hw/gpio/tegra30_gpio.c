@@ -169,6 +169,10 @@ static void tegra30_gpio_write(void *opaque, hwaddr offset, uint64_t value,
     int port = bank * TEGRA30_GPIO_PORTS_PER_BANK + (local % 0x10) / 4;
     uint32_t prev_driven_out;
 
+    if (getenv("TEGRA_GPIO_DEBUG")) {
+        fprintf(stderr, "gpio write port %d group %x value %08x\n",
+                port, group, (unsigned)value);
+    }
     if (bank >= TEGRA30_GPIO_BANKS) {
         return;
     }

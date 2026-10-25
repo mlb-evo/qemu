@@ -839,3 +839,11 @@ User ran `inspect_stage1_unnamed_elf.py` on original Q7 Stage1:
 - **+0x11f7a8**: ET_EXEC, `/usr/lib/ldqnx.so.2`, DT_NEEDED `libc.so.3`. Strings `/dev/nvsku/rev`, `open(/dev/nvsku/rev) failed`, `/bin/driver/devg-nvrm`, and `execl(/bin/driver/devg-nvrm) failed`. Functional role is strongly suggested as a launcher or initializer for NVIDIA resource manager, but filename remains unknown.
 
 Thus there are 30 validated ELF candidates; 27 QNX build NAME records, plus one highly confidently identified additional executable `sifsloader` by embedded usage text, and two without proven names. Function cannot be equated with verified filename unless corroborated by an imagefs catalog or other metadata. The archive's full imagefs directory, stream framing, and original executable launch order remain unresolved.
+
+## sifsloader-focused format investigation
+
+Added read-only `tools/fpk1/inspect_stage1_sifsloader.py`. The ELF at suffix-local +0xfb4a0 is identifiable as `sifsloader` from embedded usage/errors. The probe records its DT_NEEDED, interpreter, program segments, and all matching embedded strings about SIFS, image mounting, partition tables, block checksums, and compression, with precise ELF-relative coordinates. This is the next evidence-collection step before attempting SIFS header parsing.
+
+Current user-provided evidence **does not yet determine** the SIFS partition-table binary layout, checksum primitive, compression scheme, or whether SIFS images use the same LZF token format seen in the Stage1 suffix. Strings mentioning `libnvnordma.so`/`libnvmnand.so` are clues about interfaces, not DT_NEEDED dependencies. No QEMU boot claim can be made on that evidence alone.
+
+Run `python3 tools/fpk1/inspect_stage1_sifsloader.py <firmware.zip> --json /tmp/fpk1-sifsloader.json` and review `strings`, `segments` and `elf`. Further reverse engineering should target the ELF code paths that reference partition-version, decompressor-block and checksum diagnostics, and cross-check any format proposal against independently observed archive bytes.

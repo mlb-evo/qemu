@@ -2,6 +2,19 @@
 
 Status: preliminary research, **not a bootable FPK1 machine**. Source: user-supplied Audi Q7 2018 update archive `AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip`. No proprietary firmware binaries committed.
 
+## Current verified status
+
+Primary Stage1 is now reconstructed from **58 independently decoded ZV/LZF
+frames**, with matching CRC32, startup checksum and imagefs checksum. Its catalog
+contains 47 regular files (43 ELF), including the kernel and startup script.
+All 46 distinct DT_NEEDED names across Stage1/Stage2 have catalog basename
+coverage. A bounded QEMU experiment executes the decoded startup and reaches a
+Data Abort; a CBAR override moves the failure but does not boot QNX.
+See [complete Stage1 reconstruction](#complete-stage1-zvlzf-reconstruction-and-startup-script)
+for authoritative coordinates, identities and reproduction commands. Earlier
+raw-header and unframed-suffix sections below are historical investigation;
+their contradictory size fields and missing dependencies have been superseded.
+
 ## Platform evidence
 
 Strings previously observed in Stage 1 include `startup-nvidia-tegra3-mm`, `devb-mmcsd-tegra3`, `tegra2_ge` and `fs-qnx6`. Stage 2 includes `qnx-arm-qcc-fpk1` and `RL_QNX_OS_650SP1_MMX2_17.52A`. These strongly suggest an ARMv7/Tegra 3 QNX 6.5 SP1 stack. String evidence is **not** proof that the existing MHI2 boot chain or peripherals are compatible.
@@ -964,9 +977,9 @@ request `/usr/lib/ldqnx.so.2`. STAGE2.2's executables are `bin/mostcoreapp` and
 verified reconstructed images.
 
 The root directory is a valid empty-name record. Symlinks require a different
-layout from directories: two u16 lengths at record +24/+26, then the name at +28
-and the target immediately after it. On all 18 observed links, the name length
-**includes** its NUL and target length **excludes** its NUL. Treating all nonregular
+layout from directories: a u16 target offset (relative to the path at +28) at
+record +24, and a u16 target size at +26. On all 18 observed links, the offset
+equals the name length including NUL, and target size excludes its NUL. Treating all nonregular
 names as starting at +24 produces control characters and false paths.
 
 Catalog-confirmed links include:
@@ -1037,3 +1050,182 @@ Next priority is the earlier boot chain: recover a complete Stage1 imagefs and
 its startup script/core-library paths, identify the caller of the Stage3 scripts
 and the mounts it prepares, and establish the CPU/entry/hardware handoff before
 attempting QNX execution.
+
+## Complete Stage1 ZV/LZF reconstruction and startup script
+
+**This supersedes the raw startup-header contradictions and unframed suffix
+inventories above.** The primary Stage1 payload is a length-delimited stream of
+standard ZV/LZF frames. The framing matches the primary
+[liblzf command-line source](https://github.com/nemequ/liblzf/blob/master/lzf.c):
+compressed frames have a seven-byte header with two big-endian u16 sizes;
+uncompressed frames have a five-byte header. Decode history resets per frame.
+Treating intervening frame headers as LZF tokens caused corrupted decoded file
+contents, shifted strings and incorrect dynamic dependencies in prior probes.
+Structurally valid ELF headers alone did not establish faithful file contents.
+
+`tools/fpk1/inspect_stage1_framed.py` uses the existing bounded LZF token decoder
+separately for each frame. The observed primary-image envelope specifies:
+
+| Field / result | Value |
+| --- | --- |
+| Coordinate origin | raw ZIP member +0xc2 |
+| Frame stream start | +0x7f8 (raw member +0x8ba) |
+| Stored length, u32 at +0 | 0x1f656c, including the four-byte CRC32 trailer |
+| Frame stream end | +0x1f6d60 |
+| Trailer / calculated decoded CRC32 | 0x53a13ff7, equal |
+| Frames | 58 compressed, no uncompressed frames in this update |
+| Decoded bytes | 3,788,832 (0x39d020) |
+| Decoded SHA-256 | `adec09b69c71719a6e9d5db944e1467c335e3054e1c4aae5c02c7a93b0edd503` |
+
+The first 57 frames each produce 65,535 bytes; the last produces 53,337.
+The stored length reaches exactly through the CRC32 trailer. Later envelope
+padding and metadata are excluded; their remaining checksum semantics have not
+been established. No arbitrary suffix endpoint is used.
+
+After decompression the ARM stub occupies decoded +0..+7, followed by a coherent
+QNX startup header at +8. Corrected fields:
+
+| Startup header field | Value |
+| --- | --- |
+| version / header_size / machine | 1 / 0x100 / ARM (40) |
+| preboot_size | 8 |
+| startup_vaddr | 0x80a06b98 |
+| image_paddr / ram_paddr | 0x80a00808 / 0x80a00808 |
+| startup_size | 0x1a108 |
+| stored_size / ram_size | 0x39d018 / 0x39d018 |
+| imagefs_size | 0x382f10 |
+| internal QNX compression bits | 0 (the outer ZV stream has already been decoded) |
+
+The startup checksum from the signature through the startup trailer sums to
+zero modulo 2^32. Its declared end is decoded +0x1a110, where the complete
+imagefs begins. The imagefs checksum independently sums to zero. Its SHA-256 is
+`843c1a00f9e77f3125f33f0e48494f6730f1ec9227697fd2966a4f1b8c205fa3`.
+The header-consistent load address for the decoded stub is 0x80a00800; the entry
+0x80a06b98 maps to decoded +0x6398, now containing coherent ARM startup code.
+This is a validated decoded mapping, not proof of the installed bootloader's
+real CPU/handoff state.
+
+The complete Stage1 catalog contains **54 records: 47 regular files, six
+symlinks and one root directory**. Forty-three regular files are strict-valid
+ELFs inside their actual catalog-owned bounds. The imagefs bootstrap inode
+selects `proc/boot/procnto-smp-instr`; the script inode selects the 3,808-byte
+`proc/boot/startup.script`. These identities are catalog-backed, unlike the
+previous proximity guesses. The previously unresolved objects are now proven:
+
+- `bin/waitfor_eso` (14,832 bytes), previously the +0xbbb8e suffix candidate.
+- `bin/sifsloader` (39,000 bytes), previously +0xfb4a0.
+- `bin/driver/devg-pre` (7,024 bytes), previously +0x11f7a8.
+
+The faithful `sifsloader` ELF has **22 dynamic entries** and DT_NEEDED
+`libnvnordma.so`, `libnvmnand.so`, `libc.so.3`. Prior claims of no DT_NEEDED and
+only string-based NOR/NAND library evidence were artifacts of unframed decoding.
+`inspect_stage1_sifsloader.py` now defaults to this verified catalog-owned file;
+`--legacy-suffix` retains the old probe with an explicit corruption warning.
+
+All six Stage2 library names previously lacking coverage are actual Stage1
+regular files under `lib/`. Across the combined Stage1 and Stage2 catalogs,
+**all 46 distinct DT_NEEDED names** have regular-file or symlink basename
+coverage. This does not prove mount order or runtime linker success.
+
+The startup script is binary, not a shell script. A bounded parser follows the
+record shapes in QNX's published
+[`sys/image.h`](https://github.com/vocho/openqnx/blob/master/trunk/services/system/public/sys/image.h),
+checking record boundaries, argument/environment counts, NUL termination and
+padding. It yields **47 records: 36 external commands, nine wait operations,
+one console reopen and one process-manager symlink**. The header's script inode
+selects this file directly. Observed order and parameters include:
+
+1. Create the loader link from `../../lib/libc.so.3` to `/usr/lib/ldqnx.so.2`.
+2. Start logging/profiling and wait for their device nodes.
+3. Start `sifsloader` in the background with NOR offset **30801920 (0x1d60000)**,
+   loading `STAGE2.1` and `STAGE2.2`, both mounted at `/`.
+4. Start the eMMC driver with controller `0x78000600`, IRQ 63, eight-bit bus,
+   and `skipinit` among its options. Start serial at `0x70006000`, IRQ 68.
+5. Run NVIDIA memory/SKU/clock/GPIO/OS setup, I2S, I2C, audio and display setup.
+6. Launch `ksh /bin/mount_nand.sh` in the background. That script waits for
+   `/dev/emmc0` and invokes `mount -t qnx6 -a`.
+7. Wait for `/bin/gss_ipc`, then start Stage2 applications including `gss_ipc`,
+   `broker`, `kdgui_2dmgr`, `gtf2`, capture, audio, MOST and tracing components.
+8. Arm `ksh /bin/gtf2_error_fallback.sh` in the background, then invoke `tinit`.
+
+Thus the earlier uncertainty about whether the 30-second Stage3 fallback is
+armed is resolved: the boot script launches it. Its successful execution still
+depends on the preceding boot steps. The primary non-fallback caller of
+`start_stage3.sh` remains unresolved.
+
+`etc/fstab` maps eMMC QNX6 partitions explicitly:
+
+| Device | Mount point | Mode |
+| --- | --- | --- |
+| `/dev/emmc0t177.3` | `/mnt/persist_swdl` | rw |
+| `/dev/emmc0t177.4` | `/mnt/temp_fpk` | rw |
+| `/dev/emmc0t177.5` | `/mnt/persist_fpk` | rw |
+| `/dev/emmc0t177.6` | `/mnt/stage3` | ro |
+| `/dev/emmc0t177.7` | `/mnt/app` | ro |
+
+These link the previously verified Stage2 `stage3` symlink and Stage3 shell
+scripts to the earlier storage/mount sequence. The eMMC `skipinit` option is a
+concrete inherited-state requirement to investigate, not proof that the QEMU
+controller already satisfies it.
+
+Source-layout correction: imagefs byte +7 is flags (0x04 means inode flags are
+valid), not a filesystem "version 4". The first symlink u16 is a target offset
+relative to its path field; it happened to equal NUL-terminated name length in
+every observed link. The catalog parser now names it as an offset. The strict
+`imagefs\x04` profile remains intentional for the three inspected images.
+
+Reproduce the primary decode and combined dependency inventory:
+
+```sh
+# Primary Stage1 uses only the Python standard library:
+python3 tools/fpk1/inspect_stage1_framed.py <firmware.zip> --json /tmp/fpk1-stage1.json
+# Combined Stage1/Stage2 inventory requires lzokay:
+python3 tools/fpk1/inspect_stage1_framed.py <firmware.zip> \
+  --with-stage2 --json /tmp/fpk1-stage1-stage2.json
+python3 tools/fpk1/inspect_stage1_sifsloader.py <firmware.zip> \
+  --code-evidence --verify-stage2 --decompress --json /tmp/fpk1-sifsloader-framed.json
+python3 -m unittest discover -s tools/fpk1 -p 'test_*.py' -v
+```
+
+All **46** firmware-free tests pass. New cases cover independent frame history,
+raw/compressed framing, truncation/output limits, declared lengths and CRC32,
+startup checksum/address invariants, and binary-script commands/argument counts.
+The real archive passes complete Stage1 and combined Stage1/Stage2 inspection.
+Neither the decoded image nor full script contents are committed.
+
+### Bounded execution of decoded startup in the diagnostic machine
+
+Added `probe_stage1_startup.py` to run only the verified decoded image in the
+existing local QEMU build. It creates a private temporary boot image, starts
+paused, queries the actual AVP CPU index, resumes for at most the requested
+host duration (default 200 ms), stops it and captures registers/first exception.
+Trace growth is bounded by polling; only a bounded prefix is read. No flash or
+disks are attached; temporary boot image and trace are deleted on exit.
+
+Both experiments used load/initial PC **0x80a00800**, 512 MiB RAM, existing
+`build-fpk1/qemu-system-arm` and no QEMU source changes or new build:
+
+| Experiment | Observed startup trace | First exception |
+| --- | --- | --- |
+| Existing diagnostic CPU state | Stub → 0x80a06b98; 643 translated startup block starts, last 0x80a013ac | Data Abort, DFSR 0x1, DFAR 0x3, CPU 5; followed by undefined-instruction exceptions |
+| Override `reset-cbar=0x50040000` | Progresses further; 699 startup block starts, last 0x80a0cc00 | Data Abort, DFSR 0x801, DFAR 0xff7, CPU 5; followed by undefined-instruction exceptions |
+
+The baseline final block dereferences a startup-held pointer then reads pointer
++4; this is consistent with an invalid pointer leading to DFAR 0x3. A CBAR
+override changes progress and failure location, but is **not a complete fix**.
+The diagnostic machine runs its AVP as a Cortex-A9 surrogate; the real CPU
+handoff is still unproven. Neither run demonstrates `procnto` or service startup.
+
+```sh
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --json /tmp/fpk1-startup-baseline.json
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --cbar 0x50040000 \
+  --json /tmp/fpk1-startup-cbar.json
+```
+
+Next: trace the initial startup memory mappings and inherited CPU/MPCore state,
+especially the first invalid pointer and the later DFAR 0xff7 access. Only then
+change the diagnostic CPU/handoff configuration, with measured before/after
+behavior. Recovery Stage1 and outer-envelope checksum fields remain separate
+unresolved profiles.

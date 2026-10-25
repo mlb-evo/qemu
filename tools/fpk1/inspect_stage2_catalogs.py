@@ -65,16 +65,16 @@ def parse_catalog(data):
             name = terminated(data, cursor + 32, cursor + length)
             row.update(kind="regular", offset=offset, size=size)
         elif kind == stat.S_IFLNK:
-            # Observed QNX lengths: name includes NUL; target excludes NUL.
-            name_size, target_size = struct.unpack_from("<HH", data, cursor + 24)
+            # QNX image_symlink: target offset from path; target size excludes NUL.
+            target_offset, target_size = struct.unpack_from("<HH", data, cursor + 24)
             start = cursor + 28
-            target = start + name_size
+            target = start + target_offset
             end = target + target_size + 1
-            if not name_size or not target_size or end > cursor + length:
+            if not target_offset or not target_size or end > cursor + length:
                 raise ValueError("Invalid symlink string extents")
             name = terminated(data, start, target)
             value = terminated(data, target, end)
-            if (len(name.encode()) + 1 != name_size or
+            if (len(name.encode()) + 1 != target_offset or
                     len(value.encode()) != target_size or not value):
                 raise ValueError("Symlink length mismatch")
             row.update(kind="symlink", target=value)

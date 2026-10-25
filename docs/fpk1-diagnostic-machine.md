@@ -58,3 +58,16 @@ The smoke test checks:
 These are **machine initialization** checks, not proof of executing FPK1
 firmware or booting QNX. This PR has not yet passed a QEMU compile/run
 in the current environment; rely on the existing CI once it executes.
+
+## Verified decoded primary Stage1 experiment
+
+The primary Stage1 ZV/LZF stream can now be decoded with matching CRC32 and QNX
+startup/imagefs checksums. Use `tools/fpk1/probe_stage1_startup.py` for bounded
+experiments; it handles temporary decoded bytes and deletes them afterward.
+The header-consistent stub load/PC is `0x80a00800`, branching to `0x80a06b98`.
+This applies to the **decoded** image, not the signed component or raw payload.
+
+The existing diagnostic machine executes startup but reaches a Data Abort
+(DFAR `0x3`). A command-line CBAR override moves progress to another Data Abort
+(DFAR `0xff7`); neither experiment boots QNX. See the latest complete Stage1
+section in [firmware research](fpk1-firmware-research.md) for commands and evidence.

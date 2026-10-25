@@ -1,0 +1,1 @@
+precision mediump float;varying mediump vec2 texCoord;uniform float alphaTex;uniform vec4 modulateColor;uniform sampler2D texture;void main(){vec4 t=texture2D(texture,texCoord);gl_FragColor=alphaTex!=0.0?vec4(modulateColor.rgb,t.a*modulateColor.a):t*modulateColor;}

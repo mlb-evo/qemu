@@ -1691,3 +1691,39 @@ writes) the driver configures K2 and I5 as GPIO inputs with `INT_LVL`/
 `INT_CLR` writes and interrupts masked; `pidin irqs` shows a single attached
 vector 0x165. The interrupt-pin publication path, and whether the GPIO bank
 interrupt routing in the Tegra30 model satisfies it, are the next step.
+
+### csi_pass: board revision, not emulation
+
+`devg-nvgpio` selects its pin table from `/dev/nvsku`: SKU 5 gives the
+27-entry FPK table (0x34-byte records: name, pin, flags). At 0x101e94 it then
+truncates that table at `csi_lock` for project 0xf19c when the board revision
+(nvsku field 3) is below 600 (0x258), dropping `csi_lock` (K2) and `csi_pass`
+(I5). Our synthetic revision 200 caused this. With revision 600
+(`BOARD_CMDLINE` now `699-61852-0005-600`), `/dev/nvgpio/csi_lock` and
+`/dev/nvgpio/csi_pass` exist, the CAL fatal error disappears and
+`kdgui_2dmgr` creates `/dev/sem/kdgui_2dmgr_ready`; `gtf2` no longer reports
+`Bad path 'kdgui_2dmgr_ready'`. The real revision is still unknown; 600 is the
+minimum that keeps the CSI pins. (An off-by-one in our PLT name mapping first
+mislabelled the imports; capstone prints ARM rotated immediates as a second
+`#n`.)
+
+### Shader translations from the GR3D stream
+
+The platform shader binaries embed the host1x GR3D upload stream (vertex
+program via method 0x206, fragment program from method 0x541).
+`tools/fpk1/tegra_shader_disasm.c` feeds it to grate's libcgc disassembler.
+`tools/fpk1/gl_shaders/` holds `MHI2_SHADER_CACHE` translations for the three
+binaries without an MHI2 entry (status per file in its README); the
+`kdgui_2dmgr` vertex program is transcribed instruction by instruction, the
+fragment programs are approximate.
+
+### Next blocker: gss_ipc's SPI link to KSS
+
+`gtf2` still issues no draws and `hmi` fails start-up. Its threads wait on
+`kdgui_2dmgr`, `broker` and `gss_ipc`; `gss_ipc` reports
+`IPC NOT RUNNING! (Transfer loop is hanging for more than 5000 ms)` in every
+run. Two of its threads sit in INTR on the Tegra SPI slave used through
+`libnvspislave` (`NvSpiSlaveInit`, `NvSpiSlaveTransferData`): the link to
+the KSS side of the cluster, which is not emulated. Its `spisimulation`
+option prints "SPI simulation not built in" in this production build. A KSS
+peer on the SPI slave controller (and its framing) is the next work item.

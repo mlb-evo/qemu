@@ -26,9 +26,11 @@ from probe_stage1_startup import build_atags, qmp, receive, write_stage2_nor, pa
 
 # Quickboot formats nvsku=%03d-%05d-%04d-%03d etc.; values are synthetic.
 # Startup accepts projects 61852/61858; display_init/i2s_init need SKU 5 for
-# the FPK GPIO/display path. The real EEPROM-derived values are unknown.
-BOARD_CMDLINE = ('mem=512M@0x80000000 nvsku=699-61852-0005-200 SkuVer=A0 '
-                 'ProdInfo=699-61852-0005-200 ProdVer=A0 is_e1888=0 emmc_skipinit=1 ')
+# the FPK GPIO/display path. devg-nvgpio drops csi_lock/csi_pass (needed by
+# kdgui_2dmgr's capture layer) for project 61852 below board revision 600.
+# The real EEPROM-derived values are unknown.
+BOARD_CMDLINE = ('mem=512M@0x80000000 nvsku=699-61852-0005-600 SkuVer=A0 '
+                 'ProdInfo=699-61852-0005-600 ProdVer=A0 is_e1888=0 emmc_skipinit=1 ')
 VERIFIED_SHA256 = 'adec09b69c71719a6e9d5db944e1467c335e3054e1c4aae5c02c7a93b0edd503'
 MMIO = re.compile(r'(?P<kind>read|write)[^\n]*?(?:offset|addr(?:ess)?)[ =:]*(?:0x)?(?P<off>[0-9a-fA-F]+)', re.I)
 

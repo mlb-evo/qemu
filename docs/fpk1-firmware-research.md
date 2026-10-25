@@ -8,8 +8,10 @@ Primary Stage1 is now reconstructed from **58 independently decoded ZV/LZF
 frames**, with matching CRC32, startup checksum and imagefs checksum. Its catalog
 contains 47 regular files (43 ELF), including the kernel and startup script.
 All 46 distinct DT_NEEDED names across Stage1/Stage2 have catalog basename
-coverage. A bounded QEMU experiment executes the decoded startup and reaches a
-Data Abort; a CBAR override moves the failure but does not boot QNX.
+coverage. An opt-in CPU0 + synthetic memory-ATAG + single-thread TCG experiment now
+traces the verified `procnto` entry and samples CPU0/CPU1 inside kernel code.
+Console and service startup remain unproven; see
+[CPU and memory handoff](#cpu-and-memory-handoff-procnto-entry-reached).
 See [complete Stage1 reconstruction](#complete-stage1-zvlzf-reconstruction-and-startup-script)
 for authoritative coordinates, identities and reproduction commands. Earlier
 raw-header and unframed-suffix sections below are historical investigation;
@@ -1229,3 +1231,131 @@ especially the first invalid pointer and the later DFAR 0xff7 access. Only then
 change the diagnostic CPU/handoff configuration, with measured before/after
 behavior. Recovery Stage1 and outer-envelope checksum fields remain separate
 unresolved profiles.
+
+## CPU and memory handoff: procnto entry reached
+
+The earlier two Data Aborts are now localized to individual instructions.
+`probe_stage1_startup.py --trace-faults` requests one instruction per TCG block
+and records CPU state immediately before the first fault in the two known
+startup regions. No firmware instructions are changed.
+
+| Configuration | Exact instruction | Relevant state | Result |
+| --- | --- | --- | --- |
+| Original AVP profile | 0x80a013b8: load from r3 + 4 | r3 = 0xffffffff; reset CBAR = 0 | Data Abort at 0x3 |
+| AVP with CBAR 0x50040000 | 0x80a0cc64: store through r5 + (r2 << 2) | r5 = 0xffffffff; r2 = 0x3fe | Data Abort at 0xff7 |
+
+For the first fault, the startup global at 0x80a18f98 contains 0xffffffff.
+With CBAR 0x50040000 that same global contains 0x50040000 and the fault is
+passed. The four G-cluster CPUs already receive this CBAR in `tegra30.c`;
+the diagnostic AVP surrogate does not. This accounts for the original profile's
+incompatible MPCore state without changing the shared SoC implementation.
+
+The second fault occurs while constructing MMU tables. The two allocations
+called from 0x80a07d90 and 0x80a07da0 return 0xffffffff; their results are stored
+at 0x80a1a7ec and 0x80a1a794. The later table store wraps to 0xff7. An earlier
+trace of the RAM-discovery path reaches 0x80a03544 with r0 = 0x80000000 and
+r1 = 0, after an unrecognized/empty board-information path chooses zero size.
+This is a failed RAM-discovery/allocation path, not a missing 512 MiB QEMU RAM
+mapping: the machine already maps that memory.
+
+### Synthetic ATAG memory description
+
+Startup at 0x80a00dfc explicitly maps data at **0x80000100**, searches for
+ATAG_CMDLINE (0x54410009), and extracts `mem=` using a space delimiter. Its
+memory-option buffer is at 0x80a19f24. Supplying **`mem=512M@0x80000000 `**
+including the trailing space lets the existing BSP discover the mapped RAM.
+The same text without a trailing space leaves that buffer empty and reproduces
+the 0xff7 fault. The probe deliberately preserves an explicit `--atag-cmdline`
+verbatim so this negative control remains reproducible.
+
+`--memory-handoff` creates synthetic ATAG_CORE, ATAG_MEM and ATAG_CMDLINE
+records, followed by the zero terminator, and loads them at 0x80000100 with
+QEMU's generic loader. Their wire format follows the existing
+`hw/arm/boot.c:set_kernel_args` implementation. ATAG_MEM declares the same
+512 MiB at 0x80000000 as the emulated RAM; it is not sufficient by itself for
+the observed BSP path. This supplies boot data expected by the firmware,
+without patching the decoded image or guessing a project/SKU identity.
+
+With the valid memory option, the observed L1/table descriptor at 0x80a1a7ec
+becomes 0x8000c06a and the table pointer at 0x80a1a794 becomes 0x8001c000.
+The original failed allocations and 0xff7 access disappear.
+
+### Execute on a G-cluster CPU
+
+Keeping the AVP as the executing processor after supplying CBAR and memory
+reaches the kernel but terminates QEMU with the explicit diagnostic
+`a9gtimer: num-cpu 4 but this cpu is 5!`. The modeled MPCore global timer has
+four CPU banks and validates `current_cpu->cpu_index`; AVP index 5 is outside
+that range (`hw/timer/a9gtimer.c`).
+
+The new **opt-in** `--boot-cpu cpu0` experiment instead uses existing QEMU
+interfaces: while paused, set CPU0's `start-powered-off` property false and
+AVP's true, reset, and let a generic loader set CPU0's PC to the validated stub.
+`hw/core/cpu-system.c` explicitly permits changing this property after realize.
+The FPK1 machine and shared Tegra30 sources remain unchanged. CPU0 already has
+CBAR 0x50040000 and the GIC/timer wiring appropriate to the G cluster.
+This bypasses the unmodeled real bootloader handoff; it does not establish how
+installed FPK1 hardware brings up its main CPU.
+
+### Measured result and limits
+
+The combined **CPU0 + memory ATAG + single-thread TCG** profile reaches
+**`proc/boot/procnto-smp-instr`'s catalog-owned ELF entry 0xfe054a58**. That exact
+address appears in the instruction trace. In two repeated 2,000 ms experiments:
+
+- The first recorded exception is a normal QNX SVC on CPU0, not Data Abort.
+- No Data Abort, Prefetch Abort or Undefined Instruction appears in the captured
+  trace. Both runs stop at the requested duration and exit by controlled QMP quit.
+- CPU0 and CPU1 are sampled at 0xfe0762f4, inside a PT_LOAD range of the verified
+  kernel ELF. CPUs 2/3 are at 0xfc411e30; this address is outside those ELF ranges
+  and is not labeled as proven kernel execution by the tool.
+- The console capture is empty. Startup-script execution, processes, resource
+  managers, storage mounts and the display are **not yet demonstrated**.
+
+An exploratory CPU0 run using the build's default multithreaded TCG terminated
+with host SIGILL; no cause or fix is assigned to that separate observation.
+The reproduced stable profile explicitly uses `--tcg-thread single`. The
+AVP/timer mismatch is also captured as a host exit, not misreported as a
+successful guest run. The probe now handles exited QEMU sessions and records
+stderr through a temporary file to avoid pipe backpressure from crash dumps.
+
+The tool reports actual reset CBAR, all CPU snapshots, kernel-entry trace
+presence, physical startup globals, the first fault's preceding register state,
+console text and QEMU exit status. SVC is excluded from `first_fault` because it
+is an ordinary kernel-entry mechanism. A zero QEMU exit status here means the
+probe quit the emulator cleanly, not that the guest completed boot.
+
+Reproduce the controlled comparisons against the existing local build:
+
+```sh
+# Exact first failing instruction:
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --trace-faults \
+  --json /tmp/fpk1-fault-baseline.json
+# Exact failed MMU-table store:
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --trace-faults --cbar 0x50040000 \
+  --json /tmp/fpk1-fault-cbar.json
+# Negative control: missing command-line delimiter, still faults at 0xff7:
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --boot-cpu cpu0 \
+  --atag-cmdline mem=512M@0x80000000 --tcg-thread single \
+  --json /tmp/fpk1-no-delimiter.json
+# Verified kernel-entry experiment:
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --boot-cpu cpu0 --memory-handoff \
+  --tcg-thread single --run-ms 2000 --json /tmp/fpk1-kernel-handoff.json
+```
+
+All **51** firmware-independent tests pass. Five new tests cover ATAG wire
+lengths, RAM declaration, exact delimiter preservation, invalid handoff inputs,
+register selection before the first fault and distinguishing SVC from faults.
+All experiments use the same CRC-verified decoded Stage1 and existing QEMU
+binary; there is no rebuild, firmware modification, attached disk/flash, or
+shared-machine change. Private temporary images/tags/traces are removed; only
+bounded diagnostic metadata is reported.
+
+Next: inspect kernel initialization/secondary-CPU state and establish whether
+startup-script commands run. Add process/console evidence before claiming a
+usable QNX system, then connect the known SIFS/eMMC dependencies to real backing
+images and verify the required device behavior.

@@ -71,3 +71,21 @@ The existing diagnostic machine executes startup but reaches a Data Abort
 (DFAR `0x3`). A command-line CBAR override moves progress to another Data Abort
 (DFAR `0xff7`); neither experiment boots QNX. See the latest complete Stage1
 section in [firmware research](fpk1-firmware-research.md) for commands and evidence.
+
+## Synthetic CPU0 and memory handoff
+
+The default AVP profile remains the baseline. To reproduce the measured entry
+into `procnto`, opt into CPU0 and supply the memory description expected by the
+BSP. The probe changes per-run QOM reset properties and loads synthetic ATAGs;
+it does not change this machine's default or patch the firmware.
+
+```sh
+python3 tools/fpk1/probe_stage1_startup.py <firmware.zip> \
+  --qemu ./build-fpk1/qemu-system-arm --boot-cpu cpu0 --memory-handoff \
+  --tcg-thread single --run-ms 2000 --json /tmp/fpk1-kernel-handoff.json
+```
+
+The exact kernel entry `0xfe054a58` is traced, and CPU0/CPU1 are sampled inside
+kernel code without the earlier Data Aborts. The console remains empty; running
+startup-script commands and services is still unverified. These are synthetic
+handoff experiments, not a reconstruction of the real FPK1 bootloader.

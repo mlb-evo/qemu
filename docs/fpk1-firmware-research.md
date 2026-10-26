@@ -1854,3 +1854,23 @@ The fpk1 glbridge now releases the record lock after 2 s of guest time
 without accesses by its holder (lock polling by waiters does not extend it)
 and drops unread reply bytes, so a client killed mid-record no longer blocks
 every other client. `tools/fpk1/check_glbridge.py` checks this with qtest.
+
+### Viewing rendered frames
+
+The display path is unchanged; frames are shown on the host instead.
+`run_stage1_console.py --gl-frames DIR` makes `glhost` write the primary frame
+(`DIR/primary.ppm`) and one dump per guest client (`DIR/mhi2-client-<pid>.ppm`,
+via the new `MHI2_GL_CLIENT_DIR`); `--viewer` also opens
+`tools/fpk1/view_frames.py` on that directory. The viewer (PySide6, reusing
+MHI2's `FrameView`) lists the sources, follows the most recently updated one
+unless a source is chosen, and only displays complete PPMs (glhost writes them
+atomically). `view_frames.py --snapshot out.png` saves the newest frame
+headless, e.g. with `QT_QPA_PLATFORM=offscreen`. On Ubuntu it needs
+`python3-pyside6.qtcore`, `python3-pyside6.qtgui` and
+`python3-pyside6.qtwidgets`. With a 135 s run, grengme's service menu is the
+newest client frame.
+
+`displaySupervisor` (`f9b134a4613cf687`) is now translated from its GR3D
+program: texture red times `Color.a` scales `Color.rgb`, alpha 1.0, no
+render-target load. It compiles and links; gtf2 does not draw yet, so it has
+not been seen on screen.

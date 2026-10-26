@@ -516,7 +516,11 @@ static void serve(int cfd)
                  menu_texture_reset_draw();
                  if(!primary_display_pid || current_pid==primary_display_pid)
                      dump_frame(frame_path());
-                 if(dump_clients){char path[128];snprintf(path,sizeof(path),"/tmp/mhi2-client-%u.ppm",current_pid);dump_frame(path);}
+                 if(dump_clients){
+                     /* MHI2_GL_CLIENT_DIR keeps per-run client dumps apart; /tmp by default. */
+                     const char *dir=getenv("MHI2_GL_CLIENT_DIR");char path[4096];
+                     snprintf(path,sizeof(path),"%s/mhi2-client-%u.ppm",dir&&*dir?dir:"/tmp",current_pid);
+                     dump_frame(path);}
                  eglSwapBuffers(display, surface);
                  if (frames < 3 || (frames % 120) == 0)
                      fprintf(stderr, "glhost: %lu frames swapped\n", frames + 1);

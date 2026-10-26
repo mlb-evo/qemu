@@ -16,6 +16,7 @@ import os
 import shutil
 import socket
 import struct
+import sys
 import subprocess
 import tempfile
 import time
@@ -79,7 +80,7 @@ def summarize_log(text, limit=64):
 def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_shift=None,
         emmc=None, extra=(), keep_dir=None, cmdline='mem=512M@0x80000000 ', log_limit_mib=64, progress=None,
         shell=(), shell_interval=4.0, diag_shell=False, screendump=None,
-        replacements=None, glhost=None):
+        replacements=None, glhost=None, gl_frames=None, viewer=False):
     if not 1 <= seconds <= 3600 or tcg_thread not in ('single', 'multi'):
         raise ValueError('Invalid run configuration')
     decoded, framing = decode_archive(archive)
@@ -111,15 +112,25 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             command += ['-icount', f'shift={icount_shift}']
         if emmc:
             command += ['-drive', f'if=sd,index=0,format=raw,file={emmc},snapshot=on']
-        helper = None
+        helper, viewers = None, []
         if glhost:
             # Same pipe transport as tools/mhi2/debug_shell_local.py.
             for name in ('gl.in', 'gl.out'):
                 os.mkfifo(root / name, 0o600)
             gl_in = os.open(root / 'gl.in', os.O_RDWR)
             gl_out = os.open(root / 'gl.out', os.O_RDWR)
+            env = dict(os.environ)
+            if gl_frames:
+                # Primary frame and one dump per guest client, for view_frames.py.
+                gl_frames.mkdir(parents=True, exist_ok=True)
+                env.update(MHI2_GL_FRAME=str(gl_frames / 'primary.ppm'), MHI2_GL_DUMP_CLIENTS='1',
+                           MHI2_GL_CLIENT_DIR=str(gl_frames))
             helper = subprocess.Popen([str(glhost)], stdin=gl_out, stdout=gl_in,
-                                      stderr=(root / 'glhost.log').open('wb'), cwd=root)
+                                      stderr=(root / 'glhost.log').open('wb'), cwd=root, env=env)
+            if gl_frames and viewer:
+                viewers.append(subprocess.Popen(
+                    [sys.executable, str(Path(__file__).with_name('view_frames.py')),
+                     '--frame', str(gl_frames / 'primary.ppm'), '--client-dir', str(gl_frames)]))
             command += ['-chardev', f'pipe,id=glbridge,path={root / "gl"}']
         command += list(extra)
         lines, offset, stop = [], 0, 'duration'
@@ -210,6 +221,8 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                 if proc.poll() is None:
                     proc.kill()
                     proc.communicate(timeout=10)
+                for window in viewers:
+                    window.terminate()
                 if helper is not None:
                     helper.terminate()
                     try:
@@ -256,16 +269,22 @@ def main():
     parser.add_argument('--stage2-replace', action='append', default=[], metavar='PATH=FILE',
                         help='replace a STAGE2.1 file in the synthetic NOR (e.g. lib/libEGL.so=shim.so)')
     parser.add_argument('--glhost', type=Path, help='host GLES renderer bound to the glbridge chardev')
+    parser.add_argument('--gl-frames', type=Path,
+                        help='directory for glhost primary and per-client frames')
+    parser.add_argument('--viewer', action='store_true',
+                        help='open tools/fpk1/view_frames.py on --gl-frames during the run')
     parser.add_argument('--keep-dir', type=Path, help='copy console/QEMU logs here')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
+    if args.viewer and not args.gl_frames:
+        parser.error('--viewer needs --gl-frames')
     result = run(args.archive, args.qemu, args.seconds, stage2_nor=not args.no_nor,
                  tcg_thread=args.tcg_thread, icount_shift=args.icount_shift, emmc=args.emmc,
                  keep_dir=args.keep_dir, cmdline=BOARD_CMDLINE if args.board_info else args.cmdline,
                  shell=args.shell.read_text().splitlines() if args.shell else (),
                  shell_interval=args.shell_interval, diag_shell=args.diag_shell, screendump=args.screendump,
                  replacements={p: Path(f).read_bytes() for p, f in (r.split('=', 1) for r in args.stage2_replace)},
-                 glhost=args.glhost, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
+                 glhost=args.glhost, gl_frames=args.gl_frames, viewer=args.viewer, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
     text = json.dumps(result, indent=2)
     if args.json:
         args.json.write_text(text + '\n')

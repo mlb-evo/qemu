@@ -9,8 +9,11 @@ as SPI master the way libnvspislave expects (recovered from Q7 0378):
 
 The Tegra may also raise CC6 while DD7 is low to request a cycle. Above that
 it speaks the gss_ipc frame format (gss_ipc_frames.py): answers GSS_STATUS
-with GSS_MODE_REQUEST(1, 2) (application run), sends GSS_ALIVE_REQUEST every
-second and logs everything else it receives. This is a research stand-in; it
+by sending the VS_HMI_VersionsInfo RTE signal and, once that is delivered,
+GSS_MODE_REQUEST(1, 2) (application run), sends GSS_ALIVE_REQUEST every
+second and logs everything else it receives. gss_ipc reads
+VersionsScreen_VS_VersionInfo right after Rte_Start ("Update HOOK from RTE")
+and logs "returned 1" (never received) if KSS has not sent it by then. This is a research stand-in; it
 knows nothing of KSS's real behaviour beyond those messages.
 """
 import argparse
@@ -116,6 +119,12 @@ class Link:
 class Kss:
     """GSS-Manager start-up and alive traffic on LUN 7."""
 
+    # Stand-in versions screen data: the update's part number and software version.
+    VERSIONS_INFO = ipc.vs_versions_info(part_number=b'8S0906961AK', hw_part_number=b'8S0906961AK',
+                                         sw_version=b'0378', kss_sw_version=b'0378')
+    # Gives gss_ipc's L4C receive task time to store the RTE data before Rte_Start.
+    RUN_REQUEST_DELAY = 0.2
+
     def __init__(self, log, persistency=bytes(16)):
         self.log = log
         self.persistency = persistency
@@ -124,6 +133,8 @@ class Kss:
         self.last_alive = None
         self.alive_counter = 0
         self.status = None
+        self.run_pending = False
+        self.run_request_at = None
 
     def queue(self, lun, cid, data):
         for record in ipc.fragment(lun, cid, data):
@@ -135,6 +146,9 @@ class Kss:
     def delivered(self):
         if self.outbox:
             self.outbox.pop(0)
+            if not self.outbox and self.run_pending:
+                self.run_pending = False
+                self.run_request_at = time.monotonic() + self.RUN_REQUEST_DELAY
 
     def receive(self, frame):
         try:
@@ -157,13 +171,22 @@ class Kss:
         if name != 'GSS_ALIVE_RESPONSE':
             self.log(f'rx lun {lun:#04x} cid {cid:#04x}{" " + name if name else ""}: {data.hex()}')
         if name == 'GSS_STATUS' and data == b'\x01':
-            # 1 = "IPC COM ready": request application run once per link-up.
-            lun_, cid_, payload = ipc.gss_mode_request(1, 2, self.persistency)
-            self.log('tx GSS_MODE_REQUEST mode 1 submode 2 (application run)')
-            self.queue(lun_, cid_, payload)
-            self.last_alive = time.monotonic()
+            # 1 = "IPC COM ready": send the RTE data gss_ipc reads at Rte_Start,
+            # then (in tick) request application run once per link-up.
+            self.log('tx RTE VS_HMI_VersionsInfo')
+            self.queue(*ipc.rte_signal(ipc.L4C_VS_HMI_VERSIONS_INFO, self.VERSIONS_INFO))
+            self.run_pending = True
+
+    def request_run(self):
+        lun, cid, payload = ipc.gss_mode_request(1, 2, self.persistency)
+        self.log('tx GSS_MODE_REQUEST mode 1 submode 2 (application run)')
+        self.queue(lun, cid, payload)
+        self.last_alive = time.monotonic()
 
     def tick(self):
+        if self.run_request_at is not None and time.monotonic() >= self.run_request_at:
+            self.run_request_at = None
+            self.request_run()
         if self.last_alive is not None and time.monotonic() - self.last_alive >= 1.0:
             self.last_alive = time.monotonic()
             self.alive_counter = (self.alive_counter + 1) & 0xff

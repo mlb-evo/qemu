@@ -1984,3 +1984,27 @@ the next cycle, and `GSS_RESET_REQUEST` (component 2, reason 6) now arrives.
 The remaining `stuck in first (CC6=0)` lines are from before `gss_ipc` starts
 (about 2 s) and from after the guest kernel shuts down (`Shutdown[0,3] ...
 lock exit 1` at about 135 s), which is a separate problem.
+
+### RTE signals over l4c: VS_VersionInfo (fixed)
+
+`Rte_Read_VersionsScreen_VS_VersionInfo returned 1!` came from start-up, not
+from missing traffic later on: on `GSS_SM_APP_RUN` gss_ipc calls `Rte_Start`
+and then "Update HOOK from RTE..." (0x1295a4), which reads RTE message 0x75
+once. `Rte_Read` (0x162578) returns per-signal status bits, and bit 0
+(bitmap 0x1cbb14, all set at init) means "never received". The peer sent the
+run request before any RTE data, so the read always failed.
+
+KSS delivers RTE data on LUN 0x11 (CIDs 0/1) as a byte stream of l4c
+messages (header built at 0x162b40, parsed at 0x1637a4): `ba be`, 14-bit
+payload length and 2-bit priority, 12-bit dataID (low nibble 0), CRC-8 of
+the payload (polynomial 0x1d, initial value 0; checked on receive). The
+dataID table at 0x1abdf0 (20-byte entries) gives the signal length and a
+callback; the byte after the signal is the status that the callback passes
+to `Rte_Write`. VS_HMI_VersionsInfo is dataID 0x24d, 56 bytes (unpacker
+0x167f0c: flags, zpm_version and zpm_version_db big endian, coding[15],
+TeileNum[11], hw_TeileNum[11], sw[4], kss_sw[4], hw[3], Flashdatum[3]).
+
+`kss_peer.py` now sends VS_HMI_VersionsInfo (stand-in part number
+8S0906961AK, software 0378, status 0) on IPC ready, and sends
+`GSS_MODE_REQUEST(1, 2)` 0.2 s after that frame is delivered. In a 40 s run
+the error is gone and gtf2 starts as before.

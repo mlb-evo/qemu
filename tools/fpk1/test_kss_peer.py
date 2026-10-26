@@ -60,17 +60,25 @@ class LinkTests(unittest.TestCase):
 
 
 class KssTests(unittest.TestCase):
-    def test_requests_application_run_once_on_ipc_ready(self):
+    def test_sends_versions_info_then_requests_application_run(self):
         kss = kss_peer.Kss(lambda text: None)
+        kss.RUN_REQUEST_DELAY = 0
         status = ipc.build_frame([(7, ipc.CID_GSS_STATUS, b'\x01', True)])
         kss.receive(status)
         kss.receive(status)
         self.assertEqual(len(kss.outbox), 1)
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
+        self.assertEqual((lun, cid, last), (ipc.LUN_RTE, 0, True))
+        self.assertEqual(data, ipc.l4c_message(ipc.L4C_VS_HMI_VERSIONS_INFO, kss.VERSIONS_INFO + b'\x00'))
+        kss.tick()
+        self.assertEqual(len(kss.outbox), 1, 'run request waits for the RTE data')
+        kss.delivered()
+        kss.tick()
+        lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
         self.assertEqual((lun, cid, data[:2], last), (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x02', True))
         kss.delivered()
+        kss.tick()
         self.assertEqual(kss.next_frame(), ipc.empty_frame())
-
 
 if __name__ == '__main__':
     unittest.main()

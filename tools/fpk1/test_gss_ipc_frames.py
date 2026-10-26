@@ -50,5 +50,27 @@ class FrameTests(unittest.TestCase):
         self.assertEqual((lun, cid, payload[:2], len(payload)), (7, 3, b'\x01\x02', 18))
 
 
+class L4cTests(unittest.TestCase):
+    def test_crc_matches_gss_ipc_table(self):
+        # First bytes of gss_ipc's table at 0x1b5cac are crc8 of single bytes.
+        table = bytes.fromhex('001d3a2774694e53e8f5d2cf9c81a6bb')
+        self.assertEqual(bytes(f.crc8([i]) for i in range(16)), table)
+
+    def test_header_matches_a_gss_ipc_record(self):
+        # GSS -> KSS record seen on LUN 0x11: dataID 0x311, two zero bytes.
+        self.assertEqual(f.l4c_message(0x311, b'\x00\x00'), bytes.fromhex('babe00083110000000'))
+        message = f.l4c_message(0x24d, b'\x01\x02\x03', priority=1)
+        self.assertEqual(message[2:6], bytes([0, 3 << 2 | 1, 0x24, 0xd0]))
+        self.assertEqual(message[6], f.crc8(b'\x01\x02\x03'))
+
+    def test_versions_info_layout(self):
+        info = f.vs_versions_info(part_number=b'8S0906961AK', sw_version=b'0378', zpm_version=0x102, flags=2)
+        self.assertEqual(len(info), 56)
+        self.assertEqual(info[:5], bytes([2, 1, 2, 0, 0]))
+        self.assertEqual(info[20:31], b'8S0906961AK')
+        self.assertEqual(info[42:46], b'0378')
+        lun, cid, message = f.rte_signal(f.L4C_VS_HMI_VERSIONS_INFO, info)
+        self.assertEqual((lun, cid, len(message), message[-1]), (0x11, 0, 7 + 57, 0))
+
 if __name__ == '__main__':
     unittest.main()

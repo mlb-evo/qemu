@@ -75,6 +75,23 @@ static void tegra30_gpio_eval_irq(Tegra30GpioState *s, int port, int pin,
     }
 }
 
+/*
+ * A level-triggered pin keeps its status set while the input holds the
+ * active level, so enabling, reconfiguring or clearing it must latch again
+ * (devg-nvgpio arms most_most_int while the INIC already holds it low).
+ */
+static void tegra30_gpio_relatch_levels(Tegra30GpioState *s, int port)
+{
+    uint32_t edge = s->int_lvl[port] >> INT_LVL_EDGE_SHIFT;
+    uint32_t level = s->int_enb[port] & ~edge &
+                     ~(s->in[port] ^ s->int_lvl[port]) & 0xff;
+
+    if (level & ~s->int_sta[port]) {
+        s->int_sta[port] |= level;
+        tegra30_gpio_update_bank(s, port / TEGRA30_GPIO_PORTS_PER_BANK);
+    }
+}
+
 /* External input line into the controller (driven by a companion device). */
 static void tegra30_gpio_set_in(void *opaque, int gpio, int level)
 {
@@ -202,25 +219,30 @@ static void tegra30_gpio_write(void *opaque, hwaddr offset, uint64_t value,
         s->int_enb[port] = tegra30_gpio_apply(s->int_enb[port], value,
                                               group == REG_MSK_INT_ENB, 0xff);
         tegra30_gpio_update_bank(s, bank);
+        tegra30_gpio_relatch_levels(s, port);
         break;
     case REG_INT_LVL:
         s->int_lvl[port] = value & 0xffffff;
+        tegra30_gpio_relatch_levels(s, port);
         break;
     case REG_MSK_INT_LVL:
         s->int_lvl[port] = tegra30_gpio_apply(s->int_lvl[port], value,
                                               true, 0xffffff);
+        tegra30_gpio_relatch_levels(s, port);
         break;
     case REG_INT_STA:
     case REG_INT_CLR:
         /* Write-1-to-clear the latched status bits. */
         s->int_sta[port] &= ~((uint32_t)value & 0xff);
         tegra30_gpio_update_bank(s, bank);
+        tegra30_gpio_relatch_levels(s, port);
         break;
     case REG_MSK_INT_STA:
         /* Masked status write clears the selected bits whose data is 0. */
         s->int_sta[port] = tegra30_gpio_apply(s->int_sta[port], value,
                                               true, 0xff);
         tegra30_gpio_update_bank(s, bank);
+        tegra30_gpio_relatch_levels(s, port);
         break;
     default:
         break;

@@ -1727,3 +1727,56 @@ run. Two of its threads sit in INTR on the Tegra SPI slave used through
 the KSS side of the cluster, which is not emulated. Its `spisimulation`
 option prints "SPI simulation not built in" in this production build. A KSS
 peer on the SPI slave controller (and its framing) is the next work item.
+
+## KSS: the cluster's second processor and its SPI link
+
+### KSS image
+
+`kss-application/.../KSSApplication.bin` is the firmware of the KSS
+microcontroller. `tools/fpk1/decompress_kss.py` decodes it: the HSP payload
+(offset and sizes from its SignInfo) is LZSS with a flag byte per eight
+tokens (most significant bit first; 0 literal, 1 two-byte reference with
+length `b0 >> 2` and distance `((b0 & 3) << 8) | b1`). Decoding consumes the
+whole stored payload (599,730 bytes) and yields exactly the declared
+1,048,564 bytes. The image is 32-bit ARM code linked at 0x01000000: word 0 is
+`ldr pc, [pc, #-4]` loading 0x01000008, which sets up the mode stacks near
+0xe7xx and jumps to Thumb code at 0x0100087d. Flash at 0x01000000 with RAM at
+0 fits Cortex-R-class automotive MCUs; the exact part is not identified.
+
+Strings show KSS supervising the Tegra side ("GSS IPC ready.",
+"GSS HMI run request.", "GSS Sound run request.",
+"GSS NAND maintenance run request.", "GSS startup stuck", "GSS Reset
+Requested"). This matches the Tegra logs: `gss_ipc` reports
+`IPC NOT RUNNING!` and `gtf2` (`hmi`) never starts because nothing on the
+KSS side requests it.
+
+### Tegra side
+
+`gss_ipc` uses `libnvspislave` as SPI slave (transport class
+`GSS_IPC_SpiNv`, 128-byte buffers). Above it are channels/CIDs (GSS-Manager
+`gssModeRequest`/`gssModeResponse` with a 16-byte payload,
+`gssResetRequest` 8 bytes, `sysModeRequest`, `gssAliveRequest`,
+`KssStatus`, ping with a watchdog, BAP, diagnosis, trace). The library maps
+CAR (0x60006000), APB_MISC (0x70000000), GPIO (0x6000d000) and SLINK1
+(0x7000d400) directly:
+
+- SLINK1 interrupt is vector 0x5b (91); its thread reads the RX FIFO count
+  from STATUS2 bits 21:16, moves 64 bytes per interrupt between the
+  RX (+0x180) / TX (+0x100) FIFOs and its buffers, and re-arms by writing
+  STATUS bits 26/27; STATUS bit 29 is checked as an error.
+- The handshake uses GPIO CC6 (`hsk_to_kss`, driven by Tegra) and DD7
+  (`hsk_to_gssn`, an edge interrupt from KSS) through the GPIO controller's
+  masked registers; `start_mode_to_gss` tells `gss_ipc` the KSS mode
+  ("KSS Application mode").
+- QEMU has no SLINK model; earlier logs show these accesses as
+  `unimplemented-memory` at 0x7000d400..0x7000d500.
+
+### Next steps
+
+1. Recover the frame format above the 64/128-byte SPI transfers from
+   `gss_ipc` (header, CID, length, CRC) and the start-up exchange that leads
+   KSS to send "GSS HMI run request".
+2. Model SLINK1 in slave mode (FIFOs, STATUS/STATUS2, interrupt 91) with a
+   chardev to an external KSS peer, plus the CC6/DD7 handshake lines.
+3. Write a minimal host KSS peer that answers the start-up and alive
+   messages and issues the HMI run request.

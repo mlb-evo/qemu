@@ -1970,3 +1970,17 @@ vehicle (RTE) data, so `gss_ipc` keeps logging
 `Rte_Read_VersionsScreen_VS_VersionInfo returned 1`. The GSS AliveManager
 sends one `GSS_RESET_REQUEST` (component 2, reason 6) after `audio_player`
 fails on its DAC; the peer only logs it.
+
+### Link abort deadlock (fixed)
+
+Later runs ended with the peer logging `link: stuck in first (CC6=1),
+dropping DD7` every 2.5 s for the rest of the run. The model stopped reading
+the chardev while an `X` waited for the slave to arm, so the peer's `D 0`
+(its abort after a 2 s stall) never reached the guest: DD7 stayed high, no
+edge came, and the waiting `X` was never armed. The model now always reads
+the chardev, and `D 0` drops a waiting `X`. In a 150 s run the link made
+11190 cycles (11182 frames delivered). An isolated stall at 16.8 s cleared on
+the next cycle, and `GSS_RESET_REQUEST` (component 2, reason 6) now arrives.
+The remaining `stuck in first (CC6=0)` lines are from before `gss_ipc` starts
+(about 2 s) and from after the guest kernel shuts down (`Shutdown[0,3] ...
+lock exit 1` at about 135 s), which is a separate problem.

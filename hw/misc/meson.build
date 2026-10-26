@@ -182,6 +182,7 @@ system_ss.add(when: 'CONFIG_TEGRA30_PMC', if_true: files('tegra30_pmc.c'))
 specific_ss.add(when: 'CONFIG_TEGRA30_FLOW', if_true: files('tegra30_flow.c'))
 system_ss.add(when: 'CONFIG_TEGRA30_ARB_SEMA', if_true: files('tegra30_arb_sema.c'))
 system_ss.add(when: 'CONFIG_TEGRA30_SNOR', if_true: files('tegra30_snor.c'))
+system_ss.add(when: 'CONFIG_FPK1', if_true: files('tegra30_slink.c'))
 system_ss.add(when: 'CONFIG_MMX_IOC', if_true: files('mmx_ioc.c'))
 
 system_ss.add(when: 'CONFIG_AXIADO_CLK', if_true: files('axiado_clk.c'))

@@ -16,6 +16,8 @@
 #include "hw/arm/tegra30.h"
 #include "hw/core/loader.h"
 #include "hw/core/qdev-properties.h"
+#include "hw/i2c/i2c.h"
+#include "hw/misc/tegra30_slink.h"
 #include "hw/sd/sd.h"
 #include "system/blockdev.h"
 #include "system/block-backend.h"
@@ -365,6 +367,37 @@ static void fpk1_init(MachineState *machine)
         qdev_realize_and_unref(emmc, qdev_get_child_bus(soc->sdmmc[3], "sd-bus"),
                                &error_fatal);
     }
+
+    /*
+     * SLINK1 (SBC1) as SPI slave for gss_ipc's link to KSS, the cluster
+     * microcontroller (libnvspislave, interrupt 91).  The master is an
+     * external process on -chardev ...,id=kss; CC6 (hsk_to_kss, Tegra output)
+     * and DD7 (hsk_to_gssn, KSS output) are the handshake lines.  Without the
+     * chardev the slave never completes a transfer, as before.
+     */
+    DeviceState *slink = qdev_new(TYPE_TEGRA30_SLINK);
+    Chardev *kss = qemu_chr_find("kss");
+    if (kss) {
+        qdev_prop_set_chr(slink, "chardev", kss);
+    }
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(slink), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(slink), 0, 0x7000d400);
+    sysbus_connect_irq(SYS_BUS_DEVICE(slink), 0,
+                       qdev_get_gpio_in(DEVICE(&soc->a9mpcore), 59));
+    qdev_connect_gpio_out(DEVICE(&soc->gpio), TEGRA30_GPIO_NR(28, 6),
+                          qdev_get_gpio_in_named(slink, "hsk-in", 0));
+    qdev_connect_gpio_out_named(slink, "hsk-out", 0,
+                                qdev_get_gpio_in(DEVICE(&soc->gpio),
+                                                 TEGRA30_GPIO_NR(29, 7)));
+
+    /*
+     * devg-nvtmon (Stage3) reads an NCT1008-compatible local/remote diode
+     * sensor at 0x4c through /dev/i2c5, the DVC controller; its
+     * /dev/nvtmon/current* nodes feed gtf2's temperature monitor.
+     */
+    I2CSlave *tmon = i2c_slave_new("tegra30-i2c-dbg", 0x4c);
+    qdev_prop_set_bit(DEVICE(tmon), "temperature-sensor", true);
+    i2c_slave_realize_and_unref(tmon, soc->i2c[4].bus, &error_fatal);
 
     /*
      * For this initial diagnostic harness, only loading into DRAM is allowed.

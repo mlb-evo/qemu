@@ -1569,7 +1569,10 @@ samples from STAGE2.2 are found. The Stage3 handoff happens through the
    The NVIDIA display/host1x/2D path is not emulated. This is the next
    priority, as gtf2 is the cluster HMI.
 2. I2C peripherals: TLV320DAC3100 DAC (`audio_player` requests reboot), MOST
-   INIC over I2C (`NSR_E_NO_COMM` loop), LVDS serializers, `devg-nvtmon`.
+   INIC over I2C (`NSR_E_NO_COMM` loop), LVDS serializers. (`devg-nvtmon`
+   now finds an NCT1008-compatible sensor at DVC 0x4c; gtf2 still logs one
+   `Can't open /dev/nvtmon/...` because its first poll runs before Stage3
+   starts `devg-nvtmon`, and later polls succeed.)
 3. `/var/swdl` missing for swdlclient; `devf` finds no flash device.
 4. Frequent unimplemented CAR reads (0x8c, 0x9c, 0xbc, 0x30c, ...) and
    APB_MISC offset 0x324c polling; not yet linked to a failure.
@@ -1874,3 +1877,95 @@ newest client frame.
 program: texture red times `Color.a` scales `Color.rgb`, alpha 1.0, no
 render-target load. It compiles and links; gtf2 does not draw yet, so it has
 not been seen on screen.
+
+## Steering-wheel buttons: path to the HMI
+
+How the buttons reach the cluster software (static analysis plus runs with
+`--diag-shell`):
+
+- KSS receives the CAN signal `MFL_Tasten_Kon_01` (`MFL_Tastencode_1/2`,
+  `MFL_Eventcode_1/2`, `MFL_Marke`, `MFL_Variante`, one byte each in
+  `gss_ipc`'s trace formatter) and forwards it over the SPI link. `gss_ipc`
+  keeps it in its RTE (`RTE incoming event: MFL_Tasten_Kon_01`,
+  `Rte_Read_MFL_Tasten_Kon_01_...`) and passes it on through the comm service
+  `asi.gss.ipc.rte.hmi.IHmiKss` ("data ignored, since client not connected"
+  when no HMI client is attached).
+- `gtf2` is that client. `GSS_APP_KeyEventConverter` handles
+  `handleKeyEventMfl(keycode1, evcode1, keycode2, evcode2)`, maps each keycode
+  through a table ("MFL keycode=..., idx, is_but, ev_id, ticks"; unknown codes
+  are logged) and dispatches buttons and roller ticks to the HMI, telephone,
+  warnings, MFL config, or the engineering menu. MMI CAN key, joystick and
+  touchpad messages use the same converter.
+- The engineering menu (`grengme`) gets its keys from `gtf2`: `gtf2` provides
+  `gem.KeyInput` (`GSS_HMI_GTF2_GEMKeyInputServiceImpl`, `GSS_APP_GemHandler`:
+  OK, BACK, roller UP/DOWN with ticks) and opens GEM on an MFL key combination
+  (`detectMflKeyCombination`). `grengme`'s console key backend
+  (`libengmenufw`, '4'/'6' roller, '5' select, '0' back) is disabled by
+  `/config/gem.json` (`"consoleInput":false`), and its stdin is not the serial
+  console anyway (`pidin` shows fd 0 on procnto, as for any background job of
+  the non-interactive Stage3 script). Bytes on the serial console go to the
+  login shell; none of `grengme`'s threads reads `/dev/ser1`.
+- `gtf2` itself is started by `gss_ipc`'s manager through
+  `asi.gss.manager.hmi.IGssMan2HMI` (`GssMan2HMIReplyImpl::activate()`),
+  which needs the KSS run request (GSS_MODE_REQUEST 1/2 on LUN 7).
+
+So without patching, buttons need the KSS peer: model SLINK1 and the CC6/DD7
+handshake, have a host KSS peer bring `gss_ipc` up and request application
+run, then send `MFL_Tasten_Kon_01` updates when buttons are pressed. Still
+open: the LUN/record layout of RTE signal updates in `gss_ipc`, and the MFL
+keycode table in `gtf2`. `stage3/bin/app/gssipc-kbd` (a firmware test tool
+linked against the IHmiKss and BAP proxies, printing
+"Key1 %d, Event1 %x, Key2 %d, Event2 %x") is a reference for the expected
+values.
+
+## SLINK1 slave model and a host KSS stand-in: gtf2 starts
+
+### libnvspislave protocol
+
+Recovered from `lib/libnvspislave.so` (Stage2.1):
+
+- It maps SLINK1 (0x7000d400), GPIO, APB_MISC and CAR directly. Pins are
+  named in its init data: DD7 is the input from KSS (interrupt vector
+  `0xa0 + gpio`, polarity flipped after every interrupt so both edges are
+  seen), CC6 the output to KSS.
+- SLINK is used in packed PIO mode with the RX-complete interrupt (vector 91):
+  TX/RX FIFO at +0x100/+0x180, STATUS2 bits 21:16 give the RX word count (16
+  words = 64 bytes, anything else is read as one byte), DMA_CTL bit 31 starts
+  a transfer and clears when it completes, STATUS bits 26/27 flush TX/RX and
+  0x230d0000 clears the error bits.
+- `NvSpiSlaveTransferData` moves a 128-byte frame in two 64-byte halves,
+  `NvSpiSlaveTransferAck` one byte. Seen from the master: raise DD7; when CC6
+  rises clock 64 bytes; when CC6 falls clock 64 bytes; when CC6 rises clock
+  the ACK byte; when CC6 falls drop DD7. DD7 falling mid-transfer aborts it.
+  The Tegra raises CC6 with DD7 low to request a cycle when it has data.
+
+### Model and peer
+
+- `hw/misc/tegra30_slink.c` (`tegra30-slink`, FPK1 machine only) implements
+  that subset as a slave. The master is an external process on
+  `-chardev ...,id=kss`, with a small byte protocol (`D` level for DD7,
+  `X n data` to clock n bytes; `C` level for CC6, `R n data` back). CC6 and
+  DD7 are wired through the existing GPIO model.
+- `tools/fpk1/kss_peer.py` is the master: it runs the handshake every 10 ms,
+  speaks the gss_ipc frame format, answers `GSS_STATUS 1` ("IPC COM ready")
+  with `GSS_MODE_REQUEST(1, 2)` and sends `GSS_ALIVE_REQUEST` every second.
+  `run_stage1_console.py --kss` (also through `run.sh --kss`) starts it and
+  keeps its log as `kss.log`.
+
+### Result
+
+The link runs from the first second: `gss_ipc` answers with
+`GSS_MODE_RESPONSE 01 02`, its status goes 1 -> 7 -> 5/6, it sends RTE/HMI
+traffic on LUN 0x11 (records starting with `ba be`) and a trace record on
+LUN 0x12, and `gtf2` is activated: it logs its configuration
+(`SW_GSS_Version: C1_AU736_0378_1280_prod`), loads Kanzi materials and
+draws its first frame through the GLES bridge, a black screen with the
+version overlay (`--:--`, `1.1.2012`, the software version). In a 240 s
+run the link made 7816 cycles (7758 frames delivered; the rest were retried
+while `gss_ipc` was busy). The cluster itself is not drawn yet: gtf2 loads its
+Kanzi materials and glhost has no translation for 243 distinct shaders
+(`UNSUPPORTED NVIDIA shader hash=...` in glhost.log), and the peer sends no
+vehicle (RTE) data, so `gss_ipc` keeps logging
+`Rte_Read_VersionsScreen_VS_VersionInfo returned 1`. The GSS AliveManager
+sends one `GSS_RESET_REQUEST` (component 2, reason 6) after `audio_player`
+fails on its DAC; the peer only logs it.

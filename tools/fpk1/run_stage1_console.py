@@ -80,7 +80,7 @@ def summarize_log(text, limit=64):
 def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_shift=None,
         emmc=None, extra=(), keep_dir=None, cmdline='mem=512M@0x80000000 ', log_limit_mib=64, progress=None,
         shell=(), shell_interval=4.0, diag_shell=False, screendump=None,
-        replacements=None, glhost=None, gl_frames=None, viewer=False):
+        replacements=None, glhost=None, gl_frames=None, viewer=False, keys=None, kss=False):
     if not 1 <= seconds <= 3600 or tcg_thread not in ('single', 'multi'):
         raise ValueError('Invalid run configuration')
     decoded, framing = decode_archive(archive)
@@ -112,7 +112,15 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             command += ['-icount', f'shift={icount_shift}']
         if emmc:
             command += ['-drive', f'if=sd,index=0,format=raw,file={emmc},snapshot=on']
-        helper, viewers = None, []
+        helper, viewers, key_fd = None, [], None
+        if viewer and not keys:
+            keys = root / 'keys'
+        if keys:
+            # Raw bytes written here go to the serial console as typed keys
+            # (grengme reads its console; view_frames.py writes button presses).
+            if not Path(keys).exists():
+                os.mkfifo(keys, 0o600)
+            key_fd = os.open(keys, os.O_RDWR | os.O_NONBLOCK)
         if glhost:
             # Same pipe transport as tools/mhi2/debug_shell_local.py.
             for name in ('gl.in', 'gl.out'):
@@ -130,8 +138,16 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             if gl_frames and viewer:
                 viewers.append(subprocess.Popen(
                     [sys.executable, str(Path(__file__).with_name('view_frames.py')),
-                     '--frame', str(gl_frames / 'primary.ppm'), '--client-dir', str(gl_frames)]))
+                     '--frame', str(gl_frames / 'primary.ppm'), '--client-dir', str(gl_frames),
+                     '--keys', str(keys)]))
             command += ['-chardev', f'pipe,id=glbridge,path={root / "gl"}']
+        peer = None
+        if kss:
+            # Host KSS stand-in as SPI master on SLINK1 (tools/fpk1/kss_peer.py).
+            command += ['-chardev', f'socket,id=kss,path={root / "kss.sock"},server=on,wait=off']
+            peer = subprocess.Popen([sys.executable, str(Path(__file__).with_name('kss_peer.py')),
+                                     str(root / 'kss.sock')],
+                                    stdout=(root / 'kss.log').open('wb'), stderr=subprocess.STDOUT)
         command += list(extra)
         lines, offset, stop = [], 0, 'duration'
         with errors.open('wb') as error_stream:
@@ -181,6 +197,16 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                     except BlockingIOError:
                         pass
                     now = time.monotonic()
+                    if key_fd is not None:
+                        try:
+                            typed = os.read(key_fd, 256)
+                        except BlockingIOError:
+                            typed = b''
+                        if typed:
+                            uart.sendall(typed)
+                            lines.append(dict(t=round(now - started, 2), text='>>> keys ' + repr(typed)))
+                            if progress:
+                                progress(lines[-1])
                     prompt = (b'login:', b'# ') if diag_shell else (b'login:',)
                     recent = pending + b''.join(l['text'].encode('latin-1') for l in lines[-5:])
                     if queue and login_at is None and any(p in recent for p in prompt):
@@ -192,7 +218,7 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                         if progress:
                             progress(lines[-1])
                         next_send = now + shell_interval
-                    time.sleep(.2)
+                    time.sleep(.05 if key_fd is not None else .2)
                 uart.close()
                 if pending:
                     lines.append(dict(t=round(time.monotonic() - started, 2), text=pending.decode('latin-1')))
@@ -223,6 +249,10 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                     proc.communicate(timeout=10)
                 for window in viewers:
                     window.terminate()
+                if key_fd is not None:
+                    os.close(key_fd)
+                if peer is not None:
+                    peer.terminate()
                 if helper is not None:
                     helper.terminate()
                     try:
@@ -241,7 +271,7 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
     finally:
         if keep_dir:
             keep_dir.mkdir(parents=True, exist_ok=True)
-            for name in ('console.log', 'qemu.log', 'stderr.log', 'glhost.log'):
+            for name in ('console.log', 'qemu.log', 'stderr.log', 'glhost.log', 'kss.log'):
                 if (root / name).exists():
                     shutil.copy(root / name, keep_dir / name)
         shutil.rmtree(root, ignore_errors=True)
@@ -273,6 +303,11 @@ def main():
                         help='directory for glhost primary and per-client frames')
     parser.add_argument('--viewer', action='store_true',
                         help='open tools/fpk1/view_frames.py on --gl-frames during the run')
+    parser.add_argument('--keys', type=Path,
+                        help='FIFO (created if missing) whose bytes are typed on the serial console; '
+                             'defaults to one passed to --viewer')
+    parser.add_argument('--kss', action='store_true',
+                        help='attach tools/fpk1/kss_peer.py as SPI master on SLINK1 (log: kss.log)')
     parser.add_argument('--keep-dir', type=Path, help='copy console/QEMU logs here')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
@@ -284,7 +319,7 @@ def main():
                  shell=args.shell.read_text().splitlines() if args.shell else (),
                  shell_interval=args.shell_interval, diag_shell=args.diag_shell, screendump=args.screendump,
                  replacements={p: Path(f).read_bytes() for p, f in (r.split('=', 1) for r in args.stage2_replace)},
-                 glhost=args.glhost, gl_frames=args.gl_frames, viewer=args.viewer, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
+                 glhost=args.glhost, gl_frames=args.gl_frames, viewer=args.viewer, keys=args.keys, kss=args.kss, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
     text = json.dumps(result, indent=2)
     if args.json:
         args.json.write_text(text + '\n')

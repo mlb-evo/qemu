@@ -8,20 +8,88 @@ rename. This viewer lists those sources, follows the most recently updated one
 unless a source is chosen, and polls for new frames. `--snapshot FILE.png`
 saves the current frame without opening a window (usable headless).
 These are host-rendered GLES frames, not the guest display controller.
+
+With --keys FIFO (run_stage1_console.py passes one), a steering-wheel button
+panel types keys on the guest serial console using grengme's console key
+bytes (libengmenufw): '4'/'6' turn the roller by -1/+1 tick, '5' selects,
+'0' goes back. The firmware disables that backend (/config/gem.json
+"consoleInput":false) and grengme's stdin is not the console, so these bytes
+reach the login shell, not the menu. In the car the buttons reach the HMI
+through KSS (MFL_Tasten_Kon_01 -> gss_ipc -> gtf2); moving the panel onto
+tools/fpk1/kss_peer.py is the intended route.
 """
 import argparse
+import os
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QImage
-from PySide6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QLabel,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout,
+                               QLabel, QToolButton, QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'mhi2'))
 from viewer_widgets import FrameView, fit_to_screen  # noqa: E402
 
 FOLLOW = 'Most recent'
+
+# Right steering-wheel cluster: (label, row, column, console byte or None,
+# host shortcuts). The roller's up/down are its turn direction.
+WHEEL_BUTTONS = (
+    ('\u25c1', 0, 0, None, ()),
+    ('\u25b7', 0, 1, None, ()),
+    ('\u25b2', 1, 0, b'4', ('Up',)),
+    ('VIEW', 1, 1, None, ()),
+    ('OK', 2, 0, b'5', ('Return', 'Enter')),
+    ('\u21a9', 2, 1, b'0', ('Backspace', 'Esc')),
+    ('\u25bc', 3, 0, b'6', ('Down',)),
+)
+
+
+def send_keys(path, data):
+    """Write bytes to the launcher's key FIFO; False when nobody reads it."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        return os.write(fd, data) == len(data)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+class WheelPanel(QWidget):
+    def __init__(self, keys, report):
+        super().__init__()
+        self.keys, self.report = keys, report
+        grid = QGridLayout(self)
+        grid.addWidget(QLabel('Steering wheel'), 4, 0, 1, 2, Qt.AlignHCenter)
+        for label, row, column, data, shortcuts in WHEEL_BUTTONS:
+            button = QToolButton()
+            button.setText(label)
+            button.setMinimumSize(56, 40)
+            if data is None:
+                button.setEnabled(False)
+                button.setToolTip('No console key in grengme (needs the KSS path)')
+            else:
+                names = ', '.join(shortcuts)
+                button.setToolTip(f'Types {data.decode()!r} on the console ({names})')
+                button.clicked.connect(lambda _=False, d=data: self.press(d))
+                for name in shortcuts:
+                    QShortcut(QKeySequence(name), self, activated=lambda d=data: self.press(d),
+                              context=Qt.ApplicationShortcut)
+            grid.addWidget(button, row, column)
+
+    def press(self, data):
+        if send_keys(self.keys, data):
+            self.report(f'sent {data.decode()!r}')
+        else:
+            self.report(f'cannot send {data.decode()!r}: no reader on {self.keys}')
+
+    def wheel(self, steps):
+        self.press((b'4' if steps > 0 else b'6') * abs(steps))
 
 
 def read_ppm(path):
@@ -63,7 +131,7 @@ def newest(found):
 
 
 class Viewer(QWidget):
-    def __init__(self, frame, client_dir):
+    def __init__(self, frame, client_dir, keys=None):
         super().__init__()
         self.frame_path, self.client_dir = frame, client_dir
         self.setWindowTitle('FPK1 glhost frames')
@@ -74,10 +142,20 @@ class Viewer(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel('Source:'))
         top.addWidget(self.choice, 1)
+        self.keys_status = QLabel()
+        middle = QHBoxLayout()
+        middle.addWidget(self.view, 1)
+        self.panel = None
+        if keys:
+            self.panel = WheelPanel(keys, self.keys_status.setText)
+            middle.addWidget(self.panel, 0, Qt.AlignVCenter)
         layout = QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addWidget(self.view, 1)
-        layout.addWidget(self.status)
+        layout.addLayout(middle, 1)
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.status, 1)
+        bottom.addWidget(self.keys_status)
+        layout.addLayout(bottom)
         self.stamp = None
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
@@ -106,6 +184,12 @@ class Viewer(QWidget):
             self.status.setText(f'{name}: {image.width()}x{image.height()} ({path})')
             self.view.update()
 
+    def wheelEvent(self, event):
+        # Mouse wheel over the window turns the roller (one byte per notch).
+        steps = event.angleDelta().y() // 120
+        if self.panel and steps:
+            self.panel.wheel(steps)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -114,6 +198,8 @@ def main():
     parser.add_argument('--client-dir', type=Path, default=Path('/tmp'),
                         help='directory of mhi2-client-<pid>.ppm dumps (MHI2_GL_CLIENT_DIR)')
     parser.add_argument('--snapshot', type=Path, help='save the newest frame as PNG and exit')
+    parser.add_argument('--keys', type=Path,
+                        help="launcher key FIFO (run_stage1_console.py --keys); shows the button panel")
     args = parser.parse_args()
     if args.snapshot:
         found = sources(args.frame, args.client_dir)
@@ -124,7 +210,7 @@ def main():
         print(f'{name} -> {args.snapshot}')
         return
     app = QApplication(sys.argv)
-    viewer = Viewer(args.frame, args.client_dir)
+    viewer = Viewer(args.frame, args.client_dir, args.keys)
     fit_to_screen(viewer)
     viewer.show()
     sys.exit(app.exec())

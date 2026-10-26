@@ -1825,3 +1825,32 @@ observed working.
 `tools/fpk1/qnx_elf_disasm.py` is the PLT-aware disassembler used for this
 (QNX binaries have no section headers; ARM immediates are decoded from the
 encoding).
+
+## First rendered FPK1 screen
+
+With the GLES bridge, the Stage3 service application `grengme` (started on
+the gtf2 fallback path) renders its service menu: a green frame with the
+title "Main" and the entries "Debugging" and "GSS". `glhost` writes it to
+`/tmp/mhi2-client-<pid>.ppm` with `MHI2_GL_DUMP_CLIENTS=1`; it is not on the
+display controller, because `kdgui_2dmgr`, which composes client windows,
+does not compose without the KSS run request.
+
+Two fixes to the 2D compositor fragment translation
+(`tools/fpk1/gl_shaders/23522ab1913cc1e6-948.glsl`) were needed, found by
+decoding a `MHI2_GL_CAPTURE` stream:
+
+- `alphaTex` is set with `glUniform1i` (1 for GL_ALPHA glyph textures, 0 for
+  RGBA icons). Declared as `float`, the call failed and glyphs were drawn as
+  premultiplied black; it is now a `bool`.
+- Blend mode 1 expects premultiplied output; without it transparent glyph
+  texels were drawn as solid squares.
+
+Glyphs are uploaded as small GL_ALPHA textures with unaligned rows
+(e.g. 11x16), so the guest's `glPixelStorei(GL_UNPACK_ALIGNMENT, 1)` matters.
+Uniform locations in this program: alphaTex, aspect, modulateColor, quad,
+rotation, texRect, sampler (host-assigned order).
+
+The fpk1 glbridge now releases the record lock after 2 s of guest time
+without accesses by its holder (lock polling by waiters does not extend it)
+and drops unread reply bytes, so a client killed mid-record no longer blocks
+every other client. `tools/fpk1/check_glbridge.py` checks this with qtest.

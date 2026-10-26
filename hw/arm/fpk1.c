@@ -9,6 +9,7 @@
 #include "qemu/units.h"
 #include "qemu/error-report.h"
 #include "qemu/cutils.h"
+#include "qemu/timer.h"
 #include "chardev/char-fe.h"
 #include "qapi/error.h"
 #include "hw/core/boards.h"
@@ -41,6 +42,7 @@ typedef struct FPK1MachineState {
     uint8_t *gl_bulk_tx, *gl_rx;
     unsigned gl_rx_count;
     bool gl_locked;
+    QEMUTimer *gl_lock_timer;
     uint8_t gl_pending[GL_TX_BYTES];
     unsigned gl_tx_head, gl_tx_count;
     guint gl_watch;
@@ -130,9 +132,40 @@ static void gl_receive(void *opaque, const uint8_t *buf, int size)
     memcpy(s->gl_rx + s->gl_rx_count, buf, size);
     s->gl_rx_count += size;
 }
+/*
+ * A client killed while holding the record lock would block every other
+ * client. Release it after 2 s of guest time without bridge accesses and
+ * drop any reply bytes the dead client left unread.
+ */
+#define GL_LOCK_IDLE_NS (2 * NANOSECONDS_PER_SECOND)
+
+static void gl_lock_touch(FPK1MachineState *s)
+{
+    if (s->gl_locked) {
+        timer_mod(s->gl_lock_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + GL_LOCK_IDLE_NS);
+    }
+}
+
+static void gl_lock_expired(void *opaque)
+{
+    FPK1MachineState *s = opaque;
+
+    if (s->gl_locked) {
+        warn_report("glbridge: releasing record lock idle for 2 s");
+        s->gl_locked = false;
+        s->gl_rx_count = 0;
+        qemu_chr_fe_accept_input(&s->gl_chr);
+    }
+}
+
 static uint64_t gl_read(void *opaque, hwaddr addr, unsigned size)
 {
     FPK1MachineState *s = opaque;
+    /* Waiters polling the lock (addr 16) must not extend the holder's lease. */
+    if (addr != 16) {
+        gl_lock_touch(s);
+    }
     if (addr == 0) {
         return 0x474c4252;
     }
@@ -142,6 +175,7 @@ static uint64_t gl_read(void *opaque, hwaddr addr, unsigned size)
         bool held = s->gl_locked || s->gl_tx_count > GL_TX_BYTES - GL_MAX_RECORD;
         if (!held) {
             s->gl_locked = true;
+            gl_lock_touch(s);
         }
         return held;
     }
@@ -172,8 +206,10 @@ static uint64_t gl_read(void *opaque, hwaddr addr, unsigned size)
 static void gl_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
 {
     FPK1MachineState *s = opaque;
+    gl_lock_touch(s);
     if (addr == 16) {
         s->gl_locked = false;
+        timer_del(s->gl_lock_timer);
     } else if (((addr == 20 && value <= 4096) || addr == 36) &&
                value <= s->gl_rx_count) {
         s->gl_rx_count -= value;
@@ -309,6 +345,7 @@ static void fpk1_init(MachineState *machine)
         ms->gl_bulk_tx = memory_region_get_ram_ptr(&ms->gl_bulk);
         ms->gl_rx = ms->gl_bulk_tx + GL_BULK_BYTES;
         qemu_chr_fe_init(&ms->gl_chr, glchr, &error_fatal);
+        ms->gl_lock_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, gl_lock_expired, ms);
         qemu_chr_fe_set_handlers(&ms->gl_chr, gl_can_receive, gl_receive,
                                  gl_event, NULL, ms, NULL, true);
         memory_region_init_io(&ms->gl_mmio, OBJECT(machine), &gl_ops, ms,

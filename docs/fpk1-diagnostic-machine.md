@@ -119,3 +119,34 @@ python3 tools/fpk1/run_stage1_console.py <firmware.zip> \
 
 See "Bootloader command line, eMMC and boot to Stage3" in the
 [firmware research](fpk1-firmware-research.md) for evidence and limits.
+
+## Quick start: build once, then `run.sh`
+
+Like MHI2's `build_audi.py`, `tools/fpk1/build_fpk1.py` prepares a new
+directory with everything needed to watch FPK1 boot:
+
+```sh
+python3 tools/fpk1/build_fpk1.py \
+  --archive /path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip \
+  --output "$PWD/../fpk1-build"        # add --qemu build-fpk1/qemu-system-arm to reuse a build
+bash ../fpk1-build/run.sh              # console in the terminal, frames in a window
+bash ../fpk1-build/run.sh --headless   # no window; frames are still saved
+```
+
+The output holds `qemu/qemu-system-arm`, the GLES `bridge/` (guest shim and
+`glhost`), `media/emmc.img`, a `venv/` with `lzokay` (sharing system PySide6)
+and `build-manifest.json`. The archive is referenced, not copied; the output
+directory must not exist. Each run writes logs, `result.json` and frames to
+`runs/<time>/`. `run.sh` accepts `--seconds N` (default 1800) and any
+`run_stage1_console.py` option; Ctrl-C stops it.
+
+Requirements: `arm-none-eabi-gcc`, Mesa/NVIDIA EGL and GLES development files,
+FFmpeg (`libavcodec-dev`, `libavutil-dev`, `libswscale-dev`), `liblzo2`,
+`python3-venv` and, for the window, `python3-pyside6.qtcore`, `.qtgui` and
+`.qtwidgets`. Building QEMU also needs `ninja-build` and the usual QEMU build
+dependencies.
+
+What to expect: Stage1/2 boot, then the Stage3 fallback after about 65 s;
+roughly two minutes in, the viewer follows `grengme`'s service menu ("Main",
+"Debugging", "GSS"). The cluster HMI (`gtf2`) does not draw, and the guest
+display controller stays black: see the firmware research notes for why.

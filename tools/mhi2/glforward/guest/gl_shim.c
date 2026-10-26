@@ -453,6 +453,7 @@ int slog2_register(void) { return 0; }
 
 /* ---- noop stubs for the rest of the exported ABI ---- */
 int glBeginPerfMonitorAMD(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glBeginPerfMonitorAMD\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glBindBufferBaseNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glBindBufferBaseNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
 void glBindFramebuffer(u32 target,u32 object){u32 p[]={(u32)target,(u32)object};emit_iv(60,(i32 *)p,2);}
 void glBindRenderbuffer(u32 target,u32 object){u32 p[]={(u32)target,(u32)object};emit_iv(61,(i32 *)p,2);}
 int glBindVertexArrayOES(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glBindVertexArrayOES\n";write(2,msg,sizeof(msg)-1);} return 0; }
@@ -503,6 +504,10 @@ int glFramebufferTexture3DOES(void) { static int seen; if(!seen){seen=1;const ch
 int glGenFencesNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGenFencesNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGenPerfMonitorsAMD(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGenPerfMonitorsAMD\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGenVertexArraysOES(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGenVertexArraysOES\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glGetActiveUniformBlockNameNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetActiveUniformBlockNameNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glGetActiveUniformBlockivNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetActiveUniformBlockivNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glGetActiveUniformNameNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetActiveUniformNameNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glGetActiveUniformsivNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetActiveUniformsivNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
 static void get_active(u32 op,u32 program,u32 index,i32 capacity,i32 *length,i32 *size,u32 *type,char *name)
 {
     if(capacity<0)return;
@@ -547,6 +552,8 @@ int glGetTexParameterfv(void) { static int seen; if(!seen){seen=1;const char msg
 int glGetTexParameteriv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexParameteriv\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetTexStreamDeviceAttributeivIMG(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexStreamDeviceAttributeivIMG\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetTexStreamDeviceNameIMG(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexStreamDeviceNameIMG\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glGetUniformBlockIndexNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetUniformBlockIndexNV\n";write(2,msg,sizeof(msg)-1);} return -1; }
+int glGetUniformIndicesNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetUniformIndicesNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetUniformfv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetUniformfv\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetUniformiv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetUniformiv\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetVertexAttribPointerv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetVertexAttribPointerv\n";write(2,msg,sizeof(msg)-1);} return 0; }
@@ -599,6 +606,7 @@ int glTexImage3DOES(void) { static int seen; if(!seen){seen=1;const char msg[]="
 int glTexParameterfv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glTexParameterfv\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glTexParameteriv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glTexParameteriv\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glTexSubImage3DOES(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glTexSubImage3DOES\n";write(2,msg,sizeof(msg)-1);} return 0; }
+int glUniformBlockBindingNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glUniformBlockBindingNV\n";write(2,msg,sizeof(msg)-1);} return 0; }
 void glUniform1iv(i32 loc,i32 count,const i32 *v){if(count<0)return;u32 h[2]={(u32)loc,(u32)count};rec(80,8+count*4);PART(h,8);PART(v,count*4);}
 void glUniform2f(i32 loc,float x,float y){float v[]={x,y};uni_vec(23,loc,1,2,v);}
 void glUniform2i(i32 loc,i32 x,i32 y){i32 v[]={x,y};glUniform2iv(loc,1,v);}
@@ -658,6 +666,7 @@ void *eglGetProcAddress(const char *n)
     if (!strcmp(n,"glBeginPerfMonitorAMD")) return (void *)&glBeginPerfMonitorAMD;
     if (!strcmp(n,"glBindAttribLocation")) return (void *)&glBindAttribLocation;
     if (!strcmp(n,"glBindBuffer")) return (void *)&glBindBuffer;
+    if (!strcmp(n,"glBindBufferBaseNV")) return (void *)&glBindBufferBaseNV;
     if (!strcmp(n,"glBindFramebuffer")) return (void *)&glBindFramebuffer;
     if (!strcmp(n,"glBindRenderbuffer")) return (void *)&glBindRenderbuffer;
     if (!strcmp(n,"glBindTexture")) return (void *)&glBindTexture;
@@ -742,6 +751,10 @@ void *eglGetProcAddress(const char *n)
     if (!strcmp(n,"glGenerateMipmap")) return (void *)&glGenerateMipmap;
     if (!strcmp(n,"glGetActiveAttrib")) return (void *)&glGetActiveAttrib;
     if (!strcmp(n,"glGetActiveUniform")) return (void *)&glGetActiveUniform;
+    if (!strcmp(n,"glGetActiveUniformBlockNameNV")) return (void *)&glGetActiveUniformBlockNameNV;
+    if (!strcmp(n,"glGetActiveUniformBlockivNV")) return (void *)&glGetActiveUniformBlockivNV;
+    if (!strcmp(n,"glGetActiveUniformNameNV")) return (void *)&glGetActiveUniformNameNV;
+    if (!strcmp(n,"glGetActiveUniformsivNV")) return (void *)&glGetActiveUniformsivNV;
     if (!strcmp(n,"glGetAttachedShaders")) return (void *)&glGetAttachedShaders;
     if (!strcmp(n,"glGetAttribLocation")) return (void *)&glGetAttribLocation;
     if (!strcmp(n,"glGetBooleanv")) return (void *)&glGetBooleanv;
@@ -773,6 +786,8 @@ void *eglGetProcAddress(const char *n)
     if (!strcmp(n,"glGetTexParameteriv")) return (void *)&glGetTexParameteriv;
     if (!strcmp(n,"glGetTexStreamDeviceAttributeivIMG")) return (void *)&glGetTexStreamDeviceAttributeivIMG;
     if (!strcmp(n,"glGetTexStreamDeviceNameIMG")) return (void *)&glGetTexStreamDeviceNameIMG;
+    if (!strcmp(n,"glGetUniformBlockIndexNV")) return (void *)&glGetUniformBlockIndexNV;
+    if (!strcmp(n,"glGetUniformIndicesNV")) return (void *)&glGetUniformIndicesNV;
     if (!strcmp(n,"glGetUniformLocation")) return (void *)&glGetUniformLocation;
     if (!strcmp(n,"glGetUniformfv")) return (void *)&glGetUniformfv;
     if (!strcmp(n,"glGetUniformiv")) return (void *)&glGetUniformiv;
@@ -839,6 +854,7 @@ void *eglGetProcAddress(const char *n)
     if (!strcmp(n,"glUniform4fv")) return (void *)&glUniform4fv;
     if (!strcmp(n,"glUniform4i")) return (void *)&glUniform4i;
     if (!strcmp(n,"glUniform4iv")) return (void *)&glUniform4iv;
+    if (!strcmp(n,"glUniformBlockBindingNV")) return (void *)&glUniformBlockBindingNV;
     if (!strcmp(n,"glUniformMatrix2fv")) return (void *)&glUniformMatrix2fv;
     if (!strcmp(n,"glUniformMatrix3fv")) return (void *)&glUniformMatrix3fv;
     if (!strcmp(n,"glUniformMatrix4fv")) return (void *)&glUniformMatrix4fv;

@@ -15,6 +15,7 @@
  *
  * An 'X' completes once software has armed a transfer (DMA_CTL bit 31); the
  * master is expected to wait for the slave handshake first, as KSS does.
+ * 'D' 0 while an 'X' still waits for the slave drops that 'X' (an abort).
  * The handshake lines are qdev GPIOs wired to GPIO pins by the board.
  */
 
@@ -212,8 +213,11 @@ static int slink_can_receive(void *opaque)
 {
     Tegra30SlinkState *s = opaque;
 
-    /* Hold further input while an exchange waits for the slave to arm. */
-    return s->xfer_pending ? 0 : sizeof(s->msg) - s->msg_len;
+    /*
+     * Input keeps flowing while an exchange waits for the slave to arm, so
+     * that the master can still drop its handshake line and abort it.
+     */
+    return sizeof(s->msg) - s->msg_len;
 }
 
 static void slink_receive(void *opaque, const uint8_t *buf, int size)
@@ -241,19 +245,22 @@ static void slink_receive(void *opaque, const uint8_t *buf, int size)
             continue;
         }
         if (s->msg[0] == 'D') {
+            if (!s->msg[1] && s->xfer_pending) {
+                /* The master dropped its handshake: the cycle is aborted. */
+                s->xfer_pending = false;
+            }
             qemu_set_irq(s->hsk_out, s->msg[1]);
         } else {
+            if (s->xfer_pending) {
+                qemu_log_mask(LOG_GUEST_ERROR, "tegra30-slink: master clocked "
+                              "again before the slave armed\n");
+            }
             s->xfer_len = s->msg[1];
             memcpy(s->xfer, s->msg + 2, s->xfer_len);
             s->xfer_pending = true;
             slink_try_exchange(s);
         }
         s->msg_len = 0;
-        if (s->xfer_pending && i + 1 < size) {
-            /* can_receive limits input, so this only happens on misuse. */
-            qemu_log_mask(LOG_GUEST_ERROR,
-                          "tegra30-slink: input after an unarmed exchange\n");
-        }
     }
 }
 

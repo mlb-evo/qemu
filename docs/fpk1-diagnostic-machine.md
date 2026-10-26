@@ -130,8 +130,11 @@ python3 tools/fpk1/build_fpk1.py \
   --archive /path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip \
   --output "$PWD/../fpk1-build"        # add --qemu build-fpk1/qemu-system-arm to reuse a build
 bash ../fpk1-build/run.sh              # console in the terminal, frames in a window
-bash ../fpk1-build/run.sh --headless   # no window; frames are still saved
 ```
+
+`run.sh` always opens the viewer. The viewer is also the KSS peer
+(`kss_peer.py` in a thread on the `kss` chardev): its log is shown under the
+frame and saved as `kss.log`. Closing the window stops the KSS link.
 
 The output holds `qemu/qemu-system-arm`, the GLES `bridge/` (guest shim and
 `glhost`), `media/emmc.img`, a `venv/` with `lzokay` (sharing system PySide6)

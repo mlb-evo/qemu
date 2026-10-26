@@ -182,11 +182,13 @@ def connect(path, attempts=600):
     raise SystemExit(f'kss_peer: cannot connect to {path}')
 
 
-def run(path, period):
+def run(path, period, emit=None):
+    """Serve the link until QEMU disconnects; emit(line) gets each log line."""
     start = time.monotonic()
+    emit = emit or (lambda line: print(line, flush=True))
 
     def log(text):
-        print(f'[kss {time.monotonic() - start:8.2f}] {text}', flush=True)
+        emit(f'[kss {time.monotonic() - start:8.2f}] {text}')
 
     sock = connect(path)
     log(f'connected to {path}')

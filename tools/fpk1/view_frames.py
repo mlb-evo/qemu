@@ -17,16 +17,22 @@ bytes (libengmenufw): '4'/'6' turn the roller by -1/+1 tick, '5' selects,
 reach the login shell, not the menu. In the car the buttons reach the HMI
 through KSS (MFL_Tasten_Kon_01 -> gss_ipc -> gtf2); moving the panel onto
 tools/fpk1/kss_peer.py is the intended route.
+
+With --kss SOCKET the viewer is also the KSS peer: it runs kss_peer.py's SPI
+master in a thread on QEMU's kss chardev and shows its log under the frame
+(and appends it to --kss-log). Closing the window stops the peer.
 """
 import argparse
 import os
 from pathlib import Path
 import sys
+import threading
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QImage, QKeySequence, QShortcut
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QFontDatabase, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout,
-                               QLabel, QToolButton, QVBoxLayout, QWidget)
+                               QLabel, QPlainTextEdit, QSplitter, QToolButton,
+                               QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'mhi2'))
 from viewer_widgets import FrameView, fit_to_screen  # noqa: E402
@@ -92,6 +98,31 @@ class WheelPanel(QWidget):
         self.press((b'4' if steps > 0 else b'6') * abs(steps))
 
 
+class KssPeer(QObject):
+    """kss_peer.run in a daemon thread; each log line arrives as `line`."""
+    line = Signal(str)
+
+    def __init__(self, socket_path, log_path=None):
+        super().__init__()
+        self.socket_path = str(socket_path)
+        self.log_file = log_path.open('a', buffering=1) if log_path else None
+
+    def start(self):
+        threading.Thread(target=self.serve, name='kss', daemon=True).start()
+
+    def emit(self, text):
+        if self.log_file:
+            self.log_file.write(text + '\n')
+        self.line.emit(text)
+
+    def serve(self):
+        import kss_peer
+        try:
+            kss_peer.run(self.socket_path, 0.01, self.emit)
+        except (OSError, SystemExit) as error:
+            self.emit(f'[kss] stopped: {error}')
+
+
 def read_ppm(path):
     """Return a QImage for a complete binary PPM, or None."""
     try:
@@ -131,7 +162,7 @@ def newest(found):
 
 
 class Viewer(QWidget):
-    def __init__(self, frame, client_dir, keys=None):
+    def __init__(self, frame, client_dir, keys=None, kss=None):
         super().__init__()
         self.frame_path, self.client_dir = frame, client_dir
         self.setWindowTitle('FPK1 glhost frames')
@@ -151,7 +182,25 @@ class Viewer(QWidget):
             middle.addWidget(self.panel, 0, Qt.AlignVCenter)
         layout = QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addLayout(middle, 1)
+        if kss:
+            frame_area = QWidget()
+            frame_area.setLayout(middle)
+            middle.setContentsMargins(0, 0, 0, 0)
+            self.kss_log = QPlainTextEdit()
+            self.kss_log.setReadOnly(True)
+            self.kss_log.setMaximumBlockCount(5000)
+            self.kss_log.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+            self.kss_log.setPlaceholderText('Waiting for the KSS link...')
+            self.kss_log.setMinimumHeight(self.kss_log.fontMetrics().lineSpacing() * 8 + 12)
+            kss.line.connect(self.kss_log.appendPlainText)
+            split = QSplitter(Qt.Vertical)
+            split.addWidget(frame_area)
+            split.addWidget(self.kss_log)
+            split.setStretchFactor(0, 3)
+            split.setStretchFactor(1, 1)
+            layout.addWidget(split, 1)
+        else:
+            layout.addLayout(middle, 1)
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         bottom.addWidget(self.keys_status)
@@ -200,6 +249,9 @@ def main():
     parser.add_argument('--snapshot', type=Path, help='save the newest frame as PNG and exit')
     parser.add_argument('--keys', type=Path,
                         help="launcher key FIFO (run_stage1_console.py --keys); shows the button panel")
+    parser.add_argument('--kss', type=Path,
+                        help="QEMU kss chardev socket; run kss_peer.py here and show its log")
+    parser.add_argument('--kss-log', type=Path, help='also append the KSS log to this file')
     args = parser.parse_args()
     if args.snapshot:
         found = sources(args.frame, args.client_dir)
@@ -210,9 +262,12 @@ def main():
         print(f'{name} -> {args.snapshot}')
         return
     app = QApplication(sys.argv)
-    viewer = Viewer(args.frame, args.client_dir, args.keys)
+    kss = KssPeer(args.kss, args.kss_log) if args.kss else None
+    viewer = Viewer(args.frame, args.client_dir, args.keys, kss)
     fit_to_screen(viewer)
     viewer.show()
+    if kss:
+        kss.start()
     sys.exit(app.exec())
 
 

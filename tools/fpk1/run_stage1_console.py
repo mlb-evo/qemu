@@ -136,15 +136,19 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             helper = subprocess.Popen([str(glhost)], stdin=gl_out, stdout=gl_in,
                                       stderr=(root / 'glhost.log').open('wb'), cwd=root, env=env)
             if gl_frames and viewer:
-                viewers.append(subprocess.Popen(
-                    [sys.executable, str(Path(__file__).with_name('view_frames.py')),
-                     '--frame', str(gl_frames / 'primary.ppm'), '--client-dir', str(gl_frames),
-                     '--keys', str(keys)]))
+                window = [sys.executable, str(Path(__file__).with_name('view_frames.py')),
+                          '--frame', str(gl_frames / 'primary.ppm'), '--client-dir', str(gl_frames),
+                          '--keys', str(keys)]
+                if kss:
+                    # The viewer is the KSS peer and shows its log under the frame.
+                    window += ['--kss', str(root / 'kss.sock'), '--kss-log', str(root / 'kss.log')]
+                viewers.append(subprocess.Popen(window))
             command += ['-chardev', f'pipe,id=glbridge,path={root / "gl"}']
         peer = None
         if kss:
             # Host KSS stand-in as SPI master on SLINK1 (tools/fpk1/kss_peer.py).
             command += ['-chardev', f'socket,id=kss,path={root / "kss.sock"},server=on,wait=off']
+        if kss and not viewers:
             peer = subprocess.Popen([sys.executable, str(Path(__file__).with_name('kss_peer.py')),
                                      str(root / 'kss.sock')],
                                     stdout=(root / 'kss.log').open('wb'), stderr=subprocess.STDOUT)
@@ -307,7 +311,8 @@ def main():
                         help='FIFO (created if missing) whose bytes are typed on the serial console; '
                              'defaults to one passed to --viewer')
     parser.add_argument('--kss', action='store_true',
-                        help='attach tools/fpk1/kss_peer.py as SPI master on SLINK1 (log: kss.log)')
+                        help='attach tools/fpk1/kss_peer.py as SPI master on SLINK1 (log: kss.log); '
+                             'with --viewer it runs inside the viewer window')
     parser.add_argument('--keep-dir', type=Path, help='copy console/QEMU logs here')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()

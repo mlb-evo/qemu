@@ -1949,8 +1949,9 @@ Recovered from `lib/libnvspislave.so` (Stage2.1):
 - `tools/fpk1/kss_peer.py` is the master: it runs the handshake every 10 ms,
   speaks the gss_ipc frame format, answers `GSS_STATUS 1` ("IPC COM ready")
   with `GSS_MODE_REQUEST(1, 2)` and sends `GSS_ALIVE_REQUEST` every second.
-  `run_stage1_console.py --kss` (also through `run.sh --kss`) starts it and
-  keeps its log as `kss.log`.
+  `run_stage1_console.py --kss` starts it and keeps its log as `kss.log`;
+  with `--viewer` (always the case in `run.sh`) it runs inside
+  `view_frames.py --kss`, which shows the log under the frame.
 
 ### Result
 

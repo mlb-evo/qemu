@@ -57,7 +57,7 @@ class ViewFramesTests(unittest.TestCase):
             self.assertFalse(view_frames.send_keys(Path(directory) / 'missing', b'0'))
 
     def test_wheel_buttons_use_grengme_console_keys(self):
-        sent = {label: data for label, _, _, data, _ in view_frames.WHEEL_BUTTONS}
+        sent = {label: data for label, _, _, data in view_frames.WHEEL_BUTTONS}
         self.assertEqual((sent['OK'], sent['\u21a9'], sent['\u25b2'], sent['\u25bc']),
                          (b'5', b'0', b'4', b'6'))
 

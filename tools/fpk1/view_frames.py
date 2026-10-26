@@ -29,7 +29,7 @@ import sys
 import threading
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QFontDatabase, QImage, QKeySequence, QShortcut
+from PySide6.QtGui import QFontDatabase, QImage
 from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout,
                                QLabel, QPlainTextEdit, QSplitter, QToolButton,
                                QVBoxLayout, QWidget)
@@ -39,16 +39,17 @@ from viewer_widgets import FrameView, fit_to_screen  # noqa: E402
 
 FOLLOW = 'Most recent'
 
-# Right steering-wheel cluster: (label, row, column, console byte or None,
-# host shortcuts). The roller's up/down are its turn direction.
+# Right steering-wheel cluster: (label, row, column, console byte or None).
+# The roller's up/down are its turn direction. Keys are sent only by clicking
+# these buttons (no mouse-wheel or keyboard shortcuts).
 WHEEL_BUTTONS = (
-    ('\u25c1', 0, 0, None, ()),
-    ('\u25b7', 0, 1, None, ()),
-    ('\u25b2', 1, 0, b'4', ('Up',)),
-    ('VIEW', 1, 1, None, ()),
-    ('OK', 2, 0, b'5', ('Return', 'Enter')),
-    ('\u21a9', 2, 1, b'0', ('Backspace', 'Esc')),
-    ('\u25bc', 3, 0, b'6', ('Down',)),
+    ('\u25c1', 0, 0, None),
+    ('\u25b7', 0, 1, None),
+    ('\u25b2', 1, 0, b'4'),
+    ('VIEW', 1, 1, None),
+    ('OK', 2, 0, b'5'),
+    ('\u21a9', 2, 1, b'0'),
+    ('\u25bc', 3, 0, b'6'),
 )
 
 
@@ -72,7 +73,7 @@ class WheelPanel(QWidget):
         self.keys, self.report = keys, report
         grid = QGridLayout(self)
         grid.addWidget(QLabel('Steering wheel'), 4, 0, 1, 2, Qt.AlignHCenter)
-        for label, row, column, data, shortcuts in WHEEL_BUTTONS:
+        for label, row, column, data in WHEEL_BUTTONS:
             button = QToolButton()
             button.setText(label)
             button.setMinimumSize(56, 40)
@@ -80,12 +81,8 @@ class WheelPanel(QWidget):
                 button.setEnabled(False)
                 button.setToolTip('No console key in grengme (needs the KSS path)')
             else:
-                names = ', '.join(shortcuts)
-                button.setToolTip(f'Types {data.decode()!r} on the console ({names})')
+                button.setToolTip(f'Types {data.decode()!r} on the console')
                 button.clicked.connect(lambda _=False, d=data: self.press(d))
-                for name in shortcuts:
-                    QShortcut(QKeySequence(name), self, activated=lambda d=data: self.press(d),
-                              context=Qt.ApplicationShortcut)
             grid.addWidget(button, row, column)
 
     def press(self, data):
@@ -93,9 +90,6 @@ class WheelPanel(QWidget):
             self.report(f'sent {data.decode()!r}')
         else:
             self.report(f'cannot send {data.decode()!r}: no reader on {self.keys}')
-
-    def wheel(self, steps):
-        self.press((b'4' if steps > 0 else b'6') * abs(steps))
 
 
 class KssPeer(QObject):
@@ -232,12 +226,6 @@ class Viewer(QWidget):
             self.view.frame, self.stamp = image, stamp
             self.status.setText(f'{name}: {image.width()}x{image.height()} ({path})')
             self.view.update()
-
-    def wheelEvent(self, event):
-        # Mouse wheel over the window turns the roller (one byte per notch).
-        steps = event.angleDelta().y() // 120
-        if self.panel and steps:
-            self.panel.wheel(steps)
 
 
 def main():

@@ -30,8 +30,9 @@ space per build, plus room for your archives; large firmware packages need
 more. Keep the checkout and build directories after building: the generated
 launcher uses both.
 
-## 1. Set up macOS
+## 1. Set up
 
+### 1.1 macOS
 Install Apple's command-line tools if needed, and complete the installer:
 
 ```sh
@@ -91,6 +92,12 @@ The compiler must be `arm-none-eabi`, not `arm-linux-gnueabihf`. You may use an
 already installed compiler by passing `--arm-prefix /absolute/path/bin/arm-none-eabi-`
 to the build command. GNU Arm 14.3.Rel1 has also built the Porsche guest bridge
 on Apple Silicon.
+
+### 1.2 Ubuntu
+
+```bash
+sudo apt install libavcodec-dev libavutil-dev libswscale-dev gcc-arm-none-eabi libpng-dev ninja-build python3-venv python3-capstone libpixman-1-dev python3-pyside6.qtcore python3-pyside6.qtgui python3-pyside6.qtwidgets
+```
 
 ## 2. Download the emulator bootstrap
 

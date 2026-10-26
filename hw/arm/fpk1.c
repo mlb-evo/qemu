@@ -400,6 +400,25 @@ static void fpk1_init(MachineState *machine)
     i2c_slave_realize_and_unref(tmon, soc->i2c[4].bus, &error_fatal);
 
     /*
+     * audio_player configures a TLV320DAC3100 at 0x18 on I2C1 (/dev/i2c1)
+     * and requests a reboot when its soft reset is not acknowledged.
+     */
+    i2c_slave_create_simple(soc->i2c[0].bus, "tlv320dac3100", 0x18);
+
+    /*
+     * mostcoreapp talks to the MOST INIC at 0x20 on the same bus; the INIC
+     * signals pending port messages on most_most_int (GPIO Y5, active low)
+     * and is reset through most_rst_in (GPIO Z1).
+     */
+    I2CSlave *inic = i2c_slave_create_simple(soc->i2c[0].bus, "fpk1-inic",
+                                             0x20);
+    qdev_connect_gpio_out_named(DEVICE(inic), "int", 0,
+                                qdev_get_gpio_in(DEVICE(&soc->gpio),
+                                                 TEGRA30_GPIO_NR(24, 5)));
+    qdev_connect_gpio_out(DEVICE(&soc->gpio), TEGRA30_GPIO_NR(25, 1),
+                          qdev_get_gpio_in_named(DEVICE(inic), "reset", 0));
+
+    /*
      * For this initial diagnostic harness, only loading into DRAM is allowed.
      * Require the entry PC to be inside the loaded image; a real FPK1 boot
      * handoff may need IRAM, NOR, a different load address and additional

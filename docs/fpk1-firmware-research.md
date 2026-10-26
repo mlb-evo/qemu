@@ -1568,8 +1568,11 @@ samples from STAGE2.2 are found. The Stage3 handoff happens through the
    (`KD_EOPNOTSUPP`, then `KD_ENOMEM`); `kdgui_2dmgr_ready` never appears.
    The NVIDIA display/host1x/2D path is not emulated. This is the next
    priority, as gtf2 is the cluster HMI.
-2. I2C peripherals: TLV320DAC3100 DAC (`audio_player` requests reboot), MOST
-   INIC over I2C (`NSR_E_NO_COMM` loop), LVDS serializers. (`devg-nvtmon`
+2. I2C peripherals: MOST INIC over I2C1 0x20 (partly modelled, see
+   "MOST INIC control port" below), LVDS serializers. The TLV320DAC3100 on I2C1 0x18 is now a register model
+   (`hw/i2c/tlv320dac3100.c`): `audio_player` soft-resets it, checks the
+   active-low overtemperature flag (P0 R3), DAC power flags (P0 R37/38) and
+   jack detection (P0 R67), and no longer requests a reboot. (`devg-nvtmon`
    now finds an NCT1008-compatible sensor at DVC 0x4c; gtf2 still logs one
    `Can't open /dev/nvtmon/...` because its first poll runs before Stage3
    starts `devg-nvtmon`, and later polls succeed.)
@@ -2008,3 +2011,49 @@ TeileNum[11], hw_TeileNum[11], sw[4], kss_sw[4], hw[3], Flashdatum[3]).
 8S0906961AK, software 0378, status 0) on IPC ready, and sends
 `GSS_MODE_REQUEST(1, 2)` 0.2 s after that frame is delivered. In a 40 s run
 the error is gone and gtf2 starts as before.
+
+## MOST INIC control port
+
+`bin/mostcoreapp` (STAGE2.2) statically links MOST NetServices and runs it in
+"mixed i2c, usb mode": control messages over `/dev/i2c0` (Tegra I2C1, slave
+0x20), packet data over `/dev/usbinic-*`. GPIOs from devg-nvgpio's FPK table:
+`most_most_int` Y5 (input, active-low, armed as a level-low interrupt),
+`most_rst_in` Z1 and `most_error_boot` Z0 (outputs). Strings are addressed
+off the GOT base 0x154db4 (`add rX, pc, rX` then `add r0, rX, #off`).
+
+Port messages: PML (16-bit BE length of the rest), PMHL, FPH (bits 4:3 FIFO,
+bits 2:1 type 0 command/1 status/2 data, bit 0 extended header), header
+payload, body. The host writes one message per write transaction; on INT low
+it reads the 2-byte PML (`I2C_INIC_LLD_Read_Size`, 0 = nothing, at most 100)
+and then the whole message again including PML (`Read_Buff`). RX messages
+with `FPH & 6 == 2` go to the status queue.
+
+- Sync: host `00 03 02 18 c0` (FIFO 3, command 0xc0); a status whose byte has
+  bit 7 set and `(b & 0x3c) == 0x10` with PMHL 2 reports 0x100 (synced) to the
+  PMS observer. `00 03 02 1a d0` works. Error codes: 0xc303 `NSR_EI_SYNC`,
+  0xc302 `NSR_EI_SYNC_FAILED`, 0xc304 `NSR_E_INIT_TIMEOUT`, 0x8400
+  `NSR_E_NO_COMM`, 0x8200 `NSR_E_INIC_VERSION`.
+- Acknowledgement: every data message needs a status on its FIFO, status
+  byte `& 0xbc == 0x04` for success (the host sends `0x44`); otherwise the
+  message is retried and its completion asserts (`MNS ... LINE 3211`).
+- ICM (FIFO 2, FPH 0x14, PMHL 1) body: FktID[11:4], FktID[3:0] << 4 | OPType,
+  TelID << 4 | len[11:8], len[7:0], data (serializer at 0x12d490). The RX
+  dispatch table at 0x153d00 maps FktID -> OPType -> handlers.
+- 0x300 attach: Get, then Set `01 02`; init only continues when the status
+  reports 2. 0x200 version (handler 0x12b21c): bytes 0-1 zero, 2-6 must match
+  `08 11 10 10 03` (OS81110), 8-10 `00 90 xx`; it is never requested, so the
+  model pushes it after attach. 0x30a watchdog Get (`00 ff ff 00 00`
+  disables it), 0x309 watchdog trigger, 0x30f and 0x303 SetGet (status echoes
+  the value).
+- Init completes when all bits of the halfword at GOT+0x7c90+0x10 are set
+  (setter 0x12a958): 0x01/0x02 PMS/MNS sync, 0x04 version, 0x08 service 0xa
+  event 5, 0x10 (0x134994), 0x20 (0x1335d4), 0x40 VMSV event 0x20 (0x132620),
+  0x80 (0x136ddc). With sync, attach, version, watchdog, 0x30f and 0x303
+  answered, the 3 s init timer still expires; the remaining bits presumably
+  need unsolicited INIC notifications (the 0x4xx/0x5xx status handlers).
+
+`hw/i2c/fpk1_inic.c` implements the above; `FPK1_INIC_DEBUG=1` traces every
+message on stderr. The Tegra30 GPIO model now re-latches level-triggered
+interrupts after INT_ENB/INT_LVL/INT_CLR writes: devg-nvgpio clears and re-arms
+Y5 while the INIC still holds it low, and an edge-only latch lost those
+interrupts.

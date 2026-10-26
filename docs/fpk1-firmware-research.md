@@ -1780,3 +1780,48 @@ CAR (0x60006000), APB_MISC (0x70000000), GPIO (0x6000d000) and SLINK1
    chardev to an external KSS peer, plus the CC6/DD7 handshake lines.
 3. Write a minimal host KSS peer that answers the start-up and alive
    messages and issues the HMI run request.
+
+### gss_ipc frame format above SPI
+
+Recovered from `gss_ipc`'s Transfer, RxBuffers and TxBuffers code (now
+encoded in `tools/fpk1/gss_ipc_frames.py` with firmware-free tests):
+
+- One 128-byte frame per direction per transfer (`GSS_IPC_SpiNv` reports
+  0x80). Byte 0 = used payload bytes; records in bytes 1..126; unused bytes
+  0xff; byte 127 = `~sum(bytes[0:127]) & 0xff` (0x15a288). An empty frame is
+  0x00, 126 x 0xff, checksum.
+- Record = `[fragment length][LUN][CID | 0x80 on the last fragment]` +
+  fragment. Byte 0 includes the 3-byte headers. RxBuffers reassembles per
+  LUN/CID and calls the registered handler on the last fragment.
+- Per cycle: get next TX frame -> `setTxData` -> `transferData` (RX frame)
+  -> checksum check -> `transferAck` exchanging one byte, 0xd0 ACK or 0xe1
+  NACK. Only when both bytes are 0xd0 is the TX frame released and the RX
+  frame processed; otherwise both are retried.
+
+Other services also register LUNs (ping/echo, diag, FDS around 0x13,
+tracing/DDT around 0x12, SWDL 0xff, a BAP/HMI LUN 0x11); only the
+GSS-Manager registration on LUN 7 was disassembled in full:
+
+| Direction | CID | Message | Payload |
+| --- | --- | --- | --- |
+| KSS -> GSS | 3 | GSS_MODE_REQUEST | mode, submode, <= 16 persistency bytes |
+| KSS -> GSS | 6 | GSS_FLASH_RESPONSE | 2 |
+| KSS -> GSS | 8 | GSS_KSS_STATUS | 1 |
+| KSS -> GSS | 9 | SYS_MODE_REQUEST | 3 |
+| KSS -> GSS | 11 | GSS_ALIVE_REQUEST | 1 (answered at once) |
+| GSS -> KSS | 1 | GSS_STATUS | 1 ("IPC COM ready") |
+| GSS -> KSS | 2 | GSS_RESET_REQUEST | |
+| GSS -> KSS | 4 | GSS_MODE_RESPONSE | mode, submode, 16 persistency bytes |
+| GSS -> KSS | 12 | GSS_ALIVE_RESPONSE | 1 |
+
+In GSS_MAN_GssManager (0x141178) mode 1 dispatches on submode: 0 stores the
+16 persistency bytes, 2 enters `GSS_SM_APP_RUN` (`Rte_Start`, application
+run); mode 2 stops; modes 3/4 query state. Every request is answered with
+GSS_MODE_RESPONSE. The minimal KSS start-up is therefore expected to be:
+answer the GSS_STATUS, send GSS_MODE_REQUEST(1, 2, persistency) and keep
+answering alive/ping traffic. This sequence is inferred from code, not yet
+observed working.
+
+`tools/fpk1/qnx_elf_disasm.py` is the PLT-aware disassembler used for this
+(QNX binaries have no section headers; ARM immediates are decoded from the
+encoding).

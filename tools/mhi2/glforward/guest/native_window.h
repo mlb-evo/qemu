@@ -65,7 +65,7 @@ static void *native_window_create(void *window)
     /* Native displaymanager's physical screen, distinct from CWM clients. */
     if(handle==0xdb000001){i32 primary=1;emit_iv(125,&primary,1);}
     if((handle&0xffff0000)!=0xbeeb0000||!native_init()){
-        int n=snprintf(log,sizeof(log),"glbridge: native window %x has no CWM adapter\n",handle);write(2,log,n);return (void *)1;}
+        int n=snprintf(log,sizeof(log),"glbridge: pid %d native window %x has no CWM adapter\n",getpid(),handle);write(2,log,n);return (void *)1;}
     native.get_size(handle,&w,&h);
     if(!w||!h||w>2048||h>2048)return 0;
     struct NativeWindow *s=malloc(sizeof(*s));if(!s)return 0;memset(s,0,sizeof(*s));s->window=handle;
@@ -80,7 +80,7 @@ static void *native_window_create(void *window)
         memset(s->mapped[i],0,w*h*4);s->pointers[i]=b;s->ids[i]=native.id(b->mem);
     }
     if(native.set_surfaces(handle,s->pointers,3,0,1))goto fail;
-    int n=snprintf(log,sizeof(log),"glbridge: CWM window %x publishes %ux%u, 3 RGBA buffers\n",handle,w,h);write(2,log,n);
+    int n=snprintf(log,sizeof(log),"glbridge: pid %d CWM window %x publishes %ux%u, 3 RGBA buffers\n",getpid(),handle,w,h);write(2,log,n);
     return s;
 fail:
     for(unsigned i=0;i<3;i++){

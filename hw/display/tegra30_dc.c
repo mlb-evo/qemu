@@ -48,6 +48,7 @@ enum {
 
 /* DC_WIN_WIN_OPTIONS. */
 #define WIN_ENABLE          (1u << 30)
+#define WIN_V_DIRECTION     (1u << 2)   /* scan from the last line upwards */
 
 /* DC_WIN_SIZE / DC_DISP_DISP_ACTIVE field layout. */
 #define SIZE_H_SHIFT        0
@@ -130,8 +131,10 @@ static pixman_format_code_t tegra30_dc_active_fb(Tegra30DCState *s,
                                                  hwaddr *addr,
                                                  uint32_t *width,
                                                  uint32_t *height,
-                                                 uint32_t *stride)
+                                                 uint32_t *stride,
+                                                 bool *flip)
 {
+    *flip = false;
     for (int w = 0; w < TEGRA30_DC_NUM_WINDOWS; w++) {
         Tegra30DCWindow *win = &s->win[w];
         pixman_format_code_t fmt;
@@ -160,6 +163,7 @@ static pixman_format_code_t tegra30_dc_active_fb(Tegra30DCState *s,
         }
 
         *addr = win->start_addr;
+        *flip = win->win_options & WIN_V_DIRECTION;
         *width = ww;
         *height = wh;
         *stride = ws;
@@ -214,8 +218,9 @@ static bool tegra30_dc_update_display(void *opaque)
     uint32_t width, height, stride;
     DisplaySurface *surface;
     void *data;
+    bool flip;
 
-    format = tegra30_dc_active_fb(s, &addr, &width, &height, &stride);
+    format = tegra30_dc_active_fb(s, &addr, &width, &height, &stride, &flip);
     if (format == 0) {
         /* No usable framebuffer yet; show a blank panel. */
         tegra30_dc_blank(s, width, height);
@@ -244,6 +249,31 @@ static bool tegra30_dc_update_display(void *opaque)
             address_space_unmap(&address_space_memory, data, mapsize, 0, 0);
         }
         tegra30_dc_blank(s, width, height);
+        return true;
+    }
+
+    if (flip) {
+        /*
+         * Bottom-up scan-out (GL-rendered client buffers): copy the lines
+         * reversed into a console-owned surface on every refresh.
+         */
+        surface = qemu_console_surface(s->con);
+        if (!surface || surface_width(surface) != width ||
+            surface_height(surface) != height ||
+            !surface_is_allocated(surface) ||
+            surface_format(surface) != format) {
+            surface = qemu_create_displaysurface_from(width, height, format,
+                                                      linesize, NULL);
+            qemu_console_set_surface(s->con, surface);
+        }
+        for (uint32_t y = 0; surface && y < height; y++) {
+            memcpy((uint8_t *)surface_data(surface) + (size_t)y * surface_stride(surface),
+                   (uint8_t *)data + (size_t)(height - 1 - y) * stride, linesize);
+        }
+        address_space_unmap(&address_space_memory, data, mapsize, 0, 0);
+        s->surface_valid = false;
+        s->last_format = 0;
+        qemu_console_update_full(s->con);
         return true;
     }
 
@@ -292,6 +322,13 @@ static void tegra30_dc_window_write(Tegra30DCState *s, uint32_t index,
             continue;
         }
         any = true;
+        if (getenv("TEGRA_DC_DEBUG")) {
+            static unsigned logged;
+            if (logged++ < 400) {
+                fprintf(stderr, "dc %p win %c reg %03x <- %08x\n", (void *)s,
+                        'A' + w, index, (unsigned)value);
+            }
+        }
         switch (index) {
         case DC_WIN_WIN_OPTIONS:  s->win[w].win_options = value; break;
         case DC_WIN_COLOR_DEPTH:  s->win[w].color_depth = value; break;

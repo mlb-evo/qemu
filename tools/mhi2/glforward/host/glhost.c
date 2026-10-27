@@ -398,6 +398,8 @@ static int valid_record(uint32_t op,uint32_t len,const uint8_t *p)
     if(op==122 || op==126)return len==4;
     if(op==123 || op==124)return len==12 && u32(p,8)<=4096;
     if(op==125)return len==4 && u32(p,0)==1;
+    if(op==140)return len==8 && u32(p,0)<MAXOBJ && u32(p,4)<MAXOBJ;
+    if(op==141 || op==142)return len==8;
     if(op==120)return len==24 && i32(p,8)>0 && i32(p,8)<=2048 &&
         i32(p,12)>0 && i32(p,12)<=2048 && u32(p,16)==GL_RGBA && u32(p,20)==GL_UNSIGNED_BYTE;
     if(op>=120)return 0;
@@ -423,6 +425,20 @@ static int valid_record(uint32_t op,uint32_t len,const uint8_t *p)
         return 1;
     }
     return sizes[op]!=0;
+}
+
+/* Per-client swap and draw counts tell which guest process is rendering. */
+static void client_event(unsigned kind)
+{
+    static const char *names[2] = {"swap", "draw"};
+    static struct { uint32_t pid; unsigned long count[2]; } seen[32];
+    unsigned i;
+    for (i = 0; i < 32 && seen[i].pid && seen[i].pid != current_pid; i++);
+    if (i == 32) return;
+    seen[i].pid = current_pid;
+    unsigned long n = ++seen[i].count[kind];
+    if (n <= 3 || n % (kind ? 3000 : 300) == 0)
+        fprintf(stderr, "glhost: pid %u %s %lu\n", current_pid, names[kind], n);
 }
 
 static void serve(int cfd)
@@ -539,7 +555,9 @@ static void serve(int cfd)
                  eglSwapBuffers(display, surface);
                  if (frames < 3 || (frames % 120) == 0)
                      fprintf(stderr, "glhost: %lu frames swapped\n", frames + 1);
-                 frames++; break;
+                 frames++;
+                 client_event(0);
+                 break;
         case 6:  ensure_window(0, 0); glFinish(); break;
 
         case 7: { /* glCreateShader {id, type} */
@@ -644,6 +662,7 @@ static void serve(int cfd)
             glBindBuffer(GL_ARRAY_BUFFER,binding);break;
         }
         case 31: case 32: case 129: {
+            client_event(1);
             GLuint menu_binding=menu_texture_begin_draw(op,p,len);
             unsigned mode=blend->program[blend->active_program];
             struct BlendState saved;

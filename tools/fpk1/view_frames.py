@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Show FPK1 frames rendered by glhost in a host window (no display-path changes).
+"""FPK1 unified QEMU display, KSS peer, and optional saved-frame viewer.
+
+With --embed-qemu-name the native SDL/X11 QEMU console is embedded beside the
+KSS log. QEMU presents live pixels directly; no PPM reads or screenshot timer.
 
 glhost writes the primary display frame (MHI2_GL_FRAME) and, with
 MHI2_GL_DUMP_CLIENTS=1, one PPM per guest client process
@@ -7,7 +10,8 @@ MHI2_GL_DUMP_CLIENTS=1, one PPM per guest client process
 rename. This viewer lists those sources, follows the most recently updated one
 unless a source is chosen, and polls for new frames. `--snapshot FILE.png`
 saves the current frame without opening a window (usable headless).
-These are host-rendered GLES frames, not the guest display controller.
+With --capture-scanout the launcher also writes dc-scanout.ppm from QEMU's
+display controller and selects that source. Its JSON describes capture limits.
 
 With --keys FIFO (run_stage1_console.py passes one), a steering-wheel button
 panel types keys on the guest serial console using grengme's console key
@@ -23,6 +27,7 @@ master in a thread on QEMU's kss chardev and shows its log under the frame
 (and appends it to --kss-log). Closing the window stops the peer.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -140,6 +145,9 @@ def sources(frame, client_dir):
     found = {}
     if frame and frame.exists():
         found['Primary display'] = frame
+    scanout = client_dir / 'dc-scanout.ppm'
+    if scanout.exists():
+        found['DC scanout'] = scanout
     for path in sorted(client_dir.glob('mhi2-client-*.ppm')):
         found['Client pid ' + path.stem.rsplit('-', 1)[1]] = path
     return found
@@ -156,14 +164,24 @@ def newest(found):
 
 
 class Viewer(QWidget):
-    def __init__(self, frame, client_dir, keys=None, kss=None):
+    def __init__(self, frame, client_dir, keys=None, kss=None, source=None, embedded_name=None):
         super().__init__()
         self.frame_path, self.client_dir = frame, client_dir
-        self.setWindowTitle('FPK1 glhost frames')
-        self.view = FrameView(1440, 540, 'Waiting for glhost frames...')
+        self.setWindowTitle('FPK1 display')
+        waiting = 'Waiting for QEMU scanout...' if source == 'DC scanout' else 'Waiting for glhost frames...'
+        if embedded_name:
+            from research.hmi.embedded_qemu import EmbeddedQemu
+            self.view = EmbeddedQemu(embedded_name)
+        else:
+            self.view = FrameView(1440, 540, waiting)
         self.choice = QComboBox()
         self.choice.addItem(FOLLOW)
+        if source:
+            self.choice.addItem(source)
+            self.choice.setCurrentText(source)
         self.status = QLabel()
+        if embedded_name:
+            self.view.status.connect(self.status.setText)
         top = QHBoxLayout()
         top.addWidget(QLabel('Source:'))
         top.addWidget(self.choice, 1)
@@ -175,7 +193,8 @@ class Viewer(QWidget):
             self.panel = WheelPanel(keys, self.keys_status.setText)
             middle.addWidget(self.panel, 0, Qt.AlignVCenter)
         layout = QVBoxLayout(self)
-        layout.addLayout(top)
+        if not embedded_name:
+            layout.addLayout(top)
         if kss:
             frame_area = QWidget()
             frame_area.setLayout(middle)
@@ -200,9 +219,11 @@ class Viewer(QWidget):
         bottom.addWidget(self.keys_status)
         layout.addLayout(bottom)
         self.stamp = None
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(100)
+        self.timer = None
+        if not embedded_name:
+            self.timer = QTimer(self)
+            self.timer.timeout.connect(self.refresh)
+            self.timer.start(100)
 
     def refresh(self):
         found = sources(self.frame_path, self.client_dir)
@@ -225,7 +246,39 @@ class Viewer(QWidget):
         if image is not None:
             self.view.frame, self.stamp = image, stamp
             self.status.setText(f'{name}: {image.width()}x{image.height()} ({path})')
+            if name == 'DC scanout':
+                try:
+                    metadata = json.loads(path.with_suffix('.json').read_text())
+                    detail = ('window ' + ','.join(metadata['active_windows'])
+                              if metadata['complete'] else '; '.join(metadata['limitations']))
+                    self.status.setText(f'{name}: {image.width()}x{image.height()} | {detail}')
+                except (OSError, ValueError, KeyError):
+                    self.status.setText(f'{name}: {image.width()}x{image.height()} | metadata pending')
             self.view.update()
+
+
+class PeerWindow(QWidget):
+    """KSS log/controls only; QEMU owns the live display window."""
+    def __init__(self, keys=None, kss=None):
+        super().__init__()
+        self.setWindowTitle('FPK1 KSS')
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel('Display is shown in the QEMU window.'))
+        middle = QHBoxLayout()
+        self.kss_log = QPlainTextEdit()
+        self.kss_log.setReadOnly(True)
+        self.kss_log.setMaximumBlockCount(5000)
+        self.kss_log.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+        self.kss_log.setPlaceholderText('Waiting for the KSS link...' if kss else 'KSS peer disabled')
+        if kss:
+            kss.line.connect(self.kss_log.appendPlainText)
+        middle.addWidget(self.kss_log, 1)
+        self.keys_status = QLabel()
+        if keys:
+            middle.addWidget(WheelPanel(keys, self.keys_status.setText))
+        layout.addLayout(middle, 1)
+        layout.addWidget(self.keys_status)
+        self.resize(900, 400)
 
 
 def main():
@@ -235,6 +288,10 @@ def main():
     parser.add_argument('--client-dir', type=Path, default=Path('/tmp'),
                         help='directory of mhi2-client-<pid>.ppm dumps (MHI2_GL_CLIENT_DIR)')
     parser.add_argument('--snapshot', type=Path, help='save the newest frame as PNG and exit')
+    parser.add_argument('--source', help='pin this source instead of following the newest client')
+    parser.add_argument('--log-only', action='store_true',
+                        help='only KSS log/controls; QEMU displays the image directly')
+    parser.add_argument('--embed-qemu-name', help='embed the uniquely named native QEMU console')
     parser.add_argument('--keys', type=Path,
                         help="launcher key FIFO (run_stage1_console.py --keys); shows the button panel")
     parser.add_argument('--kss', type=Path,
@@ -243,15 +300,16 @@ def main():
     args = parser.parse_args()
     if args.snapshot:
         found = sources(args.frame, args.client_dir)
-        name = newest(found)
-        image = read_ppm(found[name]) if name else None
+        name = args.source if args.source else newest(found)
+        image = read_ppm(found[name]) if name in found else None
         if image is None or not image.save(str(args.snapshot)):
             raise SystemExit('no complete frame found')
         print(f'{name} -> {args.snapshot}')
         return
     app = QApplication(sys.argv)
     kss = KssPeer(args.kss, args.kss_log) if args.kss else None
-    viewer = Viewer(args.frame, args.client_dir, args.keys, kss)
+    viewer = (PeerWindow(args.keys, kss) if args.log_only else
+              Viewer(args.frame, args.client_dir, args.keys, kss, args.source, args.embed_qemu_name))
     fit_to_screen(viewer)
     viewer.show()
     if kss:

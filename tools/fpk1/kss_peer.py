@@ -17,10 +17,15 @@ VersionsScreen_VS_VersionInfo right after Rte_Start ("Update HOOK from RTE")
 and logs "returned 1" (never received) if KSS has not sent it by then. This is a research stand-in; it
 knows nothing of KSS's real behaviour beyond those messages.
 
-With --coding HEX or FPK1_CODING it also sends the seven ConfigM long-coding
-signals before application run and repeats them with alive traffic. The local
-research decoder in research/hmi/configm.py documents the recovered masks and
-the separate KSS configuration sources that this input cannot supply.
+With --coding HEX or FPK1_CODING it sends fourteen ConfigM signals before
+application run and repeats them with alive traffic. Long coding supplies
+seven signals; the remaining internal coding and startup vehicle identity
+use the original KSS ROM fallback for NvM block 0x39. FPK1_INTERNAL_CODING
+can override that 16-byte block with device-specific hex data. This does not
+reproduce later CAN identity updates or persisted user overrides. The local
+research decoder in research/hmi/configm.py documents the recovered masks.
+BAP_DesignChange (0x3cd) is separate: its persisted selected design comes
+from NvM block 0x4b, and this peer does not currently reproduce that state.
 """
 import argparse
 import os
@@ -141,8 +146,10 @@ class Kss:
         self.config_signals = []
         coding = coding if coding is not None else os.environ.get('FPK1_CODING')
         if coding is not None:
-            from research.hmi.configm import parse_coding, signals
-            self.config_signals = list(signals(parse_coding(coding)))
+            from research.hmi.configm import parse_coding, all_signals
+            self.config_signals = list(all_signals(parse_coding(coding)))
+            source = 'explicit FPK1_INTERNAL_CODING' if os.environ.get('FPK1_INTERNAL_CODING') is not None else 'ROM fallback for NvM 0x39 (device NvM unavailable)'
+            self.log('ConfigM internal source: ' + source)
         self.persistency = persistency
         self.outbox = []
         self.reassembler = ipc.Reassembler()
@@ -159,8 +166,10 @@ class Kss:
     def next_frame(self):
         return self.outbox[0] if self.outbox else ipc.empty_frame()
 
-    def delivered(self):
-        if self.outbox:
+    def delivered(self, frame):
+        # A timer can enqueue data while an empty frame is still in flight.
+        # Its ACK must not consume that newly queued, unsent message.
+        if self.outbox and self.outbox[0] == frame:
             self.outbox.pop(0)
             if not self.outbox and self.run_pending:
                 self.run_pending = False
@@ -271,7 +280,7 @@ def run(path, period, emit=None, coding=None):
                     if frame is not None:
                         if delivered:
                             link.delivered += 1
-                            kss.delivered()
+                            kss.delivered(link.tx)
                         if ipc.valid(frame):
                             kss.receive(frame)
         kss.tick()

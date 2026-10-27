@@ -70,17 +70,17 @@ class KssTests(unittest.TestCase):
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
         self.assertEqual((lun, cid, last), (ipc.LUN_RTE, 0, True))
         self.assertEqual(data, ipc.l4c_message(ipc.L4C_VS_HMI_VERSIONS_INFO, kss.VERSIONS_INFO + b'\x00'))
-        kss.delivered()
+        kss.delivered(kss.next_frame())
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
         self.assertEqual((lun, cid, data, last),
                          (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x00' + bytes(range(16)), True))
         kss.tick()
         self.assertEqual(len(kss.outbox), 1, 'run request waits for the persistency')
-        kss.delivered()
+        kss.delivered(kss.next_frame())
         kss.tick()
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
         self.assertEqual((lun, cid, data[:2], last), (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x02', True))
-        kss.delivered()
+        kss.delivered(kss.next_frame())
         kss.tick()
         self.assertEqual(kss.next_frame(), ipc.empty_frame())
 
@@ -92,6 +92,27 @@ class KssTests(unittest.TestCase):
         self.assertEqual(messages[0][:2], (7, ipc.CID_GSS_ALIVE_REQUEST))
         self.assertEqual([m[2] for m in messages[1:]],
                          [ipc.l4c_message(0x79, b'\x01\x00'), ipc.l4c_message(0x7a, b'\x01\x00')])
+
+    def test_empty_frame_ack_does_not_drop_unsent_run_request(self):
+        kss = kss_peer.Kss(lambda text: None)
+        in_flight = kss.next_frame()
+        self.assertEqual(in_flight, ipc.empty_frame())
+        # RUN_REQUEST_DELAY expires while this empty SPI transfer is in flight.
+        kss.request_run()
+        pending = kss.next_frame()
+        kss.delivered(in_flight)
+        self.assertEqual(kss.next_frame(), pending)
+        kss.delivered(pending)
+        self.assertEqual(kss.next_frame(), ipc.empty_frame())
+
+    def test_empty_frame_ack_does_not_drain_configuration(self):
+        kss = kss_peer.Kss(lambda text: None)
+        in_flight = kss.next_frame()
+        kss.handle(7, ipc.CID_GSS_STATUS, b'\x01')
+        pending = list(kss.outbox)
+        kss.delivered(in_flight)
+        self.assertEqual(kss.outbox, pending)
+        self.assertTrue(kss.run_pending)
 
 if __name__ == '__main__':
     unittest.main()

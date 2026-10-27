@@ -29,6 +29,42 @@ class Oracle:
         self.cpu.mem_write(0x1000000, data)
         self.cpu.hook_add(UC_HOOK_CODE, self.hook)
         self.values = {}
+        self.cpu.mem_map(0xb063a000, 0x1000)  # identity registers written by ConfigM
+
+    def default_internal(self):
+        """ROM fallback for NvM block 0x39, not a device's persisted coding."""
+        descriptor = 0x10dc44c + 0x39 * 24
+        assert self.word(descriptor) == 0xb430
+        address = self.word(descriptor + 4)
+        return self.data[address - 0x1000000:address - 0x1000000 + 16]
+
+    def pack(self, data_id, value):
+        entry = 0x10cf108 + data_id * 20
+        length, packer = self.word(entry + 4), self.word(entry + 12)
+        self.cpu.mem_write(0x2000100, value)
+        self.cpu.mem_write(0x2000200, bytes(64))
+        self.call(packer, 0x2000100, 0x2000200)
+        return bytes(self.cpu.mem_read(0x2000200, length))
+
+    def decode_full(self, coding, internal=None):
+        internal = self.default_internal() if internal is None else internal
+        if len(internal) != 16:
+            raise ValueError('Internal NvM block must contain 16 bytes')
+        self.cpu.mem_write(0xb430, internal)
+        result = self.decode(coding)
+        self.call(0x10867c8)
+        # Execute original startup identity derivation from the internal coding.
+        # Begin after unrelated startup calls and stop before the CAN reader.
+        self.cpu.reg_write(UC_ARM_REG_SP, 0x200f000)
+        self.cpu.emu_start(0x1082be9, 0x1082c72, count=10000)
+        if self.cpu.reg_read(UC_ARM_REG_PC) != 0x1082c72:
+            raise RuntimeError('Identity derivation exceeded instruction limit')
+        for key, component, element in (
+                (0x12e, 0xd0, 0), (0x12f, 0xd0, 1), (0x130, 0xd0, 2),
+                (0x267, 0xd0, 3), (0x273, 0xd0, 4),
+                (0x2d1, 0xcf, 0), (0x2d2, 0xcf, 1)):
+            result[key] = self.pack(key, self.values[component, element])
+        return result
 
     def word(self, address):
         return struct.unpack_from('<I', self.data, address - 0x1000000)[0]

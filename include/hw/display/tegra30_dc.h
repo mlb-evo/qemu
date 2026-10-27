@@ -31,6 +31,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(Tegra30DCState, TEGRA30_DC)
 
 /* Per-window programmable state (the subset we interpret). */
 typedef struct Tegra30DCWindow {
+    /* Selected-window registers for scanout and local capture diagnostics. */
+    uint32_t capture_regs[0x140];
     uint32_t win_options;       /* DC_WIN_x_WIN_OPTIONS  (WIN_ENABLE bit 30) */
     uint32_t color_depth;       /* DC_WIN_x_COLOR_DEPTH  (field [4:0])       */
     uint32_t position;          /* DC_WIN_x_POSITION                         */
@@ -46,6 +48,7 @@ struct Tegra30DCState {
 
     MemoryRegion iomem;
     QemuConsole *con;
+    bool show_console;
     qemu_irq irq;
     QEMUTimer *frame_timer;
     Tegra30Host1xState *host1x;

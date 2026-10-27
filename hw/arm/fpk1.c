@@ -307,6 +307,9 @@ static void fpk1_init(MachineState *machine)
     Tegra30State *soc = TEGRA30(object_new(TYPE_TEGRA30));
     ms->soc = soc;
     object_property_add_child(OBJECT(machine), "soc", OBJECT(soc));
+    /* FPK1 has one panel on DC-A. Keep DC-B emulated without a blank host
+     * window when the native QEMU display backend is used. */
+    qdev_prop_set_bit(DEVICE(&soc->dc_b), "show-console", false);
 
     memory_region_init_ram(&soc->emem, OBJECT(soc), "fpk1-dram",
                            machine->ram_size, &error_fatal);

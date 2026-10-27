@@ -13,6 +13,10 @@ void glTexImage2D(u32,i32,i32,i32,i32,i32,u32,u32,const void *);
 struct NvSurface {u32 width,height,format,layout,pitch,mem,offset,kind;};
 struct NativeWindow {u32 window;struct NvSurface buffers[3];void *pointers[3], *mapped[3];u32 ids[3],index;};
 struct NativeImage {struct NvSurface surface;unsigned char *cached;void *mapped;u32 id,cached_texture;};
+/* Original FPK1 libnvdisp @0x7738 maps this format to DC depth 13 with
+ * BYTE_SWAP=0: memory bytes R,G,B,A, as returned by host glReadPixels.
+ * 0x20168815 instead selects BYTE_SWAP=2 and expects reversed pixel bytes. */
+#define NATIVE_RGBA8 0x20105315u
 static struct {
     void *rm,*cwm;u32 device;
     int (*open)(u32 *,u32);
@@ -71,7 +75,7 @@ static void *native_window_create(void *window)
     struct NativeWindow *s=malloc(sizeof(*s));if(!s)return 0;memset(s,0,sizeof(*s));s->window=handle;
     for(unsigned i=0;i<3;i++){
         struct NvSurface *b=&s->buffers[i];
-        b->width=w;b->height=h;b->format=0x20168815;b->layout=0;b->pitch=w*4;
+        b->width=w;b->height=h;b->format=NATIVE_RGBA8;b->layout=0;b->pitch=w*4;
         if(native.create(native.device,&b->mem,w*h*4)||native.alloc(b->mem,0,0,4096,0))goto fail;
         /* K5126 NvRmMemMap(handle, offset, size, access, out): access bits
          * 1/2 are read/write. Keep the uncached allocation mapped for its
@@ -157,7 +161,7 @@ static void native_upload_image(u32 target,struct NativeImage *image)
 {
     struct NvSurface *b=&image->surface;
     u32 request[3]={image->id,b->width,b->height},hit=0;
-    if(!b->offset&&b->pitch==b->width*4&&b->format==0x20168815){
+    if(!b->offset&&b->pitch==b->width*4&&b->format==NATIVE_RGBA8){
         emit_iv(132,(i32 *)request,3);
         if(recv_all(&hit,4)==0&&hit)return;
     }

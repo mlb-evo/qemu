@@ -153,6 +153,7 @@ static const char *frame_path(void)
 
 static void dump_frame(const char *path)
 {
+    if (getenv("MHI2_GL_NO_PPM")) return;
     if (!win) return;
     size_t n = (size_t)win_w * win_h;
     unsigned char *rgba = malloc(n * 4);
@@ -181,6 +182,7 @@ static void dump_frame(const char *path)
 /* Decoder callbacks only retain images. Publication occurs on the bridge thread. */
 static void video_display_changed(void)
 {
+    if (getenv("MHI2_GL_NO_PPM")) return;
     const char *cluster_path=getenv("MHI2_CLUSTER_VIDEO_FRAME");
     if(cluster_path && *cluster_path){
         bool active=false;

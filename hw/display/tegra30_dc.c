@@ -22,6 +22,7 @@
 #include "system/address-spaces.h"
 #include "hw/core/sysbus.h"
 #include "hw/core/irq.h"
+#include "hw/core/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
@@ -132,9 +133,11 @@ static pixman_format_code_t tegra30_dc_active_fb(Tegra30DCState *s,
                                                  uint32_t *width,
                                                  uint32_t *height,
                                                  uint32_t *stride,
-                                                 bool *flip)
+                                                 bool *flip,
+                                                 uint32_t *byte_swap)
 {
     *flip = false;
+    *byte_swap = 0;
     for (int w = 0; w < TEGRA30_DC_NUM_WINDOWS; w++) {
         Tegra30DCWindow *win = &s->win[w];
         pixman_format_code_t fmt;
@@ -162,8 +165,19 @@ static pixman_format_code_t tegra30_dc_active_fb(Tegra30DCState *s,
             ws = ww * bpp;
         }
 
-        *addr = win->start_addr;
+        uint32_t h_offset = win->capture_regs[0x106];
+        uint32_t v_offset = win->capture_regs[0x108];
         *flip = win->win_options & WIN_V_DIRECTION;
+        /* V_OFFSET names the first scanned row. Keep the old implicit-last-row
+         * convention for guests which only program V_DIRECTION. */
+        if (*flip && v_offset) {
+            if (v_offset < wh - 1) {
+                continue;
+            }
+            v_offset -= wh - 1;
+        }
+        *addr = (hwaddr)win->start_addr + h_offset + (hwaddr)v_offset * ws;
+        *byte_swap = win->capture_regs[1] & 3;
         *width = ww;
         *height = wh;
         *stride = ws;
@@ -216,11 +230,13 @@ static bool tegra30_dc_update_display(void *opaque)
     pixman_format_code_t format;
     hwaddr addr, mapsize, size, linesize;
     uint32_t width, height, stride;
+    uint32_t byte_swap;
     DisplaySurface *surface;
     void *data;
     bool flip;
 
-    format = tegra30_dc_active_fb(s, &addr, &width, &height, &stride, &flip);
+    format = tegra30_dc_active_fb(s, &addr, &width, &height, &stride, &flip,
+                                 &byte_swap);
     if (format == 0) {
         /* No usable framebuffer yet; show a blank panel. */
         tegra30_dc_blank(s, width, height);
@@ -252,10 +268,10 @@ static bool tegra30_dc_update_display(void *opaque)
         return true;
     }
 
-    if (flip) {
+    if (flip || byte_swap) {
         /*
-         * Bottom-up scan-out (GL-rendered client buffers): copy the lines
-         * reversed into a console-owned surface on every refresh.
+         * Copy into a console-owned surface using the programmed row
+         * direction and byte order on every refresh.
          */
         surface = qemu_console_surface(s->con);
         if (!surface || surface_width(surface) != width ||
@@ -266,9 +282,24 @@ static bool tegra30_dc_update_display(void *opaque)
                                                       linesize, NULL);
             qemu_console_set_surface(s->con, surface);
         }
+        unsigned xor_byte = byte_swap == 1 ? 1 : byte_swap == 2 ? 3 : 2;
+        if (byte_swap && linesize % (byte_swap == 1 ? 2 : 4)) {
+            address_space_unmap(&address_space_memory, data, mapsize, 0, 0);
+            tegra30_dc_blank(s, width, height);
+            return true;
+        }
         for (uint32_t y = 0; surface && y < height; y++) {
-            memcpy((uint8_t *)surface_data(surface) + (size_t)y * surface_stride(surface),
-                   (uint8_t *)data + (size_t)(height - 1 - y) * stride, linesize);
+            uint8_t *dst = (uint8_t *)surface_data(surface) +
+                           (size_t)y * surface_stride(surface);
+            uint8_t *src = (uint8_t *)data +
+                           (size_t)(flip ? height - 1 - y : y) * stride;
+            if (byte_swap) {
+                for (hwaddr x = 0; x < linesize; x++) {
+                    dst[x] = src[x ^ xor_byte];
+                }
+            } else {
+                memcpy(dst, src, linesize);
+            }
         }
         address_space_unmap(&address_space_memory, data, mapsize, 0, 0);
         s->surface_valid = false;
@@ -322,6 +353,7 @@ static void tegra30_dc_window_write(Tegra30DCState *s, uint32_t index,
             continue;
         }
         any = true;
+        s->win[w].capture_regs[index - 0x700] = value;
         if (getenv("TEGRA_DC_DEBUG")) {
             static unsigned logged;
             if (logged++ < 400) {
@@ -445,6 +477,9 @@ static void tegra30_dc_write(void *opaque, hwaddr offset,
         tegra30_dc_window_write(s, index, value);
         break;
     default:
+        if (index >= 0x700 && index < 0x840) {
+            tegra30_dc_window_write(s, index, value);
+        }
         break;
     }
 }
@@ -499,10 +534,16 @@ static void tegra30_dc_realize(DeviceState *dev, Error **errp)
     sysbus_init_irq(sbd, &s->irq);
     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, tegra30_dc_frame, s);
 
-    s->con = qemu_graphic_console_create(dev, 0, &tegra30_dc_gfx_ops, s);
-    qemu_console_resize(s->con, TEGRA30_DC_DEFAULT_WIDTH,
-                        TEGRA30_DC_DEFAULT_HEIGHT);
+    if (s->show_console) {
+        s->con = qemu_graphic_console_create(dev, 0, &tegra30_dc_gfx_ops, s);
+        qemu_console_resize(s->con, TEGRA30_DC_DEFAULT_WIDTH,
+                            TEGRA30_DC_DEFAULT_HEIGHT);
+    }
 }
+
+static const Property tegra30_dc_properties[] = {
+    DEFINE_PROP_BOOL("show-console", Tegra30DCState, show_console, true),
+};
 
 static const VMStateDescription tegra30_dc_vmstate = {
     .name = "tegra30-dc",
@@ -518,6 +559,29 @@ static const VMStateDescription tegra30_dc_vmstate = {
     }
 };
 
+/* Read-only local diagnostics; does not change scanout or guest registers. */
+static char *tegra30_dc_scanout_state(Object *obj, Error **errp)
+{
+    Tegra30DCState *s = TEGRA30_DC(obj);
+    GString *json = g_string_new(NULL);
+
+    g_string_append_printf(json,
+        "{\"display_active\":%u,\"display_command\":%u,"
+        "\"display_options\":%u,\"background\":%u,\"windows\":[",
+        s->disp_active, s->regs[0x32], s->regs[0x402], s->regs[0x4e4]);
+    for (int w = 0; w < TEGRA30_DC_NUM_WINDOWS; w++) {
+        g_string_append_printf(json, "%s{\"name\":\"%c\",\"registers\":{",
+                               w ? "," : "", 'A' + w);
+        for (unsigned r = 0; r < 0x140; r++) {
+            g_string_append_printf(json, "%s\"%03x\":%u", r ? "," : "",
+                                   0x700 + r, s->win[w].capture_regs[r]);
+        }
+        g_string_append(json, "}}");
+    }
+    g_string_append(json, "]}");
+    return g_string_free(json, false);
+}
+
 static void tegra30_dc_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -526,6 +590,9 @@ static void tegra30_dc_class_init(ObjectClass *klass, const void *data)
     device_class_set_legacy_reset(dc, tegra30_dc_reset);
     dc->vmsd = &tegra30_dc_vmstate;
     dc->realize = tegra30_dc_realize;
+    device_class_set_props(dc, tegra30_dc_properties);
+    object_class_property_add_str(klass, "scanout-state",
+                                  tegra30_dc_scanout_state, NULL);
 }
 
 static const TypeInfo tegra30_dc_info = {

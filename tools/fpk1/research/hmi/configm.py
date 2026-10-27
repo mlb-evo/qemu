@@ -12,15 +12,29 @@ is at 0x10cf108. The corresponding GSS callbacks target RTE component
 Unassigned bits are zeroed, including Units bits 20..23: the original KSS
 leaves these stack bits uninitialized. ConfigM_CodedLanguage is assigned
 locally in KSS but has no l4c sender/receiver entry in this firmware.
-InterneCodierung and Fahrzeugerkennung require separate KSS data and are
-deliberately absent. This does not reproduce persisted user overrides.
+all_signals additionally reproduces InterneCodierung and startup
+Fahrzeugerkennung from NvM block 0x39. Its default is the original ROM
+fallback, not a recovered device's persisted coding or live CAN identity.
+This does not reproduce persisted user overrides.
+The saved active design is separate: BAP_DesignChange (0x3cd) is produced
+using NvM 0x4b byte 18 and this module does not generate that message.
 """
 import sys
 sys.dont_write_bytecode = True
 import argparse
 import json
+import os
 
 DEFAULT_CODING = '008500E07C98000801A369602000600000000000'
+# Original KSS NvM descriptor 0x10dc44c + 0x39*24 points to 0x10df43c.
+DEFAULT_INTERNAL_CODING = '0110086b000009050000171e14017c00'
+INTERNAL_LAYOUT = (
+    ('Internal_Coding01', 0x12e, tuple(range(8))),
+    ('Internal_Coding02', 0x12f, tuple(range(8, 16))),
+    ('Application_Coding', 0x130, (16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, 27, 28, 30, 31, -1)),
+    ('Application_Parameters', 0x267, (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 54, 55, 56, 63, 64, 65, 66, 67, 68, 69, 70, 30, 31, -1, 72, 73, 74, 75, 76, 77, 78, 79)),
+    ('Internal_Variants', 0x273, (80, 81, 82, 83, 84, 96, 97, -1, 86, 87, 100, -1, -1, -1, -1, -1, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 88, 89, 90, 91, 92, 93, 94, 95)),
+)
 
 # For each wire bit, the source bit index; -1 means reserved/zero.
 LAYOUT = (
@@ -55,18 +69,59 @@ def signals(coding):
         yield name, data_id, value.to_bytes(len(bits) // 8, 'little')
 
 
+def parse_internal(text):
+    try:
+        data = bytes.fromhex(text)
+    except ValueError as error:
+        raise ValueError('Internal coding must be hexadecimal') from error
+    if len(data) != 16:
+        raise ValueError('Internal coding must contain 16 bytes (32 hex digits)')
+    return data
+
+
+def all_signals(coding, internal=None):
+    """Fourteen ConfigM messages, using original firmware startup identity rules.
+
+    FPK1_INTERNAL_CODING overrides the ROM fallback for device-specific research.
+    Reserved stack bits are zeroed. Layouts were recovered with decode_full in
+    configm_oracle.py and checked against the original GSS receiver callbacks.
+    """
+    if internal is None:
+        internal = parse_internal(os.environ.get('FPK1_INTERNAL_CODING', DEFAULT_INTERNAL_CODING))
+    if len(internal) != 16:
+        raise ValueError('Internal coding must contain exactly 16 bytes')
+    for name, key, value in signals(coding):
+        if key == 0x128:
+            # Installation_Coding bit 22 also depends on internal byte 3 bit 5.
+            value = (int.from_bytes(value, 'little') | ((internal[3] >> 5 & 1) << 22)).to_bytes(3, 'little')
+        yield name, key, value
+    raw = int.from_bytes(internal, 'little')
+    for name, key, bits in INTERNAL_LAYOUT:
+        value = sum(((raw >> source) & 1) << dest
+                    for dest, source in enumerate(bits) if source >= 0)
+        yield name, key, value.to_bytes(len(bits) // 8, 'little')
+    vehicle = (2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 2, 2, 2, 2, 2)[internal[6] >> 2 & 15]
+    primary = (0, 1, 2, 3, 4, 5, 2, 2)[internal[7] >> 1 & 7]
+    secondary = (0, 1, 2, 3, 4, 5, 0, 0)[internal[7] >> 4 & 7]
+    yield 'Fahrzeugtyp', 0x2d1, bytes([vehicle])
+    yield 'Antrieb', 0x2d2, bytes([primary | secondary << 4])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('coding', nargs='?', default=DEFAULT_CODING)
+    parser.add_argument('--internal-coding', default=os.environ.get('FPK1_INTERNAL_CODING', DEFAULT_INTERNAL_CODING))
     args = parser.parse_args()
     try:
         coding = parse_coding(args.coding)
+        internal = parse_internal(args.internal_coding)
     except ValueError as error:
         parser.error(str(error))
-    print(json.dumps({'coding': coding.hex().upper(), 'signals': [
+    print(json.dumps({'coding': coding.hex().upper(), 'internal_coding': internal.hex(),
+        'internal_source': 'ROM fallback' if internal.hex() == DEFAULT_INTERNAL_CODING else 'explicit override', 'signals': [
         {'name': name, 'data_id': hex(data_id), 'wire': value.hex(), 'status': 0}
-        for name, data_id, value in signals(coding)],
-        'missing_sources': ['InterneCodierung', 'Fahrzeugerkennung'],
+        for name, data_id, value in all_signals(coding, internal)],
+        'identity_source': 'original KSS startup derivation; live CAN recognition absent',
         'user_overrides': False}, indent=2))
 
 

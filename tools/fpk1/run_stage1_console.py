@@ -80,15 +80,28 @@ def summarize_log(text, limit=64):
 def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_shift=None,
         emmc=None, extra=(), keep_dir=None, cmdline='mem=512M@0x80000000 ', log_limit_mib=64, progress=None,
         shell=(), shell_interval=4.0, diag_shell=False, screendump=None,
-        replacements=None, glhost=None, gl_frames=None, viewer=False, keys=None, kss=False):
+        replacements=None, glhost=None, gl_frames=None, viewer=False, keys=None, kss=False,
+        capture_scanout=False, scanout_interval=0.1, native_display='none', dump_gl_frames=False):
     if not 1 <= seconds <= 3600 or tcg_thread not in ('single', 'multi'):
         raise ValueError('Invalid run configuration')
+    if native_display not in ('none', 'sdl', 'embedded'):
+        raise ValueError('Unsupported native display')
+    if native_display == 'embedded' and not (viewer and gl_frames and glhost):
+        raise ValueError('embedded display needs viewer, gl_frames and glhost')
+    capture = None
+    if capture_scanout:
+        from research.hmi.capture_scanout import ScanoutCapture
+        destination = gl_frames or (Path(keep_dir) / 'frames' if keep_dir else None)
+        if destination is None:
+            raise ValueError('scanout capture needs gl_frames or keep_dir')
+        capture = ScanoutCapture(destination, qmp, scanout_interval)
     decoded, framing = decode_archive(archive)
     if framing['decoded_sha256'] != VERIFIED_SHA256:
         raise ValueError('Only the verified primary Stage1 profile is supported')
     layout = startup_layout(decoded)
     load = layout['implied_load_address']
     root = Path(tempfile.mkdtemp(prefix='fpk1-console-'))
+    window_name = 'FPK1-' + root.name
     try:
         bios, tags, console, log, errors, serial = (root / n for n in (
             'boot.bin', 'atags.bin', 'console.log', 'qemu.log', 'stderr.log', 'serial.sock'))
@@ -100,7 +113,8 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             nor = write_stage2_nor(archive, root / 'nor.bin', replacements)
             machine += ',nor-image=' + str(root / 'nor.bin')
         command = [str(Path(qemu).resolve()), '-machine', machine, '-m', '512M',
-                   '-bios', str(bios), '-display', 'none',
+                   '-bios', str(bios), '-display', 'sdl' if native_display == 'embedded' else native_display,
+                   '-name', window_name,
                    '-chardev', f'socket,id=ser0,path={serial},server=on,wait=off,logfile={console}',
                    '-serial', 'chardev:ser0',
                    '-monitor', 'none', '-nic', 'none', '-S', '-qmp', 'stdio',
@@ -128,11 +142,17 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
             gl_in = os.open(root / 'gl.in', os.O_RDWR)
             gl_out = os.open(root / 'gl.out', os.O_RDWR)
             env = dict(os.environ)
+            if dump_gl_frames:
+                env.pop('MHI2_GL_NO_PPM', None)
+            else:
+                env['MHI2_GL_NO_PPM'] = '1'
+                env.pop('MHI2_GL_DUMP_CLIENTS', None)
             if gl_frames:
-                # Primary frame and one dump per guest client, for view_frames.py.
+                # Optional diagnostic dumps; native display needs no frame files.
                 gl_frames.mkdir(parents=True, exist_ok=True)
-                env.update(MHI2_GL_FRAME=str(gl_frames / 'primary.ppm'), MHI2_GL_DUMP_CLIENTS='1',
-                           MHI2_GL_CLIENT_DIR=str(gl_frames))
+                env.update(MHI2_GL_FRAME=str(gl_frames / 'primary.ppm'), MHI2_GL_CLIENT_DIR=str(gl_frames))
+                if dump_gl_frames:
+                    env['MHI2_GL_DUMP_CLIENTS'] = '1'
             helper = subprocess.Popen([str(glhost)], stdin=gl_out, stdout=gl_in,
                                       stderr=(root / 'glhost.log').open('wb'), cwd=root, env=env)
             if gl_frames and viewer:
@@ -142,7 +162,16 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                 if kss:
                     # The viewer is the KSS peer and shows its log under the frame.
                     window += ['--kss', str(root / 'kss.sock'), '--kss-log', str(root / 'kss.log')]
-                viewers.append(subprocess.Popen(window))
+                if native_display == 'embedded':
+                    window += ['--embed-qemu-name', window_name]
+                elif native_display != 'none' or not (capture or dump_gl_frames):
+                    window += ['--log-only']
+                elif capture:
+                    window += ['--source', 'DC scanout']
+                window_env = dict(os.environ)
+                if native_display == 'embedded':
+                    window_env['QT_QPA_PLATFORM'] = 'xcb'
+                viewers.append(subprocess.Popen(window, env=window_env))
             command += ['-chardev', f'pipe,id=glbridge,path={root / "gl"}']
         peer = None
         if kss:
@@ -155,8 +184,12 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
         command += list(extra)
         lines, offset, stop = [], 0, 'duration'
         with errors.open('wb') as error_stream:
+            qemu_env = dict(os.environ)
+            if native_display == 'embedded':
+                qemu_env['SDL_VIDEODRIVER'] = 'x11'
+                qemu_env['QEMU_SDL_EMBEDDED'] = '1'
             proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=error_stream, bufsize=0)
+                                    stderr=error_stream, bufsize=0, env=qemu_env)
             try:
                 if 'QMP' not in receive(proc):
                     raise RuntimeError('Missing QMP greeting')
@@ -177,6 +210,9 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                 qmp(proc, 'cont')
                 pending = b''
                 while time.monotonic() - started < seconds:
+                    if native_display == 'embedded' and any(v.poll() is not None for v in viewers):
+                        stop = 'viewer_exit'
+                        break
                     if proc.poll() is not None:
                         stop = 'qemu_exit'
                         break
@@ -201,6 +237,8 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                     except BlockingIOError:
                         pass
                     now = time.monotonic()
+                    if capture:
+                        capture.capture(proc, now - started)
                     if key_fd is not None:
                         try:
                             typed = os.read(key_fd, 256)
@@ -222,7 +260,7 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
                         if progress:
                             progress(lines[-1])
                         next_send = now + shell_interval
-                    time.sleep(.05 if key_fd is not None else .2)
+                    time.sleep(.05 if key_fd is not None or capture else .2)
                 uart.close()
                 if pending:
                     lines.append(dict(t=round(time.monotonic() - started, 2), text=pending.decode('latin-1')))
@@ -267,6 +305,9 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
         return dict(decoded_sha256=framing['decoded_sha256'], command_tail=command[command.index('-accel'):],
                     atag_cmdline=cmdline, diag_shell=diag_shell, requested_s=seconds, elapsed_s=round(elapsed, 2), stopped_for=stop,
                     qemu_exit_status=proc.returncode, nor_backing=nor, emmc_image=str(emmc) if emmc else None,
+                    scanout_capture=(dict(directory=str(capture.directory), interval_s=capture.interval,
+                                          samples=capture.index) if capture else None),
+                    native_display=native_display, dump_gl_frames=dump_gl_frames,
                     console=lines, cpu_samples=pcs,
                     mmio_log_bytes=len(text), mmio_summary=summarize_log(text),
                     stderr=errors.read_text(errors='replace')[-4000:],
@@ -300,11 +341,19 @@ def main():
                         help='run ksh instead of tinit/login on the console (in-memory script change)')
     parser.add_argument('--shell-interval', type=float, default=4.0, help='seconds between shell lines')
     parser.add_argument('--screendump', type=Path, help='PPM path prefix for a final dump of the first display console')
+    parser.add_argument('--capture-scanout', action=argparse.BooleanOptionalAction, default=False,
+                        help='diagnostic only: save QEMU DC scanout to PPM')
+    parser.add_argument('--scanout-interval', type=float, default=0.1,
+                        help='seconds between consistent DC snapshots (default: 0.1)')
+    parser.add_argument('--native-display', choices=('none', 'sdl', 'embedded'), default='none',
+                        help='embedded: one UI with KSS; sdl: separate QEMU window; no PPM needed')
+    parser.add_argument('--dump-gl-frames', action='store_true',
+                        help='diagnostic only: enable primary/per-client GLES PPM files')
     parser.add_argument('--stage2-replace', action='append', default=[], metavar='PATH=FILE',
                         help='replace a STAGE2.1 file in the synthetic NOR (e.g. lib/libEGL.so=shim.so)')
     parser.add_argument('--glhost', type=Path, help='host GLES renderer bound to the glbridge chardev')
     parser.add_argument('--gl-frames', type=Path,
-                        help='directory for glhost primary and per-client frames')
+                        help='directory for optional diagnostic frame dumps')
     parser.add_argument('--viewer', action='store_true',
                         help='open tools/fpk1/view_frames.py on --gl-frames during the run')
     parser.add_argument('--keys', type=Path,
@@ -333,7 +382,10 @@ def main():
                  shell=args.shell.read_text().splitlines() if args.shell else (),
                  shell_interval=args.shell_interval, diag_shell=args.diag_shell, screendump=args.screendump,
                  replacements={p: Path(f).read_bytes() for p, f in (r.split('=', 1) for r in args.stage2_replace)},
-                 glhost=args.glhost, gl_frames=args.gl_frames, viewer=args.viewer, keys=args.keys, kss=args.kss, progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
+                 glhost=args.glhost, gl_frames=args.gl_frames, viewer=args.viewer, keys=args.keys, kss=args.kss,
+                 capture_scanout=args.capture_scanout, scanout_interval=args.scanout_interval,
+                 native_display=args.native_display, dump_gl_frames=args.dump_gl_frames,
+                 progress=lambda l: print(f"[{l['t']:7.2f}] {l['text']}", flush=True))
     text = json.dumps(result, indent=2)
     if args.json:
         args.json.write_text(text + '\n')

@@ -154,7 +154,8 @@ void sdl2_window_destroy(struct sdl2_console *scon)
 
 void sdl2_window_resize(struct sdl2_console *scon)
 {
-    if (!scon->real_window) {
+    /* Local FPK1 embedding: the Qt container owns host-window geometry. */
+    if (!scon->real_window || getenv("QEMU_SDL_EMBEDDED")) {
         return;
     }
 

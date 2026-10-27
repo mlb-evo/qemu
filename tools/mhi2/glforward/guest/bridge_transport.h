@@ -106,7 +106,7 @@ static int recv_bytes(void *p, unsigned long n,int release)
         while (!(available=*(volatile u32 *)(bridge+(bulk?32:8)))) {
             /* glhost answers in microseconds; a usleep costs a whole guest
              * tick (20 ms per synchronous call was measured), so poll first. */
-            if (++spins < 4096) continue;
+            if (++spins < 65536) continue;
             if (++tries > 10000) {
                 /* The reply is still owed and will desynchronise later readers. */
                 static const char msg[] = "glbridge: reply timeout, giving up\n";
@@ -140,7 +140,7 @@ static int recv_all(void *p,unsigned long n){return recv_bytes(p,n,1);}
 static void commit_record(struct Record *r)
 {
     if(gl_conn()<0)return;
-    for(unsigned spins=0;*(volatile u32 *)(bridge+16);)if(++spins>=256)usleep(1000);
+    for(unsigned spins=0;*(volatile u32 *)(bridge+16);)if(++spins>=4096)usleep(1000);
     send_all(r->data,r->size);
     if(!r->reply)unlock_record();
 }

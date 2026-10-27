@@ -43,7 +43,7 @@ Install [Homebrew](https://brew.sh/) if it is not already available, then run:
 
 ```sh
 brew install git pkgconf ninja python glib pixman mesa lzo libusb libslirp sevenzip zstd \
-  ffmpeg sox gnu-tar
+  ffmpeg sox gnu-tar arm-none-eabi-gcc
 
 export MHI2_REPRO="$HOME/mhi2-repro"
 mkdir -p "$MHI2_REPRO"
@@ -70,28 +70,6 @@ The ZIP contains source, so it still needs to be compiled. Git is used only to
 fetch pinned third-party build dependencies; your QEMU directory needs no
 `.git` metadata or history. First-time setup needs internet access to GitHub,
 GitLab and Python packages.
-
-Install the ARM compiler used for the guest graphics libraries:
-
-```sh
-mkdir -p "$MHI2_REPRO/toolchain"
-cd "$MHI2_REPRO/toolchain"
-case "$(uname -m)" in arm64) arch=arm64;; x86_64) arch=x64;; esac
-asset="xpack-arm-none-eabi-gcc-13.3.1-1.1-darwin-$arch.tar.gz"
-release="https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/download/v13.3.1-1.1"
-curl -fLO "$release/$asset"
-curl -fLO "$release/$asset.sha"
-shasum -a 256 -c "$asset.sha"
-tar -xzf "$asset"
-export PATH="$MHI2_REPRO/toolchain/xpack-arm-none-eabi-gcc-13.3.1-1.1/bin:$PATH"
-arm-none-eabi-gcc --version
-cd "$MHI2_REPRO/qemu"
-```
-
-The compiler must be `arm-none-eabi`, not `arm-linux-gnueabihf`. You may use an
-already installed compiler by passing `--arm-prefix /absolute/path/bin/arm-none-eabi-`
-to the build command. GNU Arm 14.3.Rel1 has also built the Porsche guest bridge
-on Apple Silicon.
 
 ### 1.2 Ubuntu
 

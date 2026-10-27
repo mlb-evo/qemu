@@ -1,0 +1,6 @@
+#!/bin/sh
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo=$(CDPATH= cd -- "$here/../../../.." && pwd)
+export MHI2_SHADER_CACHE="$repo/build_fpk1/research-artifacts/cgdrv-experiment/shader-cache"
+export PYTHONDONTWRITEBYTECODE=1
+exec "$repo/build_fpk1/bridge/glhost" "$@"

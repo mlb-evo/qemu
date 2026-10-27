@@ -84,7 +84,7 @@ exec "$here/venv/bin/python" @REPO@/tools/fpk1/run_stage1_console.py @ARCHIVE@ \
     --stage2-replace lib/libEGL.so="$here/bridge/libEGL.so" \
     --stage2-replace lib/libGLESv2.so="$here/bridge/libGLESv2.so" \
     --glhost "$here/bridge/glhost" --gl-frames "$run/frames" --viewer --kss \
-    --seconds "$seconds" --keep-dir "$run" --json "$run/result.json" "${args[@]}"
+    --seconds "$seconds" --keep-dir "$run" --json "$run/result.json" ${args[@]+"${args[@]}"}
 '''
 
 

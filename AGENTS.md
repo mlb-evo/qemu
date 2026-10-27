@@ -38,3 +38,14 @@ generally involve:
 - **Common devices for Virtualization**: e.g. VirtIO and platform devices
 
 If unsure, the linked `security.rst` document provides authoritative guidance.
+
+## Local FPK1 research workflow
+
+User preference: keep only experiment/research scripts under
+`tools/fpk1/research/`. Do not put binaries, shader files, caches, virtual
+environments, third-party checkouts, reports or run results there.
+Store generated/private artifacts under `build_fpk1/research-artifacts/`
+(which is gitignored); VM run logs may remain under `build_fpk1/runs/`.
+Keep runnable scripts pointed at those separate artifact paths.
+Research remains local and is not intended for upstream contribution; the
+code-provenance policy above continues to apply.

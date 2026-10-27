@@ -1843,7 +1843,9 @@ the gtf2 fallback path) renders its service menu: a green frame with the
 title "Main" and the entries "Debugging" and "GSS". `glhost` writes it to
 `/tmp/mhi2-client-<pid>.ppm` with `MHI2_GL_DUMP_CLIENTS=1`; it is not on the
 display controller, because `kdgui_2dmgr`, which composes client windows,
-does not compose without the KSS run request.
+does not compose without the KSS run request. (Superseded: kdgui_2dmgr maps
+client buffers to display-controller windows; see "How the cluster is
+composed".)
 
 Two fixes to the 2D compositor fragment translation
 (`23522ab1913cc1e6-948`, then hand-written; now mechanically translated) were needed, found by
@@ -2169,3 +2171,245 @@ cycles) and `gtf2` printed nothing until Stage3. In 20261027-104450, with the
 same timing, `1/2` was answered, `gtf2` activated at 6.2 s and `hmi` did
 not fail. The peer sends the run request once and never retries; why
 `gss_ipc` drops it is not known.
+
+## Shader binaries translated to GLSL
+
+EAL restores every Kanzi material from an NVIDIA platform binary
+(`GL_NVIDIA_PLATFORM_BINARY_NV`, format 0x890b); no KZB carries GLSL (all
+628 source records are empty). glhost had GLSL for 35 of the 278 binaries
+seen in a run, so 205 materials failed with
+`Shader '...' failed to link/compile when restored to GPU` (EAL code 21005).
+`tools/fpk1/research/shader-translate` now decodes the AR20 programs and
+emits equivalent GLSL ES 1.00 for all of them; `build_cache.py` writes
+`build_fpk1/research-artifacts/shader-translate/cache`, which `run.sh` sets as
+`MHI2_SHADER_CACHE` (the hand-written `tools/fpk1/gl_shaders` were removed).
+310 distinct binaries come from the KZBs (`shader-audit/audit_sources.py`,
+STAGE2 partitions plus eMMC `stage3`/`app`), 342 with the ones collected from
+runs (`collect.py`, from glhost's `/tmp/mhi2-shader-*.bin` dumps).
+
+### Validation
+
+- `roundtrip.py`: GLSL test cases are compiled by the firmware's own compiler
+  (`libcgdrv.so` under unicorn, `cgdrv-experiment/cgdrv_harness`), the cgc
+  output is translated back, and both programs run on the host GPU on the
+  same random inputs (one point per pixel over a random destination with the
+  case's blend; vertex stages through transform feedback). 22 fragment and 6
+  vertex cases pass: at most 1–2/255 per channel, vertex stages exact; single
+  pixels differ only at `fract`/`step`/`discard` thresholds because constants
+  are rounded to fp20/fx10 as on Tegra.
+- `check_links.py` and `check_glhost.py`: all 193 distinct KZB material
+  pairs compile and link, directly and through glhost's own record protocol
+  (1/193 without the cache).
+- `compare_known.py` against the existing hand translations
+  (`known_shaders.h`, `audi_shaders.h`): matches except where the hand
+  versions approximate the binary — blend mode 3 gives alpha `a*a + d*(1-a)`
+  where the programs compute `a + d*(1-a)`; `6d69eec5eb9bcc01` blends with
+  SRC_ALPHA, not premultiplied; `64e5808e3310cc1f` leaves the pixel unchanged
+  where the hand version paints red; `994e3f42c55c79e5` premultiplies
+  `vModulate`. Those hand versions still take precedence (`find_shader` runs
+  before the cache).
+
+### Platform binary container
+
+Header word 2 is `0x00010018`; word 4 counts 16-byte section descriptors at
+offset 20 (`kind, offset in words, count, size in bytes`). Names are offsets
+into section 1.
+
+| Section | Stage | Record | Meaning |
+| --- | --- | --- | --- |
+| 1 | both | bytes | NUL-separated names |
+| 2 | vertex | 16 | attribute: name, GL type, attribute register, -1 |
+| 3 | vertex | 24 | varying: name, len, len, GL type, count, export register |
+| 4 | fragment | 28 | varying: name, len, len, GL type, count, TRAM layout, TRAM row |
+| 8 | both | 32 | uniform: name, GL type, count, index of its words in section 13 |
+| 13 | both | 2 words per uniform | placement (below) |
+| 14 | fragment | 8 | sampler: `(unit << 8) | 0x1000000`, name |
+| 18 | vertex | 16 | constant registers (vec4 fp32, register = record index) |
+| 18 | fragment | 4 | raw 20-bit value per uniform register from r32 (compiler constants) |
+| 19 | both | bytes | program (host1x stream) |
+
+- Count 0 marks a varying the compiler eliminated (export/row -1). Array
+  elements arrive as separate records named `name[i]`; a vec4 can be split
+  over several records with partial layouts.
+- Fragment TRAM layout: one nibble per component (x lowest), type in bits
+  3:2 (0 none, 1 fx10 low, 2 fx10 high, 3 fp20) and TRAM component in bits
+  1:0 — the linker's "latter word" format.
+- Uniform placement word: `kind | first component << 8 | (count - 1) << 12 |
+  slot << 16`; the second word, when non-zero, is another piece of the same
+  uniform. Kind 5 (and 14 for `int`) is fp20, one register per component
+  from r32 + slot/2; kinds 8 and 9 are fx10, one half per component from half
+  `slot` (r32 + half/2, low/high); 3 is a sampler (unit in the slot); 1 means
+  not used by this stage; vertex kind 4 puts component k at constant
+  register `(slot + k) / 4`, matrices one column per register.
+
+### cgc container (libcgdrv output)
+
+Magic 0x1b5e (fragment) / 0x1b5d (vertex); words: size, symbol count, "bar"
+size and offset, code size and offset. 48-byte symbols: datatype (encodes
+precision), resource (attribute `0x841 + index`, sampler `0x800 + unit`),
+kind (0x1005 varying/attribute, 0x1006 uniform, 0x1007 constant), location,
+name, values offset, direction (0x1001 in, 0x1002 out). Fragment varyings map
+through the bar: `count, offset` of 6-byte records `0, semantic, row (u16),
+layout (u16)`; the varying symbol's location is the semantic. Uniform
+location: `slot | component mask << 8 | fx10 << 15`; only the masked
+components are stored, consecutively. Compiler constants are uniforms named
+`@new_uniform_N` (fragment) or `internal-constant-N` (vertex) with fp32
+values. Vertex code is raw 128-bit words (no host1x stream).
+
+### Fragment program semantics
+
+Decoded from the stream (arrays 0x541 PSEQ, 0x601/0x604 MFU schedule and
+words, 0x701 TEX, 0x801/0x804 ALU schedule and packets, 0x806 complement,
+0x901 DW); the `AR20-BIN` header gives the number of rows R and instructions.
+Established with libcgdrv test programs; grate's `fragment-shader-isa.md`
+gives the field layouts.
+
+- Execution is in passes of R instructions. In a pass, instruction r applies
+  PSEQ, MFU and TEX to row r (registers r4r..r4r+3, addressed 0..3 by those
+  units); then the ALU packets of all R instructions run in order; then the
+  DW stores. A TEX in one instruction therefore feeds the ALU of an earlier
+  instruction of the same pass.
+- Registers: r0–r15 rows, r16–r23 globals, r24–r27 results of ALU0–3 of the
+  previous packet (they also hold the two products of an add-disabled MAD),
+  r28–r30 the packet's immediates, r31 = (0, 1) as fx10 low/high and the
+  null destination, r32–r63 uniforms/constants, r64–r71 condition registers,
+  r72/r73 fragment position, r75 face, r76 kill.
+- Each register holds one fp20 or two fx10 halves; an operand reads fp20 or
+  a half. Modifiers apply as abs, x2, minus-one, negate (`-r.h-1` is
+  `1 - r.h`). rD is a copy of rB's or rC's register with its own half/fx10/
+  abs/minus-one bits; disabled rD is 1.0.
+- Opcodes: MAD `A*B + C*D`, MIN/MAX of the two products, CMP
+  `A < 0 ? B : C*D`. Then scale (x2, x4, /2), saturate, condition (==0, >0,
+  >=0 → 0/1). Add-disable writes the two products to the halves (A*B to the
+  half named by the write mask).
+- All instructions of a packet read the state before the packet. `recv`
+  replaces rC with the result of the previous ALU (ALU0 takes ALU3); `send`
+  adds the ALU's result into ALU0 (from ALU1, ALU2) or ALU2 (from ALU3).
+- Immediates: when ALU0–2 reference r28–r30, the ALU3 slot holds them,
+  unswapped: `(w1 << 32) | w0`, imm0 bits 4–23, imm1 24–43, imm2 44–63, each
+  read as fp20 or as two fx10.
+- MFU: the SFU operates on row register `reg` (4 is 1/w for the standard
+  barycentric setup `rcp r4; mul bar, sfu, bar0/bar1`) and writes the result
+  back to it; PRESIN/PRECOS/PREEX2 are range reduction (identity for us),
+  then SIN/COS/EX2. Multipliers with destination 4–7 write row registers
+  (sources 0–3 rows, 10 SFU, 13 one). Then VAR1 (fp20) / VAR2 (two fx10)
+  fetch TRAM row/component k into row register k, optionally saturated.
+- TEX: bit 10 enable, bits 0–3 unit, bit 4 coordinates from r2,r3,r0,r1, bit
+  5 result to r2,r3, bit 12 LOD bias; result RGBA as fx10 (r.l, r.h, s.l, s.h).
+  Bit 11 appears only in two render-target filter shaders; it does not change
+  the result layout and is translated as a plain sample.
+- PSEQ `0x0081000a`/`0x00810008` loads the colour target (bits 16–19 = 1)
+  into r2,r3 / r0,r1 of the row as fx10 RGBA: Tegra blends in the shader.
+  PSEQ of target 2 and DW to targets 0, 2, 3 (`0x2008d`, `0x28409`,
+  `0x10001`) are the depth/stencil/coverage traffic of a late test after
+  `discard`. DW `0x28005`/`0x20005` stores r2,r3 / r0,r1 to target 1.
+
+The translator keeps every value affine in the destination colour. A blend
+that is linear in the destination, per channel, becomes
+`gl_FragColor + dst * gl_SecondaryFragColorEXT` (glhost blend mode 6,
+`GL_EXT_blend_func_extended`); programs that never read the target use mode 4
+(overwrite), since Tegra has no blend unit.
+
+### Vertex program semantics
+
+grate's VLIW layout holds. Observed: predicated writes (`cond_check` with the
+gt/eq/lt bits tested on the swizzled condition register), condition set from
+the vector result (scalar if no vector op), and BRA (scalar opcode 9) with
+the target in rC's swizzle field; taken when the predicate bits pass on the
+first swizzled component (all three bits set = unconditional). All branches
+in the firmware go forward; they are translated with a skip counter. Exports
+are written by index: 0 is `gl_Position`, the others are the varyings of
+section 3; exports with no varying (eliminated ones) are kept as temporaries.
+
+## GLES bridge protocol notes
+
+- glhost validates every record against `valid_record()` before executing
+  it and drops the client on a mismatch. Ops 140 (texture EGLImage alias),
+  141 and 142 (`glGetTexParameteriv/fv`, 8-byte `{target, pname}` request,
+  16-byte reply) were missing; op 141 dropped gtf2 and caused the `'GUI
+  thread' timeout` / `'hmi' signals failure` pair seen after the first
+  forwarding commit.
+- The shim holds the record lock (MMIO register 16) until the reply is read
+  only for ops listed in `rec()`'s reply set. An op with a reply that is not
+  in the set lets another thread's request in before the reply is consumed,
+  and that thread reads the wrong bytes: with 141/142 missing, the asset
+  thread's `glGetProgramiv(LINK_STATUS)` read part of a texture-parameter
+  reply as 0, and EAL reported `car_main`/`car_overlay` as failed to link
+  although the host had linked them.
+- QEMU releases a record lock that saw no bridge access for 2 s of guest
+  time (`glbridge: releasing record lock idle for 2 s`) and drops the pending
+  reply bytes.
+- Diagnostics in glhost: per-pid swap/draw counts with timestamps, uploaded
+  texture volume, `MHI2_GL_TRACE` (adds pid lines and the results of
+  `glGetShaderiv`/`glGetProgramiv`), non-zero `glGetError` results, and
+  `SIGUSR1` dumps the last 128 records and whether glhost is waiting for the
+  guest or executing an op (send it with `pkill -USR1 -x glhost`; the
+  launcher's own command line contains the glhost path).
+  The shim logs reply timeouts and the pid with each window it publishes.
+
+## How the cluster is composed
+
+Clients (`gtf2` gets window `beeb0000`, `grengme` `beeb0001`) render
+into CWM windows: the shim publishes three NvRm RGBA buffers per window,
+glhost renders, and each swap reads the frame back into the current buffer
+before `NvCwmWindowSwap`. `kdgui_2dmgr` does not compose with GL: its
+`blit()` calls `kdWindowBindEGLImageExNV(src rect -> dst rect)`, and libKD
+programs a display-controller window. With `TEGRA_DC_DEBUG=1` window A's
+`START_ADDR` cycles through the three buffers of `gtf2`'s window (one write
+per swap), so composition is zero-copy scan-out. Its only GL draw
+(`glDrawArrays` at 0x117e0c) is not on this path. libKD sets
+`WIN_OPTIONS` bit 2 (`V_DIRECTION`) because GL rows are bottom-up; the DC
+model now honours it, and `--screendump` shows the same frame as glhost's
+`primary.ppm`. `kdgui_2dmgr` never calls `eglCreateWindowSurface`, so glhost
+never gets op 125 for `0xdb000001`; the viewer's frame is the last client
+frame.
+
+## Clamp 15: waking the cluster
+
+With the run request answered, `gtf2` still showed only the version overlay
+(3 draws in a whole run) and logged
+`GSS_GTF_ViewManager: Failed to find ANY usable display context`
+(`contextIdFromView()` at 0x1189a0: no context has a view when the first
+view switch arrives). Its `Tubes Show Event` depends on Clamp 15, the
+driver's door, main unit connection, HK wake-up and loading state; the peer
+sent no vehicle data, so the cluster behaved as with the ignition off.
+
+- gss_ipc's l4c table at 0x1abdf0 is indexed by dataID (20-byte entries:
+  dataID, length, 0, common unpacker 0x1643a8, callback; dataID 0xbb8 marks a
+  hole). Callbacks unpack and call `Rte_Write(component, element, data,
+  status)` (0x162620); `Rte_Read(component, element, buf)` (0x162578) is
+  the reader. Component 0x61 is Clamps: element 0 Clamp15 = dataID 0x79,
+  element 1 ClampS = 0x7a, element 2 = 0x7b (1 byte each, copied as is),
+  element 3 = 0x2ed (3 bytes).
+- `kss_peer.py` sends Clamp15 = 1 and ClampS = 1 with every alive request;
+  gss_ipc drops values that arrive before gtf2 connects
+  (`data ignored, since client not connected`), so they must repeat.
+
+Result: gtf2 leaves the sleeping screen (the DC shows the odometer
+placeholder `1234 km`), draws continuously and loads `MV_ClusterFull`
+(missing nodes `TabBar_Content_RootLayer`, `t_follow_placeholder` etc. are
+reported, probably variant coding).
+
+### GUI thread timeout: synchronous bridge calls cost a guest tick (fixed)
+
+With Clamp 15 on, gtf2 loaded `MV_ClusterFull` only at about 2:10, stopped
+swapping near its 840th swap and was killed by its own alive monitor
+(`AliveImplBase::onTick`, 0x699f7c; 5000 ms period, threads registered at
+0x12f7a8): `'GUI thread' timeout`, `SIGABRT` to the thread, then gss_ipc's
+`'hmi' signals failure`. glhost's `SIGUSR1` dumps showed it idle, waiting
+for the guest, and the last records before the stall were synchronous
+getters (op 101, `glGetUniformLocation`) exactly 20 ms apart: the shim's
+reply wait and lock wait called `usleep(1000)` before the first poll, and
+each sleep costs a whole guest tick. Texture traffic was small (32 MiB in
+100 s), so the load was latency-bound, not bandwidth-bound.
+
+The shim now polls the reply register up to 4096 times and the lock up to
+256 times before sleeping. Result in a 200 s run: `MV_ClusterFull` loads at
+0:30, gtf2 swaps about 38 times a second (7560 swaps, previously about 6 a
+second), no `'GUI thread' timeout`, and the `gtf2_error_fallback.sh` path
+(`Error with gtf2 detected. Starting stage 3...`) no longer runs because gtf2
+starts Stage3 itself after `ClusterFull` (`startEfsDriver()`). `diagnosis`
+and `swdlclient` now miss the 30 s AliveManager deadline by about 4 s
+(they connect at 35.9 s). The DC shows the range line (fuel icon,
+`1234 km`); the gauges are not drawn yet, presumably for lack of further
+vehicle data from KSS.

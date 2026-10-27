@@ -49,6 +49,10 @@ LUN_RTE = 0x11
 L4C_MAGIC = b'\xba\xbe'
 L4C_HEADER = 7
 L4C_VS_HMI_VERSIONS_INFO = 0x24d  # RTE message VersionsScreen_VS_VersionInfo
+# Clamps component (RTE 0x61) elements 0 and 1, one raw byte each (gss_ipc's
+# l4c table at 0x1abdf0; Rte_Read_Clamps_Clamps_Clamp15 reads (0x61, 0)).
+L4C_CLAMPS_CLAMP15 = 0x79
+L4C_CLAMPS_CLAMPS = 0x7a
 
 
 def checksum(frame):

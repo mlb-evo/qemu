@@ -25,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <signal.h>
 
 #include "known_shaders.h"
 
@@ -437,8 +439,41 @@ static void client_event(unsigned kind)
     if (i == 32) return;
     seen[i].pid = current_pid;
     unsigned long n = ++seen[i].count[kind];
-    if (n <= 3 || n % (kind ? 3000 : 300) == 0)
-        fprintf(stderr, "glhost: pid %u %s %lu\n", current_pid, names[kind], n);
+    if (n <= 3 || n % (kind ? 3000 : 60) == 0) {
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        fprintf(stderr, "glhost: %ld.%03ld pid %u %s %lu\n", (long)t.tv_sec % 100000,
+                t.tv_nsec / 1000000, current_pid, names[kind], n);
+    }
+}
+
+/* Last records seen, dumped on SIGUSR1 to locate a stalled bridge. */
+static struct { uint32_t pid, op, len; long ms; } recent[128];
+static unsigned recent_pos;
+static volatile sig_atomic_t serving_op = -1;
+
+static long now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (long)(t.tv_sec % 100000) * 1000 + t.tv_nsec / 1000000;
+}
+
+static void dump_recent(int sig)
+{
+    char line[96];
+    (void)sig;
+    int n = snprintf(line, sizeof(line), "glhost: at %ld ms %s op %d; last records:\n",
+                     now_ms(), serving_op < 0 ? "waiting for the guest" : "executing",
+                     (int)serving_op);
+    if (write(STDERR_FILENO, line, n) < 0) return;
+    for (unsigned i = 0; i < 128; i++) {
+        unsigned k = (recent_pos + i) % 128;
+        if (!recent[k].ms) continue;
+        n = snprintf(line, sizeof(line), "  %ld pid %u op %u len %u\n", recent[k].ms,
+                     recent[k].pid, recent[k].op, recent[k].len);
+        if (write(STDERR_FILENO, line, n) < 0) return;
+    }
 }
 
 static void serve(int cfd)
@@ -454,6 +489,7 @@ static void serve(int cfd)
 
     for (;;) {
         uint32_t hdr[2];
+        serving_op = -1;
         if (read_full(cfd, hdr, 8) < 0) break;
         uint32_t op = hdr[0], len = hdr[1];
         if (len > 64 * 1024 * 1024) break;
@@ -468,6 +504,14 @@ static void serve(int cfd)
         /* Pre-merge Audi shims used 128 for a 12-byte query. Porsche 128
          * carries at least 24 bytes. Retain both wire formats without ambiguity. */
         if(op==128 && len==12)op=138;
+        if (op != 119) {
+            recent[recent_pos % 128].pid = request_pid;
+            recent[recent_pos % 128].op = op;
+            recent[recent_pos % 128].len = len;
+            recent[recent_pos % 128].ms = now_ms();
+            recent_pos++;
+        }
+        serving_op = op;
         if(!valid_record(op,len,p)){
             fprintf(stderr,"Invalid graphics record: op=%u len=%u\n",op,len);
             break;
@@ -716,6 +760,17 @@ static void serve(int cfd)
             break;
         case 52: { /* glTexImage2D {target,level,ifmt,w,h,border,fmt,type,size,data} */
             uint32_t sz = u32(p,32);
+            { /* Upload volume over time, to tell bridge-bound loading apart. */
+                static unsigned long long total, logged;
+                total += sz;
+                if (total - logged >= (8u << 20)) {
+                    struct timespec t;
+                    clock_gettime(CLOCK_MONOTONIC, &t);
+                    fprintf(stderr, "glhost: %ld.%03ld pid %u uploaded %llu MiB\n",
+                            (long)t.tv_sec % 100000, t.tv_nsec / 1000000, current_pid, total >> 20);
+                    logged = total;
+                }
+            }
             if (menu_texture_upload(52,p,len)) break;
             glTexImage2D(u32(p,0), i32(p,4), i32(p,8), i32(p,12), i32(p,16), i32(p,20),
                          u32(p,24), u32(p,28), (sz && len >= 36 + sz) ? (p + 36) : NULL); } break;
@@ -821,6 +876,8 @@ static void serve(int cfd)
         }
         case 105: {
             int32_t out=glGetError();
+            if(out){static unsigned logged;if(logged++<50)
+                fprintf(stderr,"glhost: pid %u glGetError -> %#x\n",current_pid,(unsigned)out);}
             if(write(STDOUT_FILENO,&out,4)!=4)return;
             break;
         }
@@ -828,6 +885,8 @@ static void serve(int cfd)
             GLint out = 0;
             if (op == 102) glGetShaderiv(M(u32(p,0)),u32(p,4),&out);
             else glGetProgramiv(M(u32(p,0)),u32(p,4),&out);
+            if (trace) fprintf(stderr, "glhost   %s(%u, %#x) -> %d\n", op == 102 ?
+                               "glGetShaderiv" : "glGetProgramiv", u32(p,0), u32(p,4), out);
             if (write(STDOUT_FILENO,&out,4) != 4) return;
             break;
         }
@@ -880,6 +939,7 @@ static void serve(int cfd)
 int main(int argc, char **argv)
 {
     signal(SIGPIPE,SIG_IGN);
+    signal(SIGUSR1,dump_recent);
     menu_texture_init();
     if (argc == 2 && strcmp(argv[1], "--check-shaders") == 0) {
         ensure_window(DEFAULT_W, DEFAULT_H);

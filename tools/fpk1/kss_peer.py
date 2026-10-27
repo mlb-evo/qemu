@@ -10,8 +10,9 @@ as SPI master the way libnvspislave expects (recovered from Q7 0378):
 The Tegra may also raise CC6 while DD7 is low to request a cycle. Above that
 it speaks the gss_ipc frame format (gss_ipc_frames.py): answers GSS_STATUS
 by sending the VS_HMI_VersionsInfo RTE signal and, once that is delivered,
-GSS_MODE_REQUEST(1, 2) (application run), sends GSS_ALIVE_REQUEST every
-second and logs everything else it receives. gss_ipc reads
+GSS_MODE_REQUEST(1, 2) (application run), sends GSS_ALIVE_REQUEST together
+with Clamp 15 and Clamp S on every second and logs everything else it
+receives. gss_ipc reads
 VersionsScreen_VS_VersionInfo right after Rte_Start ("Update HOOK from RTE")
 and logs "returned 1" (never received) if KSS has not sent it by then. This is a research stand-in; it
 knows nothing of KSS's real behaviour beyond those messages.
@@ -124,6 +125,10 @@ class Kss:
                                          sw_version=b'0378', kss_sw_version=b'0378')
     # Gives gss_ipc's L4C receive task time to store the RTE data before Rte_Start.
     RUN_REQUEST_DELAY = 0.2
+    # Terminal 15 (ignition) and S on, sent with every alive request as KSS
+    # repeats CAN signals. gtf2 shows the cluster only with Clamp 15 on; gss_ipc
+    # drops values that arrive before gtf2 connects, so they must repeat.
+    CLAMPS = ((ipc.L4C_CLAMPS_CLAMP15, b'\x01'), (ipc.L4C_CLAMPS_CLAMPS, b'\x01'))
 
     def __init__(self, log, persistency=bytes(16)):
         self.log = log
@@ -196,6 +201,8 @@ class Kss:
             self.last_alive = time.monotonic()
             self.alive_counter = (self.alive_counter + 1) & 0xff
             self.queue(ipc.LUN_GSS_MANAGER, ipc.CID_GSS_ALIVE_REQUEST, bytes([self.alive_counter]))
+            for data_id, value in self.CLAMPS:
+                self.queue(*ipc.rte_signal(data_id, value))
 
 
 def connect(path, attempts=600):

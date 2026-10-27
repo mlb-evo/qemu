@@ -84,5 +84,14 @@ class KssTests(unittest.TestCase):
         kss.tick()
         self.assertEqual(kss.next_frame(), ipc.empty_frame())
 
+    def test_alive_request_carries_the_clamps(self):
+        kss = kss_peer.Kss(lambda text: None)
+        kss.last_alive = 0.0
+        kss.tick()
+        messages = [ipc.parse_frame(frame)[0] for frame in kss.outbox]
+        self.assertEqual(messages[0][:2], (7, ipc.CID_GSS_ALIVE_REQUEST))
+        self.assertEqual([m[2] for m in messages[1:]],
+                         [ipc.l4c_message(0x79, b'\x01\x00'), ipc.l4c_message(0x7a, b'\x01\x00')])
+
 if __name__ == '__main__':
     unittest.main()

@@ -102,9 +102,17 @@ static int recv_bytes(void *p, unsigned long n,int release)
     unsigned char *c = p;
     if (gl_conn() < 0) return -1;
     while (n) {
-        unsigned tries = 0, available;
+        unsigned tries = 0, spins = 0, available;
         while (!(available=*(volatile u32 *)(bridge+(bulk?32:8)))) {
-            if (++tries > 10000) { unlock_record(); return -1; }
+            /* glhost answers in microseconds; a usleep costs a whole guest
+             * tick (20 ms per synchronous call was measured), so poll first. */
+            if (++spins < 4096) continue;
+            if (++tries > 10000) {
+                /* The reply is still owed and will desynchronise later readers. */
+                static const char msg[] = "glbridge: reply timeout, giving up\n";
+                write(2, msg, sizeof(msg) - 1);
+                unlock_record(); return -1;
+            }
             usleep(1000);
         }
         unsigned chunk=available<n?available:n, i=0;
@@ -132,7 +140,7 @@ static int recv_all(void *p,unsigned long n){return recv_bytes(p,n,1);}
 static void commit_record(struct Record *r)
 {
     if(gl_conn()<0)return;
-    while(*(volatile u32 *)(bridge+16))usleep(1000);
+    for(unsigned spins=0;*(volatile u32 *)(bridge+16);)if(++spins>=256)usleep(1000);
     send_all(r->data,r->size);
     if(!r->reply)unlock_record();
 }
@@ -144,7 +152,7 @@ static void rec(u32 op,u32 total)
     if(size>r->capacity){r->data=realloc(r->data,size);if(!r->data)abort();r->capacity=size;}
     u32 *h=(u32 *)r->data;
     h[0]=119;h[1]=4;h[2]=getpid();h[3]=op;h[4]=total;
-    r->size=size;r->used=20;r->reply=(op>=100&&op<=109)||op==120||op==121||op==123||op==124||op==126||op==127||op==131||op==132||op==138||(op>=134&&op<=137);
+    r->size=size;r->used=20;r->reply=(op>=100&&op<=109)||op==120||op==121||op==123||op==124||op==126||op==127||op==131||op==132||op==138||(op>=134&&op<=137)||op==141||op==142;
     if(!total)commit_record(r);
 }
 static void record_part(const void *p,unsigned n)

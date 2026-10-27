@@ -132,6 +132,18 @@ python3 tools/fpk1/build_fpk1.py \
 bash ../fpk1-build/run.sh              # console in the terminal, frames in a window
 ```
 
+To supply the panel's 20-byte long coding without a coding UI:
+
+```sh
+bash ../fpk1-build/run.sh --coding 008500E07C98000801A369602000600000000000
+```
+
+The KSS peer extracts the bit fields and sends seven ConfigM RTE signals to
+`gss_ipc` before application run, repeating them with alive traffic. Their
+IDs and wire values appear in `kss.log`. Internal coding, vehicle type and
+drivetrain need separate KSS data; this option alone does not establish a
+fully configured HMI startup.
+
 `run.sh` always opens the viewer. The viewer is also the KSS peer
 (`kss_peer.py` in a thread on the `kss` chardev): its log is shown under the
 frame and saved as `kss.log`. Closing the window stops the KSS link.

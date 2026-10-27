@@ -10,6 +10,9 @@ Raspberry Pi Pico, QNX SDK or a separate Pico repository.
 Supply your own supported firmware update archive; the repository does not
 include firmware updates or navigation maps.
 
+For the experimental Audi FPK1 instrument cluster, follow the
+[FPK1 build steps below](#audi-fpk1-instrument-cluster-q7-0378-local-research).
+
 The supported profiles are specific firmware trains, not every update for a
 brand:
 
@@ -152,7 +155,82 @@ available does not guarantee map/video output: it requires the corresponding
 native service and data. This boot guide does not install an Android Auto mod
 or enable a physical car's cluster.
 
-### Subsequent launches and shutdown
+### Audi FPK1 instrument cluster (Q7 0378, local research)
+
+Use the original `AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip`
+update archive. This workflow builds its synthetic media directly from that
+archive; skip the MHI2 bootstrap download in section 2. Keep the archive,
+checkout and output directory at their original paths after building.
+
+**1. Prepare the dependencies.** On macOS, complete section 1.1 above.
+Use the Homebrew Python directly so the generated environment can see the
+Homebrew PySide6 installation:
+
+```sh
+export MHI2_REPRO="$HOME/mhi2-repro"
+cd "$MHI2_REPRO/qemu"
+FPK1_PYTHON="$(brew --prefix python)/bin/python3"
+"$FPK1_PYTHON" -c 'from PySide6 import QtCore, QtGui, QtWidgets; print(QtCore.__version__)'
+pkg-config --exists egl glesv2 libavcodec libavutil libswscale
+arm-none-eabi-gcc --version
+```
+
+On Ubuntu, install the build and viewer dependencies, then select the system
+Python (3.11 or newer):
+
+```sh
+sudo apt update
+sudo apt install build-essential git pkg-config ninja-build python3 python3-venv \
+  libglib2.0-dev libpixman-1-dev zlib1g-dev libegl1-mesa-dev libgles2-mesa-dev \
+  libavcodec-dev libavutil-dev libswscale-dev liblzo2-dev gcc-arm-none-eabi \
+  python3-pyside6.qtcore python3-pyside6.qtgui python3-pyside6.qtwidgets
+export MHI2_REPRO="$HOME/mhi2-repro"
+cd "$MHI2_REPRO/qemu"  # use the checkout prepared in section 1
+FPK1_PYTHON=/usr/bin/python3
+"$FPK1_PYTHON" -c 'from PySide6 import QtCore, QtGui, QtWidgets; print(QtCore.__version__)'
+```
+
+**2. Build QEMU, the GLES bridge and media.** Replace the archive path with
+your file. The output directory must not already exist:
+
+```sh
+"$FPK1_PYTHON" tools/fpk1/build_fpk1.py \
+  --archive "/path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip" \
+  --output "$MHI2_REPRO/fpk1-build" --jobs 6
+```
+
+The builder creates `qemu/qemu-system-arm`, the host/guest GLES `bridge/`,
+synthetic `media/emmc.img`, a Python `venv/` with `lzokay`, a translated shader
+cache under `research-artifacts/`, `build-manifest.json` and `run.sh`.
+It installs `lzokay` automatically. To reuse a QEMU executable already built
+from this checkout, add `--qemu /path/to/qemu-system-arm` to the build command.
+
+**3. Launch with the panel's long coding:**
+
+```sh
+bash "$MHI2_REPRO/fpk1-build/run.sh" \
+  --coding 008500E07C98000801A369602000600000000000
+```
+
+Use the same command for subsequent launches; add `--seconds 60` for a bounded
+run. The launcher opens the frame viewer and KSS peer, prints the guest console
+in the Terminal, and saves logs and frames under `fpk1-build/runs/<time>/`.
+Close the viewer to stop the KSS link; press Ctrl-C in the Terminal to stop
+the emulator. Thex default run limit is 1800 seconds.
+
+`--coding` accepts 20 bytes as 40 hexadecimal digits. The peer extracts the bit
+fields into seven ConfigM RTE signals, sends them to `gss_ipc` before
+application run, and repeats them with alive traffic. No coding UI is needed;
+the transmitted IDs and values are recorded in `kss.log`.
+
+FPK1 remains a local research workflow. Internal coding, vehicle type and
+drivetrain require separate KSS data, and a fully configured cluster HMI
+startup has not been confirmed. The 50-second coding smoke run reached
+application run, then reported `diagnosis`/`swdlclient` startup watchdog errors
+and a `gtf2` fallback. See the [FPK1 guide](docs/fpk1-diagnostic-machine.md)
+and [firmware research](docs/fpk1-firmware-research.md) for details.
+
+### Subsequent launches and shutdown (MHI2)
 
 Close the viewer or press Ctrl-C in its Terminal to stop the session and its
 helpers. Run **one emulator session at a time**; the helpers share local FIFO,

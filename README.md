@@ -205,7 +205,36 @@ cache under `research-artifacts/`, `build-manifest.json` and `run.sh`.
 It installs `lzokay` automatically. To reuse a QEMU executable already built
 from this checkout, add `--qemu /path/to/qemu-system-arm` to the build command.
 
-**3. Launch with the panel's long coding:**
+**3. Prepare the FPK1 shaders.** The build command above already extracts
+the firmware's KZB shader binaries and translates their Tegra programs into
+GLSL for the host GLES bridge. It runs
+`tools/fpk1/research/shader-translate/build_cache.py` automatically.
+
+The build directory contains:
+
+- `research-artifacts/shader-audit/manifest.json` and `shader-audit/binaries/`:
+  the inventory and extracted shader programs.
+- `research-artifacts/shader-translate/cache/`: translated `.glsl` files and
+  `.blend` metadata consumed by `glhost`.
+- `research-artifacts/shader-translate/report.json`: translation results and
+  unsupported-program diagnostics.
+
+To regenerate the cache after updating the translator, run from the checkout:
+
+```sh
+"$MHI2_REPRO/fpk1-build/venv/bin/python" \
+  tools/fpk1/research/shader-translate/build_cache.py \
+  --archive "/path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip" \
+  --build-dir "$MHI2_REPRO/fpk1-build"
+```
+
+Check the final `translated N/N` message; unsupported programs make this
+command fail and are listed in the report. The generated `run.sh` sets
+`MHI2_SHADER_CACHE` to this build's cache automatically. Shader binaries,
+generated GLSL and reports stay under the build directory; the research
+scripts stay in the checkout.
+
+**4. Launch with the panel's long coding:**
 
 ```sh
 bash "$MHI2_REPRO/fpk1-build/run.sh" \

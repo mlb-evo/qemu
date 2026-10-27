@@ -313,9 +313,18 @@ def main():
     parser.add_argument('--kss', action='store_true',
                         help='attach tools/fpk1/kss_peer.py as SPI master on SLINK1 (log: kss.log); '
                              'with --viewer it runs inside the viewer window')
+    parser.add_argument('--coding', help='20-byte hex long coding sent by the KSS peer to ConfigM')
     parser.add_argument('--keep-dir', type=Path, help='copy console/QEMU logs here')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
+    if args.coding is not None:
+        from research.hmi.configm import parse_coding
+        if not args.kss:
+            parser.error('--coding needs --kss')
+        try:
+            os.environ['FPK1_CODING'] = parse_coding(args.coding).hex()
+        except ValueError as error:
+            parser.error(str(error))
     if args.viewer and not args.gl_frames:
         parser.error('--viewer needs --gl-frames')
     result = run(args.archive, args.qemu, args.seconds, stage2_nor=not args.no_nor,

@@ -16,8 +16,14 @@ receives. gss_ipc reads
 VersionsScreen_VS_VersionInfo right after Rte_Start ("Update HOOK from RTE")
 and logs "returned 1" (never received) if KSS has not sent it by then. This is a research stand-in; it
 knows nothing of KSS's real behaviour beyond those messages.
+
+With --coding HEX or FPK1_CODING it also sends the seven ConfigM long-coding
+signals before application run and repeats them with alive traffic. The local
+research decoder in research/hmi/configm.py documents the recovered masks and
+the separate KSS configuration sources that this input cannot supply.
 """
 import argparse
+import os
 import select
 import socket
 import sys
@@ -130,8 +136,13 @@ class Kss:
     # drops values that arrive before gtf2 connects, so they must repeat.
     CLAMPS = ((ipc.L4C_CLAMPS_CLAMP15, b'\x01'), (ipc.L4C_CLAMPS_CLAMPS, b'\x01'))
 
-    def __init__(self, log, persistency=bytes(16)):
+    def __init__(self, log, persistency=bytes(16), coding=None):
         self.log = log
+        self.config_signals = []
+        coding = coding if coding is not None else os.environ.get('FPK1_CODING')
+        if coding is not None:
+            from research.hmi.configm import parse_coding, signals
+            self.config_signals = list(signals(parse_coding(coding)))
         self.persistency = persistency
         self.outbox = []
         self.reassembler = ipc.Reassembler()
@@ -185,7 +196,14 @@ class Kss:
             self.queue(*ipc.rte_signal(ipc.L4C_VS_HMI_VERSIONS_INFO, self.VERSIONS_INFO))
             self.log('tx GSS_MODE_REQUEST mode 1 submode 0 (persistency)')
             self.queue(*ipc.gss_mode_request(1, 0, self.persistency))
+            self.queue_config(log=True)
             self.run_pending = True
+
+    def queue_config(self, log=False):
+        for name, data_id, value in self.config_signals:
+            if log:
+                self.log(f'tx RTE ConfigM_{name} id={data_id:#05x} value={value.hex()} status=0')
+            self.queue(*ipc.rte_signal(data_id, value))
 
     def request_run(self):
         lun, cid, payload = ipc.gss_mode_request(1, 2, self.persistency)
@@ -203,6 +221,8 @@ class Kss:
             self.queue(ipc.LUN_GSS_MANAGER, ipc.CID_GSS_ALIVE_REQUEST, bytes([self.alive_counter]))
             for data_id, value in self.CLAMPS:
                 self.queue(*ipc.rte_signal(data_id, value))
+            # gss_ipc's DP client can connect after application run.
+            self.queue_config()
 
 
 def connect(path, attempts=600):
@@ -217,7 +237,7 @@ def connect(path, attempts=600):
     raise SystemExit(f'kss_peer: cannot connect to {path}')
 
 
-def run(path, period, emit=None):
+def run(path, period, emit=None, coding=None):
     """Serve the link until QEMU disconnects; emit(line) gets each log line."""
     start = time.monotonic()
     emit = emit or (lambda line: print(line, flush=True))
@@ -225,9 +245,10 @@ def run(path, period, emit=None):
     def log(text):
         emit(f'[kss {time.monotonic() - start:8.2f}] {text}')
 
+    kss = Kss(log, coding=coding)
     sock = connect(path)
     log(f'connected to {path}')
-    link, kss = Link(sock, log, period), Kss(log)
+    link = Link(sock, log, period)
     while True:
         wait = max(0.0, min(link.next_cycle - time.monotonic(), period)) if link.state == IDLE else period
         ready, _, _ = select.select([sock], [], [], wait)
@@ -263,9 +284,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('socket', help='QEMU chardev socket of the kss slink (server side)')
     parser.add_argument('--period', type=float, default=0.01, help='seconds between idle cycles')
+    parser.add_argument('--coding', help='20-byte ConfigM long coding in hex (or FPK1_CODING)')
     args = parser.parse_args()
     try:
-        run(args.socket, args.period)
+        run(args.socket, args.period, coding=args.coding)
     except KeyboardInterrupt:
         sys.exit(0)
 

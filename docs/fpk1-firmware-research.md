@@ -1153,7 +1153,7 @@ selects this file directly. Observed order and parameters include:
 Thus the earlier uncertainty about whether the 30-second Stage3 fallback is
 armed is resolved: the boot script launches it. Its successful execution still
 depends on the preceding boot steps. The primary non-fallback caller of
-`start_stage3.sh` remains unresolved.
+`start_stage3.sh` is `gtf2` (see "gss_ipc AliveManager" below).
 
 `etc/fstab` maps eMMC QNX6 partitions explicitly:
 
@@ -2108,3 +2108,62 @@ under icount in the same batch. `run.sh` now uses multi-threaded TCG. The
 exact round-robin/icount mechanism is not identified; round-robin without
 icount still leaves the UART silent. In some runs of both modes gtf2 stops
 after its first swap (49 shader binaries loaded); that is a separate issue.
+
+## gss_ipc AliveManager: why components "failed to start-up"
+
+`GSS_MAN_AliveManager` in `gss_ipc` supervises a fixed client table at
+0x194490 (20-byte records: name, ComponentId, a per-client word, start-up
+timeout, reset-on-failure flag):
+
+| Client | ComponentId | Word | Timeout | Reset |
+| --- | --- | --- | --- | --- |
+| `audio_player` | 2 | 0x000 | 300 | 1 |
+| `diagnosis` | 3 | 0x080 | 300 | 1 |
+| `hmi` | 4 | 0x100 | 300 | 1 |
+| `most` | 5 | 0x200 | 300 | 1 |
+| `kdgui_2dmgr` | 6 | 0x280 | 300 | 1 |
+| `swdlclient` | 7 | 0x180 | 300 | 0 |
+
+A client connects to the comm service `asi.gss.manager.IAlive` (the handler
+at 0x145700 matches by the proxy's service process name, i.e. the agent
+name from `config/framework.json`) and then sends `aliveResponse(n)`, which
+reloads its countdown with `n` (0 means "signals failure", reason 5).
+`onTick` (0x145fc4) decrements each countdown; at zero it logs
+`'%s' failed to start-up` (never connected, reason 1) or
+`Alive response from '%s' missing` (reason 3) and calls the failure handler
+(0x145ab0), which requests a reset for clients with the reset flag when
+alive-failure reboot is on. Connections after that are rejected with
+`already declared dead`. The start-up deadline is reached 28.5–29.5 s after
+`Application startup finished.` in every run, so the 300-tick timeout is
+about 30 s (100 ms ticks, inferred from timing). The
+`Requesting reset: ComponentId 3, Reason 1` line is `diagnosis`; `audio_player`'s
+earlier `component 2, reason 6` uses the same path. Only one
+`GSS_RESET_REQUEST` reaches the peer per run even when `hmi` also fails; why
+the second one is not sent is not checked.
+
+### diagnosis and swdlclient: Stage3 starts too late
+
+Both are Stage3 programs (`stage3.sh` starts `diagnosis`,
+`startup-common.sh` starts `swdlclient`). They do connect, 9–15 s after the
+deadline (`'swdlclient' already declared dead`), because Stage3 only starts
+through the 30 s `gtf2_error_fallback.sh`. The non-fallback caller of
+`start_stage3.sh` is `gtf2`'s `startEfsDriver()` (0x699594, logs
+`Started NAND fs driver script`), called from `handleLoadingKZBs()` after
+`ClusterFull` is loaded (0x122eac), from the delayed-HMI-start path
+(0x130794) and from `GssMan2HMIReplyImpl::enterColdCrank()` (0x692f20). In
+our runs `gtf2` never reaches that point within 30 s, so these two
+failures follow from gtf2's start-up, not from Stage3 itself. Why
+`ClusterFull` is not loaded in time is open.
+
+### hmi: gtf2 not activated
+
+`hmi` (framework agent id 200) is `gtf2`'s alive client: of the Stage2
+binaries only `audio_player`, `kdgui_2dmgr` and `gtf2` link the IAlive
+proxy, and `hmi` fails exactly in the runs where `gtf2` never activates
+(inferred; the connect trace is below console level). In run
+20261027-103922 the peer sent `GSS_MODE_REQUEST 1/0` and, 0.2 s later,
+`1/2`; `gss_ipc` answered only the first, the link kept running (7424
+cycles) and `gtf2` printed nothing until Stage3. In 20261027-104450, with the
+same timing, `1/2` was answered, `gtf2` activated at 6.2 s and `hmi` did
+not fail. The peer sends the run request once and never retries; why
+`gss_ipc` drops it is not known.

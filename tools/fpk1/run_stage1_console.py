@@ -88,6 +88,11 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
         raise ValueError('Unsupported native display')
     if native_display == 'embedded' and not (viewer and gl_frames and glhost):
         raise ValueError('embedded display needs viewer, gl_frames and glhost')
+    if native_display == 'embedded' and sys.platform == 'darwin':
+        # The embedded viewer reparents an X11 window; use native SDL on macOS.
+        print('FPK1: X11 embedding is unavailable on macOS; using separate SDL and KSS windows.',
+              file=sys.stderr, flush=True)
+        native_display = 'sdl'
     capture = None
     if capture_scanout:
         from research.hmi.capture_scanout import ScanoutCapture
@@ -346,7 +351,8 @@ def main():
     parser.add_argument('--scanout-interval', type=float, default=0.1,
                         help='seconds between consistent DC snapshots (default: 0.1)')
     parser.add_argument('--native-display', choices=('none', 'sdl', 'embedded'), default='none',
-                        help='embedded: one UI with KSS; sdl: separate QEMU window; no PPM needed')
+                        help='embedded: one X11 UI with KSS (separate windows on macOS); '
+                             'sdl: separate QEMU window; no PPM needed')
     parser.add_argument('--dump-gl-frames', action='store_true',
                         help='diagnostic only: enable primary/per-client GLES PPM files')
     parser.add_argument('--stage2-replace', action='append', default=[], metavar='PATH=FILE',

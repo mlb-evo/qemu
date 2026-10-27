@@ -2039,18 +2039,32 @@ with `FPH & 6 == 2` go to the status queue.
 - ICM (FIFO 2, FPH 0x14, PMHL 1) body: FktID[11:4], FktID[3:0] << 4 | OPType,
   TelID << 4 | len[11:8], len[7:0], data (serializer at 0x12d490). The RX
   dispatch table at 0x153d00 maps FktID -> OPType -> handlers.
-- 0x300 attach: Get, then Set `01 02`; init only continues when the status
-  reports 2. 0x200 version (handler 0x12b21c): bytes 0-1 zero, 2-6 must match
-  `08 11 10 10 03` (OS81110), 8-10 `00 90 xx`; it is never requested, so the
-  model pushes it after attach. 0x30a watchdog Get (`00 ff ff 00 00`
-  disables it), 0x309 watchdog trigger, 0x30f and 0x303 SetGet (status echoes
-  the value).
-- Init completes when all bits of the halfword at GOT+0x7c90+0x10 are set
-  (setter 0x12a958): 0x01/0x02 PMS/MNS sync, 0x04 version, 0x08 service 0xa
-  event 5, 0x10 (0x134994), 0x20 (0x1335d4), 0x40 VMSV event 0x20 (0x132620),
-  0x80 (0x136ddc). With sync, attach, version, watchdog, 0x30f and 0x303
-  answered, the 3 s init timer still expires; the remaining bits presumably
-  need unsolicited INIC notifications (the 0x4xx/0x5xx status handlers).
+- 0x300 attach: Get (0), Set `01 02` starts the attach (status 1); once its
+  init is complete the host sets 2 itself (builder 0x12b484). 0x30a watchdog
+  Get (`00 ff ff 00 00` disables it), 0x309 watchdog trigger, 0x30f and 0x303
+  SetGet (status echoes the value).
+- While the attach state is not 2, status handlers OR bits into a "received"
+  mask (setter 0x1299ac, GOT+0x7c90+8). The required mask comes from the
+  matched version-table entry (0x000993fb for `08 11 10 10 03`); when it is
+  complete, observer trigger 0x800 (`0x129744(4, 0x800)`, table at 0x154078:
+  trigger, post function, queue << 16 | event) posts the events that finish
+  the remaining services. Bits: 0x200 version (0x200, never requested: the
+  INIC pushes it; bytes 0-1 zero, 2-6 `08 11 10 10 03`, 8-10 `00 90 xx`),
+  0x10000 0x30a, 0x80000 0x303, 0x1/0x2 0x40e (5 bytes)/0x407 (1), 0x20/0x40/
+  0x80/0x100/0x8000 0x503 (NI state)/0x502/0x506/0x50a (state, BE16 node
+  address, byte)/0x50e (2), and 0x8/0x10/0x1000 NetBlock (FBlock 1) FktIDs
+  3/4/7 (2 bytes each).
+- NetBlock statuses are MCM (FIFO 0) messages. MCM and ICM share one RX
+  header parse (0x12e248): FPH bit 0 adds flags A (bit 0: B follows, 0x80/
+  0x40 skip 4/1 bytes) and B (0x80 one byte, 0x40 BE16 source address,
+  default 1, 0x10 FBlock + instance); the body follows at 3 + PMHL and
+  `PML == PMHL + 5 + len`, otherwise the message is dropped with
+  `PMS ... LINE 2961`. Source address 1 routes FBlock 1 to the NetBlock
+  table (dispatcher 0x128ed0, FBlock table 0x153f94).
+- The model pushes all of these when the host starts the attach, describing
+  a node whose MOST network is off (NI state 0, node address 0xffff). In a
+  60 s boot NetServices syncs on the first try, completes init and sets the
+  attach state to 2; no NSR errors follow.
 
 `hw/i2c/fpk1_inic.c` implements the above; `FPK1_INIC_DEBUG=1` traces every
 message on stderr. The Tegra30 GPIO model now re-latches level-triggered

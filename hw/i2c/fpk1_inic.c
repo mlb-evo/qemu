@@ -21,12 +21,12 @@
  *
  * INIC control messages (ICM, FIFO 2) are data messages (PMHL 1, FPH 0x14)
  * whose body is FktID[11:4], FktID[3:0] << 4 | OPType, TelID << 4 |
- * len[11:8], len[7:0], data. Answered so far: 0x300 (attach state, one
- * byte; attach completes as 2), 0x200 (version record checked against OS81110 08 11 10 10 03,
- * firmware 00 90) and 0x30a (watchdog configuration, reported disabled);
- * 0x309 (watchdog trigger) only needs the acknowledgement; other SetGet
- * requests echo their data as the status. Every other
- * message is logged for further reverse engineering.
+ * len[11:8], len[7:0], data. Answered: 0x300 (attach state, one byte: the
+ * host sets 1 to attach and 2 once its init is complete), 0x30a (watchdog
+ * configuration, reported disabled); 0x309 (watchdog trigger) only needs the
+ * acknowledgement; other SetGet requests echo their data as the status.
+ * While attaching (state 1) the INIC pushes the statuses NetServices waits
+ * for, see fpk1_inic_attach_statuses(). Every other message is logged.
  *
  * The host resets the INIC through /dev/nvgpio/most_rst_in (GPIO Z1); any
  * edge on the "reset" input drops pending messages.
@@ -56,6 +56,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Fpk1InicState, FPK1_INIC)
 #define PMP_STATUS_ACK      0x44
 
 #define ICM_FPH             0x14
+#define MCM_FPH             0x04
 #define OP_SET              0x0
 #define OP_GET              0x1
 #define OP_SETGET           0x2
@@ -64,6 +65,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Fpk1InicState, FPK1_INIC)
 #define FKT_ATTACH          0x300
 #define FKT_WATCHDOG_TRIG   0x309
 #define FKT_WATCHDOG        0x30a
+#define FBLOCK_NETBLOCK     0x01
 
 struct Fpk1InicState {
     I2CSlave parent_obj;
@@ -137,6 +139,58 @@ static void fpk1_inic_icm_status(Fpk1InicState *s, unsigned fkt,
     fpk1_inic_queue(s, m, 8 + len);
 }
 
+/*
+ * MOST control message (MCM, FIFO 0) status from an FBlock of the local
+ * node; the INIC hosts NetBlock. MCM and ICM share the extended header:
+ * flags A = 0x01 (B follows), B = 0x10 (FBlock and instance follow); the
+ * source address defaults to 1, which routes it to the NetBlock table.
+ */
+static void fpk1_inic_mcm_status(Fpk1InicState *s, uint8_t fblock,
+                                 unsigned fkt, const uint8_t *data,
+                                 unsigned len)
+{
+    uint8_t m[12 + 32] = {
+        (10 + len) >> 8, 10 + len, 5, MCM_FPH | 1, 0x01, 0x10, fblock, 0x00,
+        fkt >> 4, (fkt & 0xf) << 4 | OP_STATUS, len >> 8, len,
+    };
+
+    assert(len <= sizeof(m) - 12);
+    memcpy(m + 12, data, len);
+    fpk1_inic_queue(s, m, 12 + len);
+}
+
+/*
+ * The statuses NetServices collects while the attach is in progress (state
+ * 1). The version record carries the mask of required ones (0x000993fb in
+ * its first entry); when all have arrived it raises observer trigger 0x800,
+ * the remaining services finish init and the host sets the attach state to 2.
+ * Values describe a node whose MOST network is off.
+ */
+static void fpk1_inic_attach_statuses(Fpk1InicState *s)
+{
+    static const uint8_t version[20] = {
+        0x00, 0x00, 0x08, 0x11, 0x10, 0x10, 0x03, 0x00, 0x00, 0x90, 0x00,
+    };
+    static const uint8_t node_address[2] = { 0xff, 0xff };
+    static const uint8_t group_address[2] = { 0x03, 0x00 };
+    static const uint8_t netblock_7[2] = { 0x00, 0x00 };
+    static const uint8_t zero[5] = { 0 };
+    /* NI state, node address (unknown), last byte. */
+    static const uint8_t ni_info[4] = { 0x00, 0xff, 0xff, 0x00 };
+
+    fpk1_inic_icm_status(s, FKT_VERSION, version, sizeof(version));
+    fpk1_inic_mcm_status(s, FBLOCK_NETBLOCK, 0x003, node_address, 2);
+    fpk1_inic_mcm_status(s, FBLOCK_NETBLOCK, 0x004, group_address, 2);
+    fpk1_inic_mcm_status(s, FBLOCK_NETBLOCK, 0x007, netblock_7, 2);
+    fpk1_inic_icm_status(s, 0x502, zero, 1);
+    fpk1_inic_icm_status(s, 0x503, zero, 1); /* net interface off */
+    fpk1_inic_icm_status(s, 0x506, zero, 1);
+    fpk1_inic_icm_status(s, 0x50a, ni_info, sizeof(ni_info));
+    fpk1_inic_icm_status(s, 0x50e, zero, 2);
+    fpk1_inic_icm_status(s, 0x407, zero, 1);
+    fpk1_inic_icm_status(s, 0x40e, zero, 5);
+}
+
 static void fpk1_inic_icm(Fpk1InicState *s, const uint8_t *b, unsigned blen)
 {
     static const uint8_t version[20] = {
@@ -159,16 +213,11 @@ static void fpk1_inic_icm(Fpk1InicState *s, const uint8_t *b, unsigned blen)
     }
     if (fkt == FKT_ATTACH && (op == OP_SET || op == OP_SETGET || op == OP_GET)) {
         if (op != OP_GET && len >= 1) {
-            /*
-             * Set 1 (attach) completes as state 2; NetServices only stops
-             * its 3 s init timer when the status reports 2.
-             */
-            s->attach = b[4] == 1 ? 2 : b[4];
+            s->attach = b[4];
         }
         fpk1_inic_icm_status(s, fkt, &s->attach, 1);
-        if (op != OP_GET && s->attach == 2) {
-            /* NetServices never asks for the version; push it on attach. */
-            fpk1_inic_icm_status(s, FKT_VERSION, version, sizeof(version));
+        if (op != OP_GET && s->attach == 1) {
+            fpk1_inic_attach_statuses(s);
         }
         return;
     }

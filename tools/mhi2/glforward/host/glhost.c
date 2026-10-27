@@ -57,6 +57,11 @@ struct BlendMetadata {
 };
 static struct BlendMetadata default_blend, *blend = &default_blend;
 
+#ifndef GL_SRC1_COLOR_EXT
+#define GL_SRC1_COLOR_EXT 0x88F9
+#define GL_SRC1_ALPHA_EXT 0x8589
+#endif
+
 struct BlendState {
     GLboolean enabled;
     GLint src_rgb, dst_rgb, src_alpha, dst_alpha, equation_rgb, equation_alpha;
@@ -74,6 +79,12 @@ static void begin_binary_blend(unsigned mode, struct BlendState *saved)
     glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &saved->equation_alpha);
     glEnable(GL_BLEND);
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    /* Mode 6: mechanically translated programs emit the destination factor as
+     * the second colour, so any blend linear in the destination is exact. */
+    if (mode == 6) {
+        glBlendFuncSeparate(GL_ONE, GL_SRC1_COLOR_EXT, GL_ONE, GL_SRC1_ALPHA_EXT);
+        return;
+    }
     glBlendFuncSeparate(mode == 5 ? GL_ZERO : (mode == 3 ? GL_SRC_ALPHA : GL_ONE),
                         mode >= 4 ? GL_ZERO : GL_ONE_MINUS_SRC_ALPHA,
                         (mode == 2 || mode == 5) ? GL_ZERO : (mode == 3 ? GL_SRC_ALPHA : GL_ONE),
@@ -88,34 +99,38 @@ static void end_binary_blend(unsigned mode, const struct BlendState *saved)
     if (!saved->enabled) glDisable(GL_BLEND);
 }
 
-/* Local GLSL extracted from paired source/binary Kanzi firmware resources. */
+/* Local GLSL for firmware binaries. MHI2_SHADER_CACHE is a ':'-separated list of
+ * directories searched in order, so hand-checked sources can precede generated ones. */
 static char *load_firmware_shader(uint64_t hash, uint32_t size, unsigned *mode)
 {
     const char *directory = getenv("MHI2_SHADER_CACHE");
     char path[4096];
-    if (!directory) return NULL;
-    int n = snprintf(path, sizeof(path), "%s/%016llx-%u.blend",
-                     directory, (unsigned long long)hash, size);
-    if (n < 0 || n >= sizeof(path)) return NULL;
-    FILE *file = fopen(path, "r");
+    FILE *file = NULL;
+    int length = 0;
+    for (; directory && *directory; directory += length + (directory[length] == ':')) {
+        length = strcspn(directory, ":");
+        int n = snprintf(path, sizeof(path), "%.*s/%016llx-%u.blend", length,
+                         directory, (unsigned long long)hash, size);
+        if (n > 0 && n < sizeof(path) && (file = fopen(path, "r"))) break;
+    }
     if (!file) return NULL;
-    int valid = fscanf(file, "%u", mode) == 1 && *mode <= 5;
+    int valid = fscanf(file, "%u", mode) == 1 && *mode <= 6;
     fclose(file);
     if (!valid) return NULL;
-    snprintf(path, sizeof(path), "%s/%016llx-%u.glsl",
+    snprintf(path, sizeof(path), "%.*s/%016llx-%u.glsl", length,
              directory, (unsigned long long)hash, size);
     file = fopen(path, "rb");
     if (!file) return NULL;
     if (fseek(file, 0, SEEK_END)) { fclose(file); return NULL; }
-    long length = ftell(file);
-    if (length <= 0 || length > 1024*1024) { fclose(file); return NULL; }
+    long bytes = ftell(file);
+    if (bytes <= 0 || bytes > 1024*1024) { fclose(file); return NULL; }
     rewind(file);
-    char *source = malloc(length + 1);
+    char *source = malloc(bytes + 1);
     if (!source) { fclose(file); return NULL; }
-    valid = fread(source, 1, length, file) == length;
+    valid = fread(source, 1, bytes, file) == bytes;
     fclose(file);
     if (!valid) { free(source); return NULL; }
-    source[length] = 0;
+    source[bytes] = 0;
     return source;
 }
 

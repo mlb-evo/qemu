@@ -114,7 +114,7 @@ for partition in metadata['partitions']:
     report['partitions'][partition['label']]={'files':count}
     fs.f.close()
 
-log = (REPO/'build_fpk1/runs/20261026-195334/glhost.log').read_text()
+log = max((REPO/'build_fpk1/runs').glob('*/glhost.log'), key=lambda p: p.stat().st_mtime).read_text(errors='replace')
 unsupported = set(re.findall(r'UNSUPPORTED NVIDIA shader hash=([0-9a-f]+)',log))
 found = {key.split('-')[0] for key in report['programs']}
 report['coverage'] = {'baseline_unsupported_unique':len(unsupported),

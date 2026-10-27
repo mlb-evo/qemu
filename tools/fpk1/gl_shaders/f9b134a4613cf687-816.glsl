@@ -1,1 +1,0 @@
-precision mediump float;varying mediump vec2 vTexCoord;uniform sampler2D LayerRenderTexture;uniform vec4 Color;void main(){float k=texture2D(LayerRenderTexture,vTexCoord).r*Color.a;gl_FragColor=vec4(Color.rgb*k,1.0);}

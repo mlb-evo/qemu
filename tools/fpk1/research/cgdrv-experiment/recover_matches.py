@@ -6,7 +6,7 @@ from pathlib import Path
 from cgdrv_harness.cgdrv import CgDriver,source_with_profile_blend
 SCRIPT_ROOT=Path(__file__).resolve().parent;ROOT=next(p for p in Path(__file__).resolve().parents if (p/'hw/arm/fpk1.c').is_file())/'build_fpk1/research-artifacts/cgdrv-experiment';REPO=next(p for p in Path(__file__).resolve().parents if (p/'hw/arm/fpk1.c').is_file())
 CACHE=ROOT/'shader-cache';CACHE.mkdir(exist_ok=True)
-for p in (REPO/'tools/fpk1/gl_shaders').iterdir():
+for p in (REPO/'tools/fpk1/gl_shaders').glob('*'):
  if p.suffix in ('.glsl','.blend'):shutil.copy2(p,CACHE/p.name)
 vertex=(ROOT/'sweep/74d4458b49cd7903-620.glsl').read_text()
 fragment='precision mediump float;varying mediump vec2 vTexCoord;uniform float BlendIntensity;uniform sampler2D Texture;void main(){gl_FragColor=texture2D(Texture,vTexCoord)*BlendIntensity;}'

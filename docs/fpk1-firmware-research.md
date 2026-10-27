@@ -1718,10 +1718,12 @@ mislabelled the imports; capstone prints ARM rotated immediates as a second
 The platform shader binaries embed the host1x GR3D upload stream (vertex
 program via method 0x206, fragment program from method 0x541).
 `tools/fpk1/tegra_shader_disasm.c` feeds it to grate's libcgc disassembler.
-`tools/fpk1/gl_shaders/` holds `MHI2_SHADER_CACHE` translations for the three
-binaries without an MHI2 entry (status per file in its README); the
-`kdgui_2dmgr` vertex program is transcribed instruction by instruction, the
-fragment programs are approximate.
+Binaries without an MHI2 entry are translated mechanically by
+`tools/fpk1/research/shader-translate` (every AR20 instruction becomes GLSL;
+the blend baked into fragment programs becomes dual-source blending, glhost
+mode 6) into `build_fpk1/research-artifacts/shader-translate/cache`, which
+`run.sh` passes as `MHI2_SHADER_CACHE`. The three hand transcriptions that
+used to live in `tools/fpk1/gl_shaders/` were replaced by it.
 
 ### Next blocker: gss_ipc's SPI link to KSS
 
@@ -1844,7 +1846,7 @@ display controller, because `kdgui_2dmgr`, which composes client windows,
 does not compose without the KSS run request.
 
 Two fixes to the 2D compositor fragment translation
-(`tools/fpk1/gl_shaders/23522ab1913cc1e6-948.glsl`) were needed, found by
+(`23522ab1913cc1e6-948`, then hand-written; now mechanically translated) were needed, found by
 decoding a `MHI2_GL_CAPTURE` stream:
 
 - `alphaTex` is set with `glUniform1i` (1 for GL_ALPHA glyph textures, 0 for

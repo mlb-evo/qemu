@@ -75,9 +75,11 @@ export MHI2_GL_WIDTH=1440 MHI2_GL_HEIGHT=540
 export MHI2_SHADER_CACHE=@REPO@/tools/fpk1/gl_shaders
 # GR3D is not emulated; GLES goes through the bridge, native 3D jobs retire empty.
 export TEGRA_GR3D_DISCARD=1
+# Multi-threaded TCG: with -icount shift=0 (round-robin vCPUs) procnto
+# randomly corrupts thread contexts and shuts down within minutes.
 echo "FPK1 run: logs and frames in $run"
 exec "$here/venv/bin/python" @REPO@/tools/fpk1/run_stage1_console.py @ARCHIVE@ \
-    --qemu "$here/qemu/qemu-system-arm" --icount-shift 0 --board-info \
+    --qemu "$here/qemu/qemu-system-arm" --tcg-thread multi --board-info \
     --emmc "$here/media/emmc.img" \
     --stage2-replace lib/libEGL.so="$here/bridge/libEGL.so" \
     --stage2-replace lib/libGLESv2.so="$here/bridge/libGLESv2.so" \

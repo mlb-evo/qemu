@@ -2086,3 +2086,25 @@ message (and read lengths) on stderr. The Tegra30 GPIO model now re-latches leve
 interrupts after INT_ENB/INT_LVL/INT_CLR writes: devg-nvgpio clears and re-arms
 Y5 while the INIC still holds it low, and an edge-only latch lost those
 interrupts.
+
+## Random kernel shutdowns under icount (fixed by launcher)
+
+Boots with `--icount-shift 0` (single-threaded round-robin TCG) ended in a
+QNX kernel `Shutdown[...]` at 17–145 s in about half the runs, at a
+different place each time: CPU1's idle loop calling the syspage `power`
+callout through r3 = 0xeffcb060 (a kernel stack address; the callout entry
+itself still held 0xfc411f7c), a scheduler read of a zeroed stack slot,
+garbage `actives[]` thread pointers, SIGBUS/SIGSEGV in kernel mode. The
+recurring words `&percpu[cpu]`, `cpu`, 0xc000006e are the idle loop's own
+r4–r6 showing up in other contexts: saved register state is mixed between
+CPUs. A device-write watch on the kernel stack pages (0x8ffc0000–0x8fffffff,
+all `address_space_write` callers) recorded nothing in crashing runs, so no
+model DMA is involved. The exception-mode save areas are per-CPU (boot CPU
+0xfe0b2f48.., secondaries 0xfe0bbba4 + cpu*16 via 0xfe08ddf0).
+
+With `--tcg-thread multi` and no icount, 9 of 9 runs (180–300 s) had no
+shutdown, with gss_ipc and the KSS link running throughout, against 3 of 4
+under icount in the same batch. `run.sh` now uses multi-threaded TCG. The
+exact round-robin/icount mechanism is not identified; round-robin without
+icount still leaves the UART silent. In some runs of both modes gtf2 stops
+after its first swap (49 shader binaries loaded); that is a separate issue.

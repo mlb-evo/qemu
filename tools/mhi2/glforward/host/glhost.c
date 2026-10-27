@@ -785,6 +785,16 @@ static void serve(int cfd)
             if(write(STDOUT_FILENO,out,sizeof(out))!=sizeof(out))return;
             break;
         }
+        case 141: { /* glGetTexParameteriv {target,pname} -> i32[4] */
+            GLint out[4]={0};glGetTexParameteriv(u32(p,0),u32(p,4),out);
+            if(write(STDOUT_FILENO,out,sizeof(out))!=sizeof(out))return;
+            break;
+        }
+        case 142: { /* glGetTexParameterfv {target,pname} -> f32[4] */
+            GLfloat out[4]={0};glGetTexParameterfv(u32(p,0),u32(p,4),out);
+            if(write(STDOUT_FILENO,out,sizeof(out))!=sizeof(out))return;
+            break;
+        }
         case 108: {
             GLint out[3]={0};glGetShaderPrecisionFormat(u32(p,0),u32(p,4),out,out+2);
             if(write(STDOUT_FILENO,out,sizeof(out))!=sizeof(out))return;

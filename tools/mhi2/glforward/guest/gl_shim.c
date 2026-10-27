@@ -439,6 +439,15 @@ void glGetIntegerv(u32 pname, i32 *p) {
     unsigned n=(pname==0xba2 || pname==0xc10 || pname==0xc23)?4:(pname==0xd3a?2:1);
     if(p)for(unsigned i=0;i<n;i++)p[i]=v[i];
 }
+/* Every texture parameter is a single value except GL_TEXTURE_CROP_RECT_OES (4). */
+void glGetTexParameteriv(u32 target,u32 pname,i32 *p) {
+ u32 v[2]={target,pname};emit_iv(141,(i32 *)v,2);i32 out[4];if(recv_all(out,16)<0)return;
+ if(p)for(unsigned i=0;i<(pname==0x8B9D?4u:1u);i++)p[i]=out[i];
+}
+void glGetTexParameterfv(u32 target,u32 pname,float *p) {
+ u32 v[2]={target,pname};emit_iv(142,(i32 *)v,2);float out[4];if(recv_all(out,16)<0)return;
+ if(p)for(unsigned i=0;i<(pname==0x8B9D?4u:1u);i++)p[i]=out[i];
+}
 void glGetFloatv(u32 pname,float *p) {
  emit_iv(107,(i32 *)&pname,1);float v[16];if(recv_all(v,64)<0)return;
  unsigned n=(pname==0xc22 || pname==0x8005)?4:(pname==0xb70 || pname==0x846d || pname==0x846e?2:1);
@@ -548,8 +557,6 @@ void glGetShaderPrecisionFormat(u32 shader,u32 precision,i32 *range,i32 *bits) {
  if(range){range[0]=v[0];range[1]=v[1];}if(bits)*bits=v[2];
 }
 int glGetShaderSource(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetShaderSource\n";write(2,msg,sizeof(msg)-1);} return 0; }
-int glGetTexParameterfv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexParameterfv\n";write(2,msg,sizeof(msg)-1);} return 0; }
-int glGetTexParameteriv(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexParameteriv\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetTexStreamDeviceAttributeivIMG(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexStreamDeviceAttributeivIMG\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetTexStreamDeviceNameIMG(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetTexStreamDeviceNameIMG\n";write(2,msg,sizeof(msg)-1);} return 0; }
 int glGetUniformBlockIndexNV(void) { static int seen; if(!seen){seen=1;const char msg[]="glbridge: unsupported glGetUniformBlockIndexNV\n";write(2,msg,sizeof(msg)-1);} return -1; }

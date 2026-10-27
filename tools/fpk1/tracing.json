@@ -1,0 +1,351 @@
+{
+  "client": {
+    "default": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "GSS_IPC_HmiComm_GssMan2HMI": "info",
+          "FW_COMM_Services": "error"
+        }
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": false
+        },
+        "SlogBackend": {
+          "enabled": false
+        },
+        "RemoteConnectBackend": {
+          "enabled": true,
+          "proc": "traceserver",
+          "retryInterval": 500,
+          "retryCount": 100
+        }
+      },
+      "core": {
+        "pluginsDirectory": "/lib/tracingPlugins",
+        "startupPresetFile": "/mnt/persist/savedpreset.json",
+        "savedPresetFile": "/mnt/persist/savedpreset.json"
+      }
+    },
+    "broker": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "BENCH_Startup": "info",
+          "FW_COMM_Services": "error"
+        }
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": false
+        },
+        "SlogBackend": {
+          "enabled": true
+        },
+        "RemoteConnectBackend": {
+          "enabled": true,
+          "proc": "traceserver",
+          "retryInterval": 500,
+          "retryCount": 100
+        }
+      }
+    },
+    "audio_player": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "GSS_AUDIO_AudioPlayerApp": "info",
+          "GSS_AUDIO_SoundCharacteristics": "info",
+          "GSS_AUDIO_main": "info",
+          "FW_COMM_Services": "error"
+        }
+      }
+    },
+    "gss_ipc": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "info"
+        }
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "off",
+              "GSS_IPC_main": "info",
+              "GSS_MAN_AliveManager": "info",
+              "GSS_IPC_RteInbound": "warning",
+              "GSS_IPC_HmiKssCommService": "warning",
+              "GSS_MAN_GssManager": "info"
+            }
+          }
+        },
+        "RemoteConnectBackend": {
+          "enabled": true,
+          "proc": "traceserver",
+          "retryInterval": 500,
+          "retryCount": 100
+        }
+      }
+    },
+    "diagnosis": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "DIAGNOSIS": "error",
+          "DIAGNOSIS_MOST": "info",
+          "FW_COMM_Services": "error"
+        }
+      }
+    },
+    "most": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "MOST_APP": "info",
+          "MOST_APP_Service": "info",
+          "FW_COMM_Services": "error"
+        }
+      }
+    },
+    "grengme": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "info",
+          "FW": "warning",
+          "PROXY": "warning",
+          "STUB": "warning",
+          "FW_COMM_Services": "error",
+          "GEM_Info": "info",
+          "GEM_KeyInput": "info"
+        }
+      }
+    },
+    "gtf2": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "info"
+        }
+      },
+      "core": {
+        "entityPoolSize": 2048,
+        "messageBufferSize": 16384
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "off",
+              "EAL": "warning",
+              "EAL_INTERN_Manager": "error",
+              "EAL_CONFLICT": "off",
+              "GSS_APP_Configuration_Versions": "info",
+              "GSS_GTF_CHMIGuiMain": "info",
+              "GSS_GTF_main": "info",
+              "GSS_ThreadManager": "info",
+              "GSS_GTF_StageManager": "info",
+              "GSS_GTF_DisplayManager": "info",
+              "GSS_HMI_GTF2_FsTools": "info",
+              "GSS_HMI_CHMIGTFAssetManager": "info",
+              "GSS_HMI_CHMIGTFResources": "info"
+            }
+          }
+        },
+        "SlogBackend": {
+          "enabled": false
+        },
+        "RemoteConnectBackend": {
+          "enabled": true,
+          "proc": "traceserver",
+          "retryInterval": 500,
+          "retryCount": 100
+        }
+      }
+    },
+    "imgdec": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "info",
+          "FW": "warning",
+          "PROXY": "warning",
+          "STUB": "warning",
+          "FW_COMM_Services": "error",
+          "GSS_IMGDEC_Server": "info"
+        }
+      }
+    },
+    "fds": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "FDS": "trace",
+          "FW_COMM_Services": "error"
+        }
+      }
+    },
+    "swdlclient": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "SWDL": "trace",
+          "FW_COMM_Services": "error"
+        }
+      }
+    },
+    "swdlmgr": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "SWDL": "trace",
+          "FW_COMM_Services": "error"
+        }
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "off",
+              "SWDL": "trace"
+            }
+          }
+        },
+        "RemoteConnectBackend": {
+          "enabled": true,
+          "proc": "traceserver",
+          "retryInterval": 500,
+          "retryCount": 100
+        }
+      }
+    },
+    "kdgui_2dmgr": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "*": "warning",
+          "GSS_KDM_Screenshot": "info",
+          "GSS_KDM_ScreenshotWriter": "info",
+          "GSS_KDM_SwapProfiling": "info",
+          "GSS_KDM_main": "info",
+          "GSS_KDM_WindowNode": "info",
+          "GSS_KDM_Capturing": "info",
+          "cal_capture_csi": "info",
+          "cal_capture_avc": "info",
+          "FW_COMM_Services": "error"
+        }
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "off",
+              "GSS_KDM_main": "warning",
+              "GSS_DPH": "warning"
+            }
+          }
+        },
+        "RemoteConnectBackend": {
+          "enabled": true,
+          "proc": "traceserver",
+          "retryInterval": 500,
+          "retryCount": 100
+        }
+      }
+    }
+  },
+  "server": {
+    "default": {
+      "enabled": true,
+      "levels": {
+        "channel": {
+          "SWDL": "trace"
+        }
+      },
+      "plugins": {
+        "RemoteListenBackendManager": {
+          "enabled": true,
+          "transportService": "logger"
+        },
+        "SlogReader": {
+          "enabled": true
+        }
+      },
+      "backends": {
+        "ConsoleBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "error",
+              "SlogReader": "off",
+              "GSS_KDM": "off",
+              "GSS_DPH": "off",
+              "GSS_MAN_AliveManager": "off"
+            },
+            "probe": {
+              "*": "error"
+            }
+          }
+        },
+        "RemoteListenBackend": {
+          "enabled": true,
+          "dynamic": true,
+          "allowSkipHandshake": true,
+          "sendEntityMessages": true
+        },
+        "SlogBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "off"
+            },
+            "probe": {
+              "*": "error"
+            }
+          }
+        },
+        "CallbackBackend": {
+          "enabled": true,
+          "mountPrefix": "/dev/eso"
+        },
+        "TracingOverMostBackend": {
+          "enabled": true,
+          "levels": {
+            "channel": {
+              "*": "off",
+              "DIAGNOSIS_MOST": "info",
+              "FW_MOST": "info",
+              "HighLevelDriver": "info",
+              "MOST": "info",
+              "NW": "info"
+            },
+            "probe": {
+              "*": "error"
+            }
+          }
+        }
+      },
+      "core": {
+        "entityPoolSize": 8192,
+        "commandBufferSize": 1024,
+        "messageBufferSize": 16384,
+        "pluginsDirectory": "/lib/tracingPlugins"
+      }
+    }
+  }
+}

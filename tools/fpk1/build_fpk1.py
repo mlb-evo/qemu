@@ -10,6 +10,7 @@ Outputs (the directory must not exist; nothing is overwritten):
   bridge/                 guest libEGL.so/libGLESv2.so shim (1440x540) and glhost
   media/emmc.img          synthetic eMMC (stage2_nand, stage3, app, blank QNX6)
   venv/                   Python with lzokay, sharing system PySide6
+  research-artifacts/     extracted shader binaries and translated GLSL cache
   runs/<time>/            per-run console/QEMU/glhost logs and frames
   build-manifest.json     source commit, archive hash, tool versions
 The firmware archive is referenced, not copied. Synthetic board identity,
@@ -114,6 +115,8 @@ def main():
     (output / 'media').mkdir()
     run([output / 'venv/bin/python', TOOLS / 'create_fpk1_emmc.py', archive, output / 'media/emmc.img'],
         stdout=(output / 'media/emmc.json').open('w'))
+    run([output / 'venv/bin/python', TOOLS / 'research/shader-translate/build_cache.py',
+         '--archive', archive, '--build-dir', output])
     (output / 'runs').mkdir()
 
     launcher = output / 'run.sh'

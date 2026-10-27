@@ -43,7 +43,7 @@ Install [Homebrew](https://brew.sh/) if it is not already available, then run:
 
 ```sh
 brew install git pkgconf ninja python glib pixman mesa lzo libusb libslirp sevenzip zstd \
-  ffmpeg sox gnu-tar arm-none-eabi-gcc
+  ffmpeg sox gnu-tar arm-none-eabi-gcc pyside
 
 export MHI2_REPRO="$HOME/mhi2-repro"
 mkdir -p "$MHI2_REPRO"

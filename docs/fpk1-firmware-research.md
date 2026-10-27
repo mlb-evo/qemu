@@ -2187,6 +2187,32 @@ emits equivalent GLSL ES 1.00 for all of them; `build_cache.py` writes
 STAGE2 partitions plus eMMC `stage3`/`app`), 342 with the ones collected from
 runs (`collect.py`, from glhost's `/tmp/mhi2-shader-*.bin` dumps).
 
+### Build the shader cache
+
+New local builds made with `tools/fpk1/build_fpk1.py` automatically extract
+and translate the shaders before writing `run.sh`. To populate or rebuild the
+cache for an existing build, run from the repository root:
+
+```sh
+build_fpk1/venv/bin/python tools/fpk1/research/shader-translate/build_cache.py \
+  --archive AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip \
+  --build-dir build_fpk1
+```
+
+This reads Stage2 catalogs and the original Stage3/app QNX6 images directly
+from the ZIP; it needs neither an eMMC image nor a previous VM run. Python
+requires `lzokay` (already installed by `build_fpk1.py`). For another build
+location, pass that directory to `--build-dir`; it need not exist yet.
+The command writes binaries and an extraction manifest under
+`<build-dir>/research-artifacts/shader-audit/`, then GLSL, blend metadata and
+`report.json` under `<build-dir>/research-artifacts/shader-translate/`.
+An empty input or an unsupported shader makes the command fail.
+
+Without `--archive`, the command translates previously extracted binaries,
+including any collected with `collect.py`. `run.sh` reads the resulting cache
+through `MHI2_SHADER_CACHE` on the next launch. These scripts and generated
+artifacts are for local research only, not upstream contributions.
+
 ### Validation
 
 - `roundtrip.py`: GLSL test cases are compiled by the firmware's own compiler

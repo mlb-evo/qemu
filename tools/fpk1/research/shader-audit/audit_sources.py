@@ -1,13 +1,13 @@
 """Local read-only FPK1 firmware experiment; outputs stay under build_fpk1."""
 import sys
 sys.dont_write_bytecode = True
-import collections
+import argparse
 import hashlib
 import json
 from pathlib import Path
 import re
 import struct
-import sys
+import tempfile
 import zipfile
 
 REPO=next(p for p in Path(__file__).resolve().parents if (p/'hw/arm/fpk1.c').is_file())
@@ -16,11 +16,8 @@ from verify_sifs_partitions import member, parse_table, verify_part
 from inspect_stage2_catalogs import parse_catalog
 from extract_kanzi_shaders import pairs, shader_hash
 from qnx6_read import Qnx6
+from verify_qnx6_superblocks import expand
 
-OUT = next(p for p in Path(__file__).resolve().parents if (p/'hw/arm/fpk1.c').is_file())/'build_fpk1/research-artifacts/shader-audit'
-(OUT/'binaries').mkdir(exist_ok=True)
-archive = REPO/'AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip'
-report = {'archive': str(archive), 'containers': [], 'programs': {}, 'source_files': [], 'partitions': {}}
 
 def directory(data):
     end = 0x3c + struct.unpack_from('>I', data, 0x34)[0]
@@ -75,59 +72,79 @@ def inspect(path, data):
         row['pairs'].append(pair)
     report['containers'].append(row)
 
-with zipfile.ZipFile(archive) as z:
-    nor = member(z,'stage2_ifs.img',b'CIFS')
-    nand = member(z,'stage2_nand.img',b'ESO_BIN\0')
-    table = parse_table(nor)
-    for partition in table['partitions']:
-        image = bytearray()
-        for part in partition['parts']:
-            data = nor if part['storage']==0 else nand
-            at = table['data_base']+part['offset'] if part['storage']==0 else part['offset']-0x200000
-            _, raw = verify_part(data,at,part,True)
-            image.extend(raw)
-        entries = parse_catalog(bytes(image))['entries']
-        regular = [r for r in entries if r['kind']=='regular']
-        report['partitions'][partition['name']]={'regular_files':len(regular)}
-        for row in regular:
-            inspect(partition['name']+'/'+row['path'],bytes(image[row['offset']:row['offset']+row['size']]))
+def walk(fs, ino=1, path=''):
+    for name, child in fs.listdir(ino):
+        if name in ('.', '..'):
+            continue
+        full = path + '/' + name
+        if fs.is_dir(child):
+            yield from walk(fs, child, full)
+        else:
+            yield full, fs.read_file(child)
 
-metadata = json.loads((REPO/'build_fpk1/media/emmc.json').read_text())
-for partition in metadata['partitions']:
-    if partition['label'] not in ('stage3','app'):
-        continue
-    fs = Qnx6(str(REPO/'build_fpk1/media/emmc.img'), partition['start_sector']*512)
-    count = 0
-    def walk(ino=1, path=''):
-        global count
-        for name, child in fs.listdir(ino):
-            if name in ('.','..'):
-                continue
-            full = path+'/'+name
-            if fs.is_dir(child):
-                yield from walk(child,full)
-            else:
-                count += 1
-                yield full,fs.read_file(child)
-    for path, data in walk():
-        inspect(partition['label']+path,data)
-    report['partitions'][partition['label']]={'files':count}
-    fs.f.close()
 
-log = max((REPO/'build_fpk1/runs').glob('*/glhost.log'), key=lambda p: p.stat().st_mtime).read_text(errors='replace')
-unsupported = set(re.findall(r'UNSUPPORTED NVIDIA shader hash=([0-9a-f]+)',log))
-found = {key.split('-')[0] for key in report['programs']}
-report['coverage'] = {'baseline_unsupported_unique':len(unsupported),
-                      'present_in_kzb':len(unsupported & found),
-                      'absent_from_kzb':sorted(unsupported-found)}
-report['summary'] = {'containers':len(report['containers']),
-                     'source_records':sum(r['source_records'] for r in report['containers']),
-                     'nonempty_source_records':sum(r['nonempty_source_records'] for r in report['containers']),
-                     'binary_pairs':sum(len(r['pairs']) for r in report['containers']),
-                     'unique_binaries':len(report['programs'])}
-(OUT/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
-print(json.dumps({k:report[k] for k in ('summary','coverage','partitions','source_files')},indent=2))
-for row in report['containers']:
-    for pair in row['pairs']:
-        if 'gear_m_Arrow' in pair['material']:
-            print('gear_m_Arrow:',row['path'],json.dumps(pair))
+def main():
+    global OUT, report
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--archive', type=Path, required=True)
+    parser.add_argument('--artifacts', type=Path,
+                        default=REPO / 'build_fpk1/research-artifacts')
+    parser.add_argument('--baseline-log', type=Path,
+                        help='optional glhost log for coverage comparison')
+    args = parser.parse_args()
+    OUT = args.artifacts.resolve() / 'shader-audit'
+    (OUT / 'binaries').mkdir(parents=True, exist_ok=True)
+    archive = args.archive.resolve()
+    report = {'archive': str(archive), 'containers': [], 'programs': {},
+              'source_files': [], 'partitions': {}}
+    with zipfile.ZipFile(archive) as z:
+        nor = member(z,'stage2_ifs.img',b'CIFS')
+        nand = member(z,'stage2_nand.img',b'ESO_BIN\0')
+        table = parse_table(nor)
+        for partition in table['partitions']:
+            image = bytearray()
+            for part in partition['parts']:
+                data = nor if part['storage']==0 else nand
+                at = table['data_base']+part['offset'] if part['storage']==0 else part['offset']-0x200000
+                _, raw = verify_part(data,at,part,True)
+                image.extend(raw)
+            entries = parse_catalog(bytes(image))['entries']
+            regular = [r for r in entries if r['kind']=='regular']
+            report['partitions'][partition['name']]={'regular_files':len(regular)}
+            for row in regular:
+                inspect(partition['name']+'/'+row['path'],bytes(image[row['offset']:row['offset']+row['size']]))
+        # Read the original QNX6 images directly; no eMMC or prior VM run needed.
+        with tempfile.TemporaryDirectory(prefix='shader-audit-', dir=OUT) as temp:
+            image_path = Path(temp) / 'partition.img'
+            for label in ('stage3', 'app'):
+                image_path.write_bytes(expand(z, label + '.img'))
+                fs = Qnx6(str(image_path), 0)
+                count = 0
+                try:
+                    for path, data in walk(fs):
+                        count += 1
+                        inspect(label + path, data)
+                finally:
+                    fs.f.close()
+                report['partitions'][label] = {'files': count}
+
+    if args.baseline_log:
+        log = args.baseline_log.read_text(errors='replace')
+        unsupported = set(re.findall(r'UNSUPPORTED NVIDIA shader hash=([0-9a-f]+)', log))
+        found = {key.split('-')[0] for key in report['programs']}
+        report['coverage'] = {'baseline_unsupported_unique': len(unsupported),
+                              'present_in_kzb': len(unsupported & found),
+                              'absent_from_kzb': sorted(unsupported - found)}
+    report['summary'] = {
+        'containers': len(report['containers']),
+        'source_records': sum(r['source_records'] for r in report['containers']),
+        'nonempty_source_records': sum(r['nonempty_source_records'] for r in report['containers']),
+        'binary_pairs': sum(len(r['pairs']) for r in report['containers']),
+        'unique_binaries': len(report['programs']),
+    }
+    (OUT / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps(report['summary'], indent=2))
+
+
+if __name__ == '__main__':
+    main()

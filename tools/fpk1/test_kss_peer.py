@@ -60,18 +60,22 @@ class LinkTests(unittest.TestCase):
 
 
 class KssTests(unittest.TestCase):
-    def test_sends_versions_info_then_requests_application_run(self):
-        kss = kss_peer.Kss(lambda text: None)
+    def test_sends_versions_info_and_persistency_then_requests_application_run(self):
+        kss = kss_peer.Kss(lambda text: None, persistency=bytes(range(16)))
         kss.RUN_REQUEST_DELAY = 0
         status = ipc.build_frame([(7, ipc.CID_GSS_STATUS, b'\x01', True)])
         kss.receive(status)
         kss.receive(status)
-        self.assertEqual(len(kss.outbox), 1)
+        self.assertEqual(len(kss.outbox), 2)
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
         self.assertEqual((lun, cid, last), (ipc.LUN_RTE, 0, True))
         self.assertEqual(data, ipc.l4c_message(ipc.L4C_VS_HMI_VERSIONS_INFO, kss.VERSIONS_INFO + b'\x00'))
+        kss.delivered()
+        lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
+        self.assertEqual((lun, cid, data, last),
+                         (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x00' + bytes(range(16)), True))
         kss.tick()
-        self.assertEqual(len(kss.outbox), 1, 'run request waits for the RTE data')
+        self.assertEqual(len(kss.outbox), 1, 'run request waits for the persistency')
         kss.delivered()
         kss.tick()
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]

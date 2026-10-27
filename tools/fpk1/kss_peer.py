@@ -171,10 +171,15 @@ class Kss:
         if name != 'GSS_ALIVE_RESPONSE':
             self.log(f'rx lun {lun:#04x} cid {cid:#04x}{" " + name if name else ""}: {data.hex()}')
         if name == 'GSS_STATUS' and data == b'\x01':
-            # 1 = "IPC COM ready": send the RTE data gss_ipc reads at Rte_Start,
-            # then (in tick) request application run once per link-up.
+            # 1 = "IPC COM ready": send the RTE data gss_ipc reads at Rte_Start
+            # and the stored persistency (mode 1 submode 0; submode 2 ignores
+            # it, and MOST's NOCOMM/SSO restore reports "no persistent data"
+            # without it), then (in tick) request application run once per
+            # link-up.
             self.log('tx RTE VS_HMI_VersionsInfo')
             self.queue(*ipc.rte_signal(ipc.L4C_VS_HMI_VERSIONS_INFO, self.VERSIONS_INFO))
+            self.log('tx GSS_MODE_REQUEST mode 1 submode 0 (persistency)')
+            self.queue(*ipc.gss_mode_request(1, 0, self.persistency))
             self.run_pending = True
 
     def request_run(self):

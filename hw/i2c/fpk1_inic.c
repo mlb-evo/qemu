@@ -29,7 +29,10 @@
  * for, see fpk1_inic_attach_statuses(). Every other message is logged.
  *
  * The host resets the INIC through /dev/nvgpio/most_rst_in (GPIO Z1); any
- * edge on the "reset" input drops pending messages.
+ * edge on the "reset" input drops pending messages. After a reset INT stays
+ * low until the host's first read: the first arm of the Y5 interrupt leaves
+ * it masked, and mostcoreapp's one-off level check at interface start only
+ * picks up the first reply if INT is already low.
  */
 
 #include "qemu/osdep.h"
@@ -77,6 +80,8 @@ struct Fpk1InicState {
     GQueue tx;
     unsigned tx_pos;
     bool reading;
+    /* INT held low after reset until the host's first read. */
+    bool ready;
 };
 
 static bool fpk1_inic_debug(void)
@@ -105,7 +110,7 @@ static void fpk1_inic_trace(const char *what, const uint8_t *data,
 
 static void fpk1_inic_update_int(Fpk1InicState *s)
 {
-    qemu_set_irq(s->int_n, g_queue_is_empty(&s->tx));
+    qemu_set_irq(s->int_n, g_queue_is_empty(&s->tx) && !s->ready);
 }
 
 static void fpk1_inic_queue(Fpk1InicState *s, const uint8_t *data, size_t len)
@@ -302,10 +307,15 @@ static int fpk1_inic_event(I2CSlave *i2c, enum i2c_event event)
         }
         /* A read covering the whole message consumes it. */
         head = g_queue_peek_head(&s->tx);
+        if (fpk1_inic_debug()) {
+            uint8_t n = MIN(s->tx_pos, 255);
+            fpk1_inic_trace("read", &n, 1);
+        }
         if (head && s->tx_pos >= head->len) {
             g_byte_array_unref(g_queue_pop_head(&s->tx));
-            fpk1_inic_update_int(s);
         }
+        s->ready = false;
+        fpk1_inic_update_int(s);
         break;
     default:
         break;
@@ -341,6 +351,7 @@ static void fpk1_inic_reset(DeviceState *dev)
     s->tx_pos = 0;
     s->reading = false;
     s->attach = 0;
+    s->ready = true;
     fpk1_inic_update_int(s);
 }
 

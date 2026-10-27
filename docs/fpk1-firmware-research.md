@@ -1824,9 +1824,11 @@ In GSS_MAN_GssManager (0x141178) mode 1 dispatches on submode: 0 stores the
 16 persistency bytes, 2 enters `GSS_SM_APP_RUN` (`Rte_Start`, application
 run); mode 2 stops; modes 3/4 query state. Every request is answered with
 GSS_MODE_RESPONSE. The minimal KSS start-up is therefore expected to be:
-answer the GSS_STATUS, send GSS_MODE_REQUEST(1, 2, persistency) and keep
-answering alive/ping traffic. This sequence is inferred from code, not yet
-observed working.
+answer the GSS_STATUS, send GSS_MODE_REQUEST(1, 0, persistency) and then
+GSS_MODE_REQUEST(1, 2) and keep answering alive/ping traffic. Submode 2
+ignores the persistency bytes; without submode 0, MOSTCommService logs
+`[NOCOMM_Restore_From_Persistency] no persistent data received yet`. The KSS
+peer sends 16 zero bytes (no stored NOCOMM/SSO fault).
 
 `tools/fpk1/qnx_elf_disasm.py` is the PLT-aware disassembler used for this
 (QNX binaries have no section headers; ARM immediates are decoded from the
@@ -2066,8 +2068,21 @@ with `FPH & 6 == 2` go to the status queue.
   60 s boot NetServices syncs on the first try, completes init and sets the
   attach state to 2; no NSR errors follow.
 
+- First sync: the Y5 interrupt gets two kernel masks during start-up, so the
+  host's first arm (`InterruptUnmask` in devg-nvgpio's IRQ thread) leaves it
+  masked; only the second arm writes `MSK_INT_ENB` 0x2020. The first reply
+  was therefore read only when mostcoreapp's one-off START_INTERFACE level
+  check ("NV_BUG_WORKARROUND -> irq low, send puls") ran after it, otherwise
+  `NSR_EI_SYNC_FAILED`, an INIC reset and `NSR_E_NO_COMM` followed. The
+  workaround implies INT is low at that point on the real board, so the model
+  holds INT low after every reset until the host's first read; 8 of 8 boots
+  then synced on the first try.
+- `nwSSORestore(): no value received yet, sending NO_RESULT` remains: the
+  restore runs before gss_ipc forwards the KSS persistency; `nwSSOSet` with
+  the stored value follows shortly after (checked with breakpoints).
+
 `hw/i2c/fpk1_inic.c` implements the above; `FPK1_INIC_DEBUG=1` traces every
-message on stderr. The Tegra30 GPIO model now re-latches level-triggered
+message (and read lengths) on stderr. The Tegra30 GPIO model now re-latches level-triggered
 interrupts after INT_ENB/INT_LVL/INT_CLR writes: devg-nvgpio clears and re-arms
 Y5 while the INIC still holds it low, and an edge-only latch lost those
 interrupts.

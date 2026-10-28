@@ -3455,3 +3455,397 @@ For the requested full picture, keep this inventory as the authoritative **cover
 Вместо дальнейшего линейного перечисления адресов: **найти конкретное чтение поля callback `+0x48` в методах коммуникационного объекта, установить виртуальную цель и её входной message descriptor**. Параллельно проверить обработчики `rteNoInit`, `rteTimeout` и reactivation на отдельные переходы состояния. Если внешний dispatch находится в `comm` shared library, потребуется анализ соответствующей библиотеки из firmware, а не бесконечное расширение локального call graph `gtf2`.
 
 Связанные подтверждающие документы: `gtf2-hmicomm-two-callback-instances.md`, `gtf2-callback-instances-comm-proxy.md`, `gtf2-ihmikss-proxy-descriptor-proof.md`, `gtf2-ihmikss-proxy-lifecycle-listener.md`, `gtf2-threadman-message-send-receive.md`, `gtf2-message-box-pthread-fifo-implementation.md`.
+
+
+## Архив точных доказательств, перенесённых из коротких заметок
+
+Ниже сохранены исходные адреса, листинги и оговорки из отдельных файлов; после переноса их можно удалить без потери сведений.
+
+
+### Перенесено из `gtf2-hmicomm-two-callback-instances.md`
+
+# Two callback-object instances created in HmiComm setup
+
+Stock GTF2 SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This extends the earlier callback-object ownership analysis and matters for external method routing. The 148-entry vtable at `0x88e6b8` and slot 136 at `0x88e8d8` were already established.
+
+## Constructor loop, not a singleton callback instance
+
+In `0x68ee80`, `r7` starts at 1 (`0x68ee90`). The loop at `0x68eea8` creates an object via `0x69780c`, passing `r1=r7` at `0x68eeb0..0x68eeb4`. It stores the resulting 12-byte shared-pointer record into a growable vector in owner `r4` at offsets `+4,+8,+0xc`. At `0x68f19c`, the counter is compared against 3, and `0x68f1a0 BNE 0x68eea8` repeats for counter 2. Therefore **two** objects are constructed with arguments **1 and 2**.
+
+Constructor `0x69780c` allocates 52 bytes and calls `0x6977a4`; `0x6977b8 STR r1,[r4,#0xc]` stores the supplied instance argument at offset `+0xc`. The constructor sets the primary vptr `0x88e6b8` at `+0`. The two instances share this same callback table and hence both have virtual slot 136 -> `0x693ff0`.
+
+At `0x68f1a4..0x68f1b0`, after the loop, `0x68ee80` calls a **different** constructor `0x690a80` and appends its result to a **different** vector at owner offsets `+0x1c,+0x20,+0x24`. It must not be counted as a third `0x69780c` instance.
+
+## Implication for RTEUpdateDone dispatch
+
+The slot-136 function `0x693ff0` uses `r0` only as an unused incoming instance argument: it sets `r1=3`, `r2=0x2afa`, constructs and sends the ThreadMan completion message. Thus the **same implementation** can be called on either object instance, and the instance's `+0xc` value does not select the internal channel in this function.
+
+The actual external ASI method descriptor -> which instance -> vtable slot mapping is still **unproven**. It would be wrong to infer a unique method ID or a unique callback object from the vtable address alone.
+
+## Nearby setup context
+
+The same `0x68ee80` setup calls `0x693294` with owner+0x48 and `0x6921cc` with owner+0x80 before constructing the two callback objects. Later it performs additional setup and reports `HmiComm ready.` (stock literal `0x88d2b9`). The existence of this message in the function does not establish a runtime timestamp.
+
+## Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x68ee80 --stop 0x68ef00
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x68f170 --stop 0x68f1c4
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6977a4 --stop 0x697848
+```
+
+
+
+### Перенесено из `gtf2-callback-instances-comm-proxy.md`
+
+# HmiComm callback instances connect to a comm::Proxy constructor
+
+Verified in stock GTF2 ELF (SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`) by disassembling executable PT_LOAD and resolving PLT entries through original ELF `R_ARM_JUMP_SLOT` relocations. Builds on `gtf2-hmicomm-two-callback-instances.md` and does not re-claim discovery of the callback vtable.
+
+## Per-instance processing after construction
+
+`0x68ee80` first creates two `0x69780c` callback objects with instance arguments 1 and 2 and stores them in the owner vector. Later it iterates that vector:
+
+```asm
+68f31c ldr r3,[r5]
+68f320 ldr r6,[r3,#8]    ; vector end
+68f328 ldr r0,[r6,#-8]   ; current shared-pointer's object
+68f32c bl 0x697e94
+68f330 ldr r3,[r5]
+68f338 add r6,r6,#12     ; 12-byte vector entry
+68f33c ldmib r3,{r0,r2}  ; vector start/end metadata
+68f348 bne 0x68f328
+```
+
+`0x697e94` requires non-null object fields `+0x28` and `+0x2c`, reads the stored per-instance value at `+0xc` (`0x697ee0`), and passes it along with the object pointer and associated shared-pointer record into `0x6939b4` at `0x697f1c`. The call `0x697d04` prepares object-related state before that operation. **This is a per-instance setup/activation path, not simply object construction.**
+
+## Dynamic-symbol resolution identifies communication library boundary
+
+Within `0x6939b4`, a 108-byte object is allocated (`0x693be4`), initialized (`0x693c00`), and passed to `0x10ebe8` at `0x693cd0`. The imported symbol is exactly:
+
+```cpp
+comm::Proxy::Proxy(
+    comm::TrackedBase::IdentityArgs const&,
+    comm::ServiceRegistration const&,
+    comm::InterfaceStyle,
+    comm::LifecycleListener*)
+```
+
+ELF evidence: PLT `0x10ebe8` maps to GOT `0xa6577c`; `R_ARM_JUMP_SLOT` relocation index 434, dynamic symbol index 572, mangled name `_ZN4comm5ProxyC2ERKNS_11TrackedBase12IdentityArgsERKNS_19ServiceRegistrationENS_14InterfaceStyleEPNS_17LifecycleListenerE`.
+
+Other relevant resolved imports:
+
+| PLT VA | Dynamic symbol |
+|---|---|
+| `0x10e27c` | `comm::LifecycleImpl::LifecycleImpl(comm::Lifecycle::State, comm::LifecycleListener*)` |
+| `0x10df10` | `ipl::UUID::UUID(ipl::UUID const&)` |
+| `0x10e21c` | `util::SharedPtrDefaultBase::SharedPtrDefaultBase(util::SharedPtrDefaultBase const&)` |
+| `0x10e468` | `atomic_add_value` |
+
+This is the first identified **`comm::Proxy` constructor** in the per-instance callback setup chain. It supplies a concrete place to recover `ServiceRegistration`, interface UUID and lifecycle semantics. Do not call the constructor itself a successful external subscription.
+
+## Relationship to ThreadMan RTEUpdateDone
+
+The existing callback vtable `0x88e6b8` contains slot 136 -> `0x693ff0`, which sends `0x2afa` through the process-local `/eMsgBoxIDThreadManager` pthread FIFO. Both instances share the table. The `comm::Proxy` setup is **upstream infrastructure** but does not yet establish the external method ID, which instance receives the call, or exact method dispatch mapping.
+
+## Next proof targets
+
+1. Decode `ServiceRegistration` argument and interface UUID supplied to `comm::Proxy`.
+2. Find the actual dispatch path from `comm::Proxy`/interface object to callback slot 136.
+3. Determine whether `0x693ff0` is a lifecycle notification rather than a wire-method callback. Its position in the large vtable alone cannot distinguish these.
+
+
+
+### Перенесено из `gtf2-ihmikss-proxy-descriptor-proof.md`
+
+# IHmiKss descriptor in per-instance proxy setup
+
+Original stock `gtf2` SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`.
+
+The `0x6939b4` setup routine called from `0x697e94` for each of the two callback objects uses the actual `IHmiKss` and `IHmiKssReply` interface descriptors.
+
+| Address | Value | Interpretation |
+|---|---|---|
+| `0x693d30` | `0xa7f838` | descriptor pointer loaded at `0x693ab0` |
+| `0xa7f838` | `0x88f55d` | exact string `asi.gss.ipc.rte.hmi.IHmiKss` |
+| `0x693d44` | `0xa7f83c` | descriptor pointer loaded at `0x693bb0` |
+| `0xa7f83c` | `0x88f579` | exact string `asi.gss.ipc.rte.hmi.IHmiKssReply` |
+
+The first string pointer is dereferenced at `0x693ac8` and stored in a stack-local registration structure at `0x693b08`. The second is dereferenced at `0x693bc0` and stored at `0x693bc4`. The same routine invokes `comm::Proxy::Proxy` through PLT `0x10ebe8` at `0x693cd0`.
+
+Proven chain: `HmiComm 0x68ee80` -> two callback instances via `0x69780c` -> per-instance setup `0x697e94` -> `0x6939b4` -> `IHmiKss/IHmiKssReply` descriptor construction and `comm::Proxy`.
+
+This proves interface identity, **not** external wire-method identity. Callback vtable slot 136 (`0x693ff0`) still has no verified external ASI method ID or name, and runtime invocation timing is unknown. The vtable slot index 136, ThreadMan selector `0x2afa`, and internal message-box index 3 are separate numbering spaces.
+
+Reproduce using `tools/fpk1/research/gtf2/disassemble_ptload.py` ranges `0x693ab0..0x693bd0` and `0x693ca8..0x693cd4`, and inspect the four ELF addresses listed above.
+
+
+### Перенесено из `gtf2-ihmikss-proxy-lifecycle-listener.md`
+
+# Distinguish primary IHmiKss callback dispatch from comm::Proxy LifecycleListener
+
+Stock GTF2 SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. Direct original ELF disassembly and pointer reads. Extends `gtf2-ihmikss-proxy-descriptor-proof.md`, avoiding the previously repeated primary vtable discovery.
+
+## The actual fifth constructor argument is the secondary subobject
+
+At `0x697e94`, the two per-instance callback objects enter setup. The call to `0x6939b4` at `0x697f1c` passes `r0=sp+8`, `r1=object[+0xc]`, `r2=object`, `r3=sp+20`, **fifth argument `[sp]=object+4`** (`0x697f0c ADD r12,r4,#4`; `0x697f10 STR r12,[sp]`). The wrapper `0x6939b4` saves the incoming fifth argument, then at `0x693cb0 LDR lr,[sp,#0xd8]` and `0x693cc4 STR lr,[sp]` passes it unchanged as the fifth argument to imported `comm::Proxy::Proxy(IdentityArgs const&, ServiceRegistration const&, InterfaceStyle, LifecycleListener*)` at `0x693cd0`. The register `r3=0` at `0x693cac` is the fourth argument `InterfaceStyle`; `r2=sp+0x98` points to registration data.
+
+In the constructor `0x6977a4`, `0x6977c8 STM r4,{r2,r3}` writes **primary vptr `0x88e6b8` to object+0**, **secondary vptr `0x88e910` to object+4**. Therefore the exact `LifecycleListener*` passed to `comm::Proxy` is **the secondary polymorphic subobject at object+4**, not the primary 148-entry method table.
+
+## Secondary listener table and concrete re-entry
+
+The secondary table at `0x88e910` contains four function pointers:
+
+| Secondary slot | Pointer VA | Target | Verified behavior |
+|---:|---|---|---|
+| 0 | `0x88e910` | `0x69387c` | this-adjusting destructor thunk |
+| 1 | `0x88e914` | `0x6937fc` | this-adjusting thunk to `0x693804` |
+| 2 | `0x88e918` | `0x693774` | this-adjusting no-op thunk to `0x69377c` |
+| **3** | **`0x88e91c`** | **`0x698014`** | subtracts 4 from `this`; jumps to `0x69801c` -> `0x697e94` |
+
+ARM proof: `0x698014 SUB r0,r0,#4`; `0x698018 B 0x69801c`; `0x698044 MOV r0,r4`; `0x69804c B 0x697e94`. The intervening code `0x69801c..0x698044` includes a conditional logging call and preserves the object pointer.
+
+**Meaning:** a method on the actual `LifecycleListener` interface can re-enter the per-instance proxy setup routine. This is a concrete lifecycle callback behavior. It does not establish which library lifecycle state causes the call, nor whether repeated calls create a new proxy or return early; `0x697e94` has guards at entry.
+
+## Primary slot 136 is a different interface slot
+
+The **primary** vtable `0x88e6b8` slot 136 (`0x88e8d8`) points to `0x693ff0`, which constructs `eSIDThreadManRTEUpdateDone` selector `0x2afa` on internal channel 3. It is **not** the `LifecycleListener` method at secondary slot 3, nor is primary slot 136 a proven external ASI wire method ID. The primary callback object's `this` at `+0` and secondary listener subobject at `+4` must not be conflated.
+
+The data at `0x88e908` and `0x88e90c` are RTTI-related vtable header words (`-4`, zero); `0x88e910` is the actual secondary address point. A further subobject address point exists at `0x88e928` (object+8), also distinct.
+
+## Updated topology
+
+```text
+IHmiKss callback object (two instances, instance IDs 1 and 2)
+  +0  primary vptr 0x88e6b8
+       slot 136 -> 0x693ff0 -> internal ThreadMan RTEUpdateDone
+  +4  secondary vptr 0x88e910
+       passed to comm::Proxy as LifecycleListener*
+       secondary slot 3 -> 0x698014 -> 0x69801c -> 0x697e94
+         -> 0x6939b4 -> comm::Proxy constructor
+  +8  further vptr 0x88e928
+  +0xc instance ID
+```
+
+This **resolves the direct lifecycle-listener-vs-primary-slot ambiguity**, but does not yet recover the external method descriptor/dispatch mapping for primary slot 136. Next examine `comm::Proxy` registration and how the library invokes primary vtable methods, especially whether slot 136 represents an inbound wire event or a completion callback from another proxy operation.
+
+Reproduce: disassemble `0x6977a4..0x6977cc`, `0x697e94..0x697f20`, `0x693ca8..0x693cd4`, `0x698014..0x698050`; read 4-byte pointer values at `0x88e910..0x88e91c`.
+
+
+
+### Перенесено из `gtf2-message-box-pthread-fifo-implementation.md`
+
+# GTF2 named message boxes: in-process pthread FIFO
+
+Verified against original stock `gtf2` SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This resolves the transport ambiguity in `gtf2-threadman-named-message-box.md`.
+
+The channel named `/eMsgBoxIDThreadManager` (index 3) is implemented in the process by linked heap nodes, a mutex and a condition variable. It is **not** a POSIX `mq_open` endpoint. ARM PLT imports were resolved through original ELF relocation and symbol tables.
+
+| Function | Relevant PLT imports | Key operations |
+|---|---|---|
+| `0x68d060` send | `malloc` `0x10e7ec`; `memcpy` `0x10dbd4`; `pthread_mutex_lock` `0x10dcdc`; `pthread_cond_signal` `0x10f140`; `pthread_mutex_unlock` `0x10d808` | Allocates `length+8` node, stores next=0 and length, copies payload to node+8, checks capacity, appends FIFO node, increments count, signals waiter |
+| `0x68cf00` receive | `pthread_mutex_lock` `0x10dcdc`; `pthread_cond_wait` `0x10dcf4`; `pthread_mutex_unlock` `0x10d808`; `memcpy` `0x10dbd4`; `free` `0x10e2c4` | Waits while empty, checks destination buffer length, removes head, decrements count, copies payload, frees node, returns message length |
+| `0x68d308` create | `strlen` `0x10edd4`; `strcmp` `0x10f1e8`; `strcpy` `0x10d88c` | Maintains local named-slot table |
+
+Machine-code anchors: `0x68d0a0` malloc; `0x68d0d8` node header; `0x68d0e0` memcpy; `0x68d0e8` mutex lock; `0x68d1a0` append tail; `0x68d1a8` set head if empty; `0x68d1d4` cond signal; `0x68d1f0` count increment; `0x68d1f4` mutex unlock. Receiver `0x68cf44` lock; `0x68cf98` cond wait; `0x68cfd0` read node length; `0x68cfd4` capacity compare; `0x68cff8` advance head; `0x68d01c` decrement count; `0x68d020` unlock; `0x68d030` copy; `0x68d038` free.
+
+Static end-to-end: callback vtable slot 136 `0x693ff0` sends selector `0x2afa` to channel index 3 -> `/eMsgBoxIDThreadManager` -> bounded pthread FIFO -> ThreadMan `0x69b29c` receives from same index 3 -> `0x12dfb0` dispatches `eSIDThreadManRTEUpdateDone` -> DP guard checks -> delayed/Stage3/immediate HMI startup.
+
+**Not yet established:** external ASI `IHmiKss` method name for slot 136, actual runtime callback timing or successful delivery. The internal message-box channel and external ASI IPC are separate mechanisms.
+
+Reproduce with `tools/fpk1/research/gtf2/disassemble_ptload.py` ranges `0x68d060..0x68d200`, `0x68cf00..0x68d050`, and `0x68d308..0x68d4c4`.
+
+
+### Перенесено из `gtf2-rte-completion-callback-slot.md`
+
+# RTEUpdateDone producer is slot 136 of the already-recovered IHmiKss callback table
+
+Verified against the original stock `STAGE2.1/bin/gtf2` SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This resolves the indirect entry of `0x693ff0` left open in `gtf2-threadman-producers-and-startup-dp-writers.md`. The table itself and callback object construction were already established in `gtf2-callback-object-vptr-and-caller.md`; **do not count them as new discoveries**.
+
+## Exact indirect function pointers
+
+Scanning the entire original ELF for little-endian absolute pointers to the two functions finds one occurrence each:
+
+| Table base | Slot index (zero-based) | Pointer slot VA | Target | Meaning |
+|---|---:|---|---|---|
+| `0x88e6b8` | **96** | `0x88e838` | `0x694358` | `payload[3]` to DP `0x02000236` via tail branch `0x131390` |
+| `0x88e6b8` | **136** | `0x88e8d8` | `0x693ff0` | create `eSIDThreadManRTEUpdateDone` (selector `0x2afa`) |
+| `0x88e6b8` | **137** | `0x88e8dc` | `0x693fdc` | write constant `171` to DP `0x020002bb` via tail branch `0x13143c` |
+
+These are entries in the **same 148-entry callback pointer table** already associated with the 52-byte object constructed by `0x6977a4`. The pointer to `0x693ff0` is not a direct `BL` callsite; therefore the earlier zero-direct-call observation is fully explained by indirect dispatch. The exact external ASI method index / IPC method name for slot 136 is **not yet proven**. Slot adjacency to the DP writer at index 137 does not prove those two callbacks execute consecutively.
+
+The 148-entry table ends at index 147 (`0x88e904 -> 0x694024`). Following words at `0x88e908` are **not** further entries of this same table; they begin a separate data/vtable region.
+
+## Machine code at the producer
+
+```asm
+693ff0 push {r0,r1,r4,lr}
+693ff4 movw r2,#0x2afa
+693ff8 mov r1,#3
+693ffc mov r0,sp
+694000 bl 0x12ca9c
+694004 mov r0,sp
+694008 bl 0x12c994
+69400c mov r0,sp
+694014 bl 0x12c9fc
+694018 pop {r2,r3,r4,pc}
+```
+
+`0x12c994` checks the local wrapper's byte `+4` and calls `0x69b4ac` on its pointer `+0`; `0x69b4ac` uses GTF2 IPC/message transport helpers `0x68d7f8`, `0x68d570`, `0x68d060` and checks a `-1` failure result. The consumer `0x69b29c` calls `0x68d7f8`, `0x68d570`, `0x6abf20`, then `0x68cd70` / `0x68ce1c` / `0x68cf00` to receive a message into an object buffer at `+0x10`. This strengthens the message transport link but does not establish the concrete transport endpoint or serialization contract.
+
+## Reconciled application-level chain
+
+```text
+IHmiKss callback object [vptr 0x88e6b8]
+  + slot 136 -> 0x693ff0
+      -> construct 0x2afa message
+      -> 0x12c994 -> 0x69b4ac (send-like IPC transport)
+ThreadMan run 0x12e380
+  -> 0x12e0a8 -> 0x69b29c (receive-like IPC transport)
+      -> 0x12dfb0 (processMessage)
+          -> eSIDThreadManRTEUpdateDone
+          -> 0x130510 / 0x13076c / 0x13080c
+          -> conditional HMI startup / Stage3 path
+```
+
+**Important distinction:** A callback table pointer is evidence of a registered callable implementation, not proof of the external method number, registration timing, or a specific runtime callback invocation. Recover those by tracing the interface descriptor and dispatch registration rather than assigning a name based solely on index.
+
+## Reproduction
+
+```python
+import struct
+blob = open('gtf2', 'rb').read()
+for target in (0x693ff0, 0x694358, 0x693fdc):
+    needle = struct.pack('<I', target)
+    matches = []
+    off = 0
+    while (off := blob.find(needle, off)) >= 0:
+        matches.append(hex(off + 0x100000))
+        off += 1
+    print(hex(target), matches)
+```
+
+Original executable LOAD has VA base `0x100000` and file offset zero for these pointer slots. This scan yields `0x88e8d8`, `0x88e838`, `0x88e8dc` respectively.
+
+Next: trace the method descriptor corresponding to slot 136, and inspect `0x68d060`/`0x68cf00` transport operations without assuming that callback slot indices equal ASI IPC method IDs.
+
+
+
+### Перенесено из `gtf2-rte-completion-stage3-join.md`
+
+# ThreadMan RTEUpdateDone branch joins existing Stage3 startup path
+
+Source: stock `STAGE2.1/bin/gtf2` (SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`). This is an **integration/correction** to `gtf2-threadman-completion-events.md` and the already documented `gtf2-lifecycle.md` Stage3 chain, not a new Stage3 function discovery.
+
+## Concrete RTE completion branch
+
+`0x12dfb0` handles the internal event `eSIDThreadManRTEUpdateDone` (selector `0x2afa`). At `0x12e03c` it tests the per-run completion flag and, if unset, executes:
+
+```asm
+12e048 add r5,sp,#4
+12e04c add r2,r4,#0xf8
+12e050 add r1,r4,#8
+12e054 mov r0,r5
+12e058 bl  0x130510
+12e05c mov r0,r5
+12e060 bl  0x13076c
+12e064 mov r0,r5
+12e068 bl  0x13080c
+12e06c mov r3,#1
+12e070 strb r3,[r6]
+```
+
+These are **three calls on the same stack-local object**, not three independent RTE update handlers. `0x130510` initializes its fields (`+0,+4,+8,+0x18`, the last to -1) and installs an inner vtable pointer at `+8` via `0x1304ec`. `0x13080c` checks `+0x18`, optionally calls imported `0x10e2ac`, and restores the inner vtable at `+8`. It is cleanup/finalization-like; exact class identity unproven.
+
+## Stage3 connection already present in lifecycle research
+
+```asm
+13076c push {r4,lr}
+130774 bl 0x13067c
+130778 cmp r0,#0
+130784 bne 0x1307a8
+130788 bl 0x13066c
+13078c cmp r0,#0
+130790 beq 0x1307d8
+130794 bl 0x699594   ; GTF2 startEfsDriver()
+130798 cmp r0,#0
+13079c bne 0x1307b0
+```
+
+The direct `0x130794 → 0x699594` call was **already verified and documented** in `gtf2-lifecycle.md` as the delayed-HMI-start Stage3 path. The new join is the exact upstream event `eSIDThreadManRTEUpdateDone` through `0x12dfb0` and the local stack object. Therefore the correct synthesis is:
+
+```
+ThreadMan run() 0x12e380
+  -> message loop 0x12e0a8
+    -> processMessage 0x12dfb0
+      -> eSIDThreadManRTEUpdateDone (0x2afa)
+        -> 0x130510  construct temporary helper
+        -> 0x13076c  conditionally run Stage3 startup path
+          -> 0x13067c / 0x13066c guards
+          -> 0x699594 startEfsDriver() [existing lifecycle finding]
+        -> 0x13080c  finalize temporary helper
+        -> mark RTE completion flag
+```
+
+## What this does not prove
+
+- The event name does not prove that ASI RTE subscriptions have completed or identify the event producer.
+- `0x13076c` does not always call `startEfsDriver()`: guard branches can bypass it.
+- `0x130510` and `0x13080c` must not be described as independent IPC/RTE registration calls.
+- The two ThreadMan completion flags and the separate Stage3 process-start return code should not be conflated.
+- This does not supersede the other documented `startEfsDriver()` callsites `0x122eac` and `0x692f20`.
+
+Next evidence target: producers of `0x2af9/0x2afa` and exact `0x13067c/0x13066c` DP predicates. Avoid duplicating existing `gtf2-lifecycle.md` analysis.
+
+
+
+### Перенесено из `gtf2-threadman-completion-events.md`
+
+# Thread-manager event names resolve callback initialization trigger
+
+Stock `STAGE2.1/bin/gtf2` SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. Cross-checked against the complete 3420-line `gtf2-lifecycle.md`; these exact addresses are not already covered there. This note corrects the tentative selector interpretation in `gtf2-guarded-init-real-entry-and-caller.md`.
+
+## Verified source-level names, not guessed transport IDs
+
+The dispatch function **0x12dfb0** compares `r1` against `0x2af9` and `0x2afa` at `0x12dfb4` and `0x12dfd8`. Its own ARM literal loads for the two diagnostic calls identify them:
+
+| Value | Diagnostic string VA | Exact string | Conditional action |
+| --- | --- | --- | --- |
+| `0x2af9` | `0x7c33d5` | `processMessage(eSIDThreadManDPInitDone)` | check flag at `r2`; `0x12df20`, `0x68f594`, set flag |
+| `0x2afa` | `0x7c33fd` | `processMessage(eSIDThreadManRTEUpdateDone)` | check flag at `r3`; `0x130510`, `0x13076c`, `0x13080c`, set flag |
+| other | `0x7c3428` | `processMessage(): Unexpected Message` | unexpected-message diagnostic |
+
+Literal slots `0x12e09c`, `0x12e0a0`, `0x12e0a4` point to these strings respectively. The names are embedded diagnostics and indicate **internal ThreadMan completion events**, not external IPC method IDs. A call to `0x68f594` follows the **DPInitDone** branch, not the RTEUpdateDone branch. This does not prove what `0x68f594` registers with any external service.
+
+## Direct upstream call chain
+
+A complete direct ARM BL scan of the original executable PT_LOAD found:
+
+- `0x112e18 BL 0x12e380` (one direct caller)
+- `0x12e3e8 BL 0x12e0a8` (one direct caller)
+- `0x12e0f8 BL 0x12dfb0` (one direct caller)
+
+The routine `0x12e380` has its own literal diagnostic `run()` at `0x7c34bf` (literal slot `0x12e4c8`). It first calls `0x12e294`, then `0x14c348`, `0x12e124`, and the `0x12e0a8` processing loop.
+
+At `0x12e0a8`, `0x69b29c` supplies a nonnull object, `0x14e58c` stores it in a stack-local pointer, and `0x14e59c` (a wrapper that loads the pointer and tail-branches to `0x69b45c`) produces the value passed as `r1` to `0x12dfb0`. The two byte addresses passed as `r2/r3` are local flags at `sp+7` and `sp+6`. The loop repeats until both are nonzero (`0x12e104..0x12e11c`). This proves a **two-event completion wait/dispatch** structure. Exact origin of the queue messages remains open.
+
+The higher-level caller `0x112e18` sits in the GTF2 initialization path and passes a stack object to `run()`. Its nearby ELF diagnostic string `Starting initialization` at `0x7bd731` is referenced by the surrounding routine, but do not claim it is emitted at a particular runtime timestamp without a trace.
+
+## Corrected interpretation
+
+The previously observed keyed-container operations `0x12df20 -> 0x12ff70` are executed on the DP-init-complete path, followed by creation of the 52-byte callback object. The event name provides the first reliable semantic classification of the trigger; it does **not** make `0x12ff70` an IPC configuration function. `0x10eb7c` remains the already-resolved `util::SharedPtrDefaultBase` constructor.
+
+New known chain:
+```
+0x112e18
+  -> 0x12e380 ('run()')
+    -> 0x12e0a8 (process two completion events)
+      -> 0x12dfb0 ('processMessage')
+        eSIDThreadManDPInitDone (0x2af9)
+          -> 0x12df20 (keyed-container operations)
+          -> 0x68f594 -> 0x68ee80 -> 0x69780c -> 0x6977a4
+        eSIDThreadManRTEUpdateDone (0x2afa)
+          -> 0x130510 -> 0x13076c -> 0x13080c
+```
+
+Next: inspect the producers of both named completion messages and the side effects of the three RTEUpdateDone calls. Distinguish *ThreadMan completion* from actual ASI IPC subscription. No implementation specification or firmware bytes committed.

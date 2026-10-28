@@ -737,3 +737,53 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 ```
 
 **Next GTF2-only question:** locate the writes that enable `this+0xd40[index]`, and the consumers of the per-slot map contents. That will reveal whether these maps track dirty properties, subscriptions, or another form of DP state. Until then, “DP-ID registration/collection” is the narrowest supported description.
+
+### DP slot lifecycle: enable, accumulate, flush, disable (GTF2-owned)
+
+Following the 180-slot map **backwards to its flag writers and forwards to its consumers** resolves the previously open question. Three small GTF2-owned routines directly touch the `+0xd40` flag region:
+
+| VA | ARM behavior | Inferred operation |
+| --- | --- | --- |
+| `0x120e94` | `cmp r1,#179`; if unsigned `r1 <= 179`, `strbls #1,[r0+r1+0xd40]` | **Enable slot(index)**, bounds-checked |
+| `0x122338` | `cmp r2,#179`; when valid, `strb #0,[r0+r2+0xd40]` at `0x122364`, then inspect descriptor `this+0x200+16*index` | **Disable slot(index) and flush its pending IDs** |
+| `0x122a64` | loop `index=0..179` storing zero at `+0xd40+index` | Initialize all slots disabled |
+
+The function starting at **`0x122338`** does substantially more than clearing a flag:
+
+1. Checks index `<=179`, clears its enable byte (`0x122338–0x122364`).
+2. Loads the selected descriptor's node count from `this+0x20c+16*index` and its tree root from `this+0x204+16*index` (`0x12236c–0x122380`).
+3. If the map is nonempty, iterates its ordered nodes (`0x122388–0x122448`), prepares an event-like record and **calls a virtual method at vtable offset `+0x4c`** on the object passed as the function's second argument (`0x1223f0–0x1223fc`). This is the GTF2-owned **flush/notification path**, not a GPU draw call.
+4. Calls `0x113fd4` on the descriptor root (`0x122458–0x122460`), then clears its root, cached pointer and count (`0x122464–0x122474`).
+
+A special constant **`0x020001cc`** is used as a sentinel/event marker while preparing flush records (literal `0x122494`). The exact consumer-side semantics of the virtual callback remain unknown.
+
+**New important connection:** the earlier “language change” function **`0x1213e0`**, invoked from dispatcher event-kind 8 / subtype 15 at `0x123680`, also loops through all 180 active slots (`0x12140c–0x12143c`) and inserts **the same constant `0x020001cc`** into each slot's map using `0x11c8ec`. This is not merely an isolated language-setting call: it explicitly **marks every enabled slot** with a common DP-ID marker before performing its remaining GTF2-owned operations. The numeric constant should not be given a human-readable DP name without the source enum.
+
+The resulting data-flow is:
+
+```text
+GTF2 instance constructor
+  -> initialize 180 maps empty, 180 slots disabled
+  -> enableSlot(index) [0x120e94, bounds <=179]
+  -> DP event kind 2 [dispatcher 0x123bbc]
+       -> for every enabled slot, insert event DP ID into its ordered set
+  -> language event kind 8 / subtype 15 [0x1213e0]
+       -> for every enabled slot, insert common marker 0x020001cc
+  -> disableSlot(index, receiver) [0x122338]
+       -> clear enabled flag
+       -> traverse accumulated IDs, dispatch event records through receiver's
+          virtual callback (+0x4c)
+       -> free/reset slot map
+```
+
+**This is stronger than the previous “registration/collection” hypothesis:** GTF2 implements a **per-subscriber pending-DP-ID accumulator**, with explicit subscribe/enable and unsubscribe/flush operations. The subscriber's identity and the precise meaning of its callback are still unproven. The code shows notification on **disable**; it does not establish whether other routines flush these maps at additional times. The table does **not** represent 180 fixed visual widgets.
+
+#### Reproduction ranges
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x120e94 --stop 0x120eb8
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1213e0 --stop 0x121494
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x122338 --stop 0x122490
+```
+
+The index is unsigned-bounded in both the enable and disable paths, avoiding out-of-bounds writes through this public interface. No external library disassembly was used.

@@ -420,3 +420,50 @@ Following **writers**, not just the reader `0x13a614`, resolves the semantics of
 **Conclusion:** `%dms waited on RTE` describes waiting for **queued RTE-related work to drain**, not waiting for a readiness bit to be cleared. The producer and count interpretation are directly established by ARM instructions. The **specific consumer/decrement operation and its thread/IPC ownership remain untraced**; therefore do not infer that every IPC subscription is ready or that Kanzi has loaded its scene when the count reaches zero.
 
 This supersedes the earlier wording in this document that described `+0x0c` as an unnamed readiness state. Reproduce with `tools/fpk1/research/gtf2/verify_rte_queue_count.py /path/to/gtf2`; tested against the stock GTF2 ELF.
+
+## Resolved: RTE queue is consumed synchronously by the startup loop
+
+The missing dequeue has been located at `0x141eec–0x141f30`, inside **`0x14199c`**, which is **directly called from the startup wait loop at `0x114ab4`**. The exact sequence is:
+
+```asm
+114ab0  bl 0x13d098       ; obtain queue singleton
+114ab4  bl 0x14199c       ; process pending queue work (consumer)
+...
+114acc  bl 0x13d098       ; obtain same singleton
+114ad0  bl 0x13a614       ; return queue occupancy != 0
+114ad4  cmp r0,#0
+114ad8  bne 0x114ab0     ; repeat while nonempty
+```
+
+The consumer's dequeue epilogue:
+
+```asm
+141eec  ldr r3,[r4,#0xc] ; queue count
+141ef0  cmp r3,#0
+141ef4  beq 0x141f34     ; no element to remove
+141ef8  ldr r2,[r4,#4]   ; read index
+141efc  mov r0,#52       ; element size
+141f00  ldr r3,[r4]      ; element storage
+141f04  ...              ; compute address at index*52
+141f08  bl 0x13a378     ; destroy/clean up element
+141f0c  ldr r3,[r4,#4]
+141f10  ldr r2,[r4,#0x10] ; capacity
+141f14  add r3,r3,#1
+141f18  str r3,[r4,#4]   ; advance read index
+141f1c  cmp r3,r2
+141f20  movhs r3,#0
+141f24  strhs r3,[r4,#4] ; wrap index at capacity
+141f28  ldr r3,[r4,#0xc]
+141f2c  sub r3,r3,#1
+141f30  str r3,[r4,#0xc] ; decrement queue count
+141f34  mov r3,#0
+141f38  strb r3,[r4,#0x14] ; clear a queue state byte
+141f3c  mov r0,r4
+141f40  bl 0x13e7b0     ; subsequent operation
+```
+
+Thus the queue has an independently verified producer `0x13ce08` and consumer `0x14199c`; the latter executes **on the startup thread's synchronous call path**, without requiring a hypothetical background consumer to explain how the count falls. It may still invoke other services via virtual dispatch, and there may be asynchronous producers; neither is excluded.
+
+The startup wait is more precisely described as **actively processing RTE-related queued work until the queue is empty**. It is *not* a readiness-bit wait, and an empty queue alone does not prove that `IHmiKss` callbacks are subscribed or that the Kanzi scene is ready.
+
+Verified against original stock ELF using `tools/fpk1/research/gtf2/verify_rte_queue_consumer.py` (all direct branches and dequeue opcodes checked).

@@ -1332,3 +1332,17 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x132050 --stop 0x132190
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x63b2bc --stop 0x63b390
 ```
+
+### Additional verification: `0x146320` is a virtual property forwarding wrapper
+
+Disassembly of GTF2 function **`0x146320–0x146370`** shows it is **not** a hardcoded view-type classifier. After optional diagnostic work, it loads the input object's vptr, dispatches **virtual `+0x74`**, and tail-calls GTF2 helper **`0x63677c`**. Similarly, **`0x146200`** dispatches the same vptr slot `+0x74` and tail-calls **`0x63693c`**. The numerical values compared with **3** in the center coordinator therefore come from **a view property returned through virtual dispatch and a subsequent GTF2 conversion**; their precise symbolic enum names remain unknown.
+
+This narrows the remaining view-class mapping task: recover the concrete **view vtables and their `+0x74` implementations**, then connect these to the property/conversion helpers. It would be incorrect to label value 3 as a particular named dashboard screen at this point.
+
+One edge case in the category table above can be resolved exactly: **byte `0x3e` is category 7**, not category 5. The code explicitly excludes it from the `0x30..0x3f` category-5 branch and includes it in the later category-7 branch (`0x1320d8–0x1320e8`). The table's “not 5” entry should be read as **7**.
+
+Reproduce:
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x146200 --stop 0x146380
+```

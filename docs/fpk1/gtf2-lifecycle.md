@@ -1980,3 +1980,65 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12b0d8 --stop 0x12b1c0
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12b2f8 --stop 0x12b3e4
 ```
+
+## Actual view-ID source narrowed to a state record at BaseViewManager+0x08
+
+The view-selection virtual **`+0x58`** has two confirmed implementations. Disassembly establishes the exact **non-popup/base-mode source of the numeric ID**, rather than merely showing another provider lookup.
+
+### Base selector `0x6a8d5c`
+
+At **`0x6a8d88–0x6a8da0`**:
+
+```text
+state = *(this + 0x08)
+if state != NULL:
+    id = gtf2_0x69d820(state)
+else:
+    id = 0
+*output_id = id
+return provider_getView(id)       # tail branch to 0x6a9e9c
+```
+
+The GTF2-local getter **`0x69d820`** is only three data operations:
+
+```text
+flags = *(uint32_t *)(state + 0x10)
+if (flags & 1) != 0:
+    return 0
+return *(uint32_t *)(state + 0x14)
+```
+
+Thus **the actual requested view ID in base mode comes from `state+0x14`**, provided bit **0** of `state+0x10` is clear. A set bit forces **ID 0** (null view). This is a precise and testable **state → view ID → provider object** link.
+
+### Derived selector `0x11871c`
+
+At **`0x11871c–0x11874c`**, the derived ViewManager:
+
+- If **`this+0x25 != 0`** or **`this+0x26 != 0`**, uses its **cached `this+0x1c`** as the output ID and calls the provider directly (`0x11873c–0x118748`).
+- If **both flags are zero**, tail-calls base selector `0x6a8d5c`, which obtains the ID from the state record above.
+
+This explains an important transition behavior: in the specialized mode, the derived manager can **retain the current ID** even when the underlying state record changes; when specialized mode ends, the selector again follows **`state+0x14`**. The observed code does not yet establish which event or setter writes startup IDs **174/176/177/178** into that field.
+
+### Emulation-oriented pseudocode
+
+```python
+def selected_view_id(manager):
+    if manager.flag_25 or manager.flag_26:
+        return manager.cached_view_id_1c
+    state = manager.state_ptr_08
+    if state is None or (state.flags_10 & 1):
+        return 0
+    return state.view_id_14
+```
+
+This function represents **selection**, not resource preparation or guaranteed visible display. It should be evaluated through the previously documented event → virtual `+0x50` pipeline, respecting transition gates.
+
+**Next trace:** locate the GTF2-owned writers of **`state+0x14`** and the bit-0 toggle at **`state+0x10`**. This is now the shortest path to proving which startup events request **174/176/177/178**, rather than inferring screen order from KZB load order.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a8d5c --stop 0x6a8dac
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d820 --stop 0x69d834
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11871c --stop 0x118750
+```

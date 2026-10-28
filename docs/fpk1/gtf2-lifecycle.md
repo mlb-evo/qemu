@@ -3401,3 +3401,19 @@ New representative **candidate** mappings:
 The new scene root `RV_ClusterFull_Additional` is now recovered from the exact GTF2 scene-node path strings, in addition to `MV_ClusterFull`. The handler calls remain kind-2 event notifications; no rendered behavior is inferred.
 
 **Coverage accounting must remain explicit:** 33 of the 49 RTE dispatch routes have *candidate* property joins; this does not imply all 176 RTE DP writes have been traced, and it does not imply the 36 property names exhaust the scene. For each unjoined event the output remains `unknown`. The user's requested endpoint is scene root + node path + property name, not Kanzi rendering internals.
+
+### Whole 176-DP source inventory: scene root/property coverage status
+
+A full local CSV has been generated for **all 176 unique RTE DP writes** recovered from GTF2. One-to-many event-to-property relationships expand the final CSV to **233 rows**. The matrix retains callback name, payload offset/width, DP ID, handler, scene root, complete node path, exact property name, evidence level, write VA, and event-use VA.
+
+- **176 / 176** unique source DP IDs represented, from **33 named IPC callback types plus unknown**.
+- **33 / 176** DP IDs have at least one **candidate scene/property join** through the currently recognized HMI dispatch/getter pattern.
+- **143 / 176** DP IDs remain **unknown** at the scene/property level. This is an actual coverage gap, not evidence that they have no scene effect.
+- Two observed scene roots among resolved rows: **`MV_ClusterFull`** and **`RV_ClusterFull_Additional`**.
+- The full matrix includes **36 distinct property names** among the candidate handler joins. Some independently proven properties such as `Laserlight` have previously verified per-event documentation and must be merged separately if a generic scanner misses their specific receiver pattern.
+
+The local full matrix deliberately distinguishes `candidate:constructor-owner+handler-local-getter` from `dp-write-only`. A name is not inferred merely from an IPC callback name. A bounded handler window can include nearby branches, so each new mapping should be promoted to independently verified only after checking its exact handler control-flow and wrapper initialization.
+
+**Important research correction:** the 49 main-dispatch routes are only a subset of the 176 RTE DP writes. The remaining DP IDs may be consumed through another dispatcher, a direct state reader, a computed event transform, or a path not covered by the scanner. They must not be classified as unused without an additional search.
+
+For the requested full picture, keep this inventory as the authoritative **coverage ledger**: every source event exists as a row even when its scene/property remains `unknown`. Do not claim that the project has completely reconstructed all event semantics until those 143 gaps have been resolved or explicitly shown to be non-scene events.

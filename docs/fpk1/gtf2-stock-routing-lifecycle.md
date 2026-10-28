@@ -224,3 +224,41 @@ Verifier: `tools/fpk1/research/gtf2/verify_esp_receiver_binding.py`, tested agai
 ### Additional candidate attachment call sites
 
 A broad binary-wide scan found **66** slot-`+0x30` indirect call sites with the pattern `ldr wrapper,[owner,offset]`, `mov r0,wrapper`, `ldr vtable,[wrapper]`, `ldr method,[vtable,#0x30]`, `BLX method`, and `r1` computed from the owner. This is strong evidence that owner-embedded receiver attachment is a repeated generated constructor pattern, but these 66 sites are not all independently type-verified. Do not equate them with the number of DP IDs or the 63 wrapper classes.
+
+## Resolved: the owner is a guarded lazy singleton
+
+A direct call-graph scan of the stock ARM ELF establishes the owner construction path:
+
+```asm
+2bae28  push {r4,lr}
+2bae2c  ldr r4,[pc,#0x40]    ; r4 = 0x00afb38c (guard)
+2bae30  ldr r3,[r4]
+2bae34  tst r3,#1
+2bae38  bne 0x2bae6c       ; initialized -> return existing owner
+2bae3c  mov r0,r4
+2bae40  bl 0x10e69c       ; acquire guard
+2bae44  cmp r0,#0
+2bae48  beq 0x2bae6c
+2bae4c  ldr r0,[pc,#0x24] ; r0 = 0x00b64040 (owner storage)
+2bae50  bl 0x25ef60       ; huge HMI owner constructor
+2bae54  mov r0,r4
+2bae58  bl 0x10f0e0       ; release guard
+2bae5c  ldr r0,[pc,#0x14] ; owner
+2bae60  ldr r1,[pc,#0x14] ; destructor 0x2432c8
+2bae64  ldr r2,[pc,#0x14] ; DSO handle 0xa65a90
+2bae68  bl 0x10e1d4       ; register destructor
+2bae6c  ldr r0,[pc,#4]    ; return owner 0x00b64040
+2bae70  pop {r4,pc}
+```
+
+The guard acquire/release and destructor registration have the characteristic shape of a C++ local-static singleton, but the above addresses and branches are directly observed, not merely inferred from the ABI.
+
+A full direct ARM `BL` scan found **21,527 calls to getter `0x2bae28`** and exactly **one direct call to owner constructor `0x25ef60`**, at `0x2bae50`. The same getter is called from a short initialization sequence at `0x222074` and from event-handling code (e.g. `0x129758` and ESP `0x586bf0`). The construction code is therefore centralized and **runs at most once per initialized guard state**, not once per IPC event.
+
+Combining this with the ESP constructor trace yields:
+
+**first invocation of getter** → **guard acquisition** → **construct owner `0x25ef60`** → **construct ESP wrapper and set path/property/descriptor** → **attach owner-embedded receiver via virtual slot `+0x30`** → **release guard** → **subsequent DP events retrieve the same owner and receiver**.
+
+This resolves *who creates the owner and how its construction is guarded*. It does **not** yet establish whether the `0x222070` startup-like function executes before IPC callback registration or Kanzi scene activation. Also, the owner-embedded receiver pointer is not itself proof that the Kanzi scene node has been resolved.
+
+Verifier: `tools/fpk1/research/gtf2/verify_owner_singleton.py`, executed successfully on original stock GTF2 ELF (including the direct-call counts).

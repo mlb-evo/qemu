@@ -2819,3 +2819,51 @@ python3 tools/fpk1/research/gtf2/verify_acc_odo_telltale_events.py /path/to/gtf2
 ```
 
 This brings the independently traced **IPC→DP→HMI event routes to six**: Gear_Display `0x020001f9`, Gear_Display `0x020001f7`, RPM `0x02000295`, ACC `0x02000297`, odometer `0x020002c2`, and telltale `0x0200021d`. These six routes are **examples**, not exhaustive coverage of the 176 DP writes. All three newly added routes are statically verified; no runtime rendering observation is claimed.
+
+### Expanded HMI event dispatch coverage: 24 direct RTE DP routes
+
+An additional **24 instruction-verified conditional event dispatch edges** have been recovered by scanning the original GTF2 ARM code at `0x570000–0x57ffff`. Each edge requires three linked facts: a PC-relative literal **equal to a DP ID actually written by an RTE callback**, a following `CMP` against the event ID, and an **equal-conditional branch** to a concrete HMI handler address. The scanner does not mistake DP descriptor initialization for a dispatched event.
+
+| Incoming DP ID | Incoming RTE writer call | HMI CMP | Matching handler |
+| --- | --- | --- | --- |
+| `0x02000225` | `0x6967a0` | `0x574020` | `0x584710` |
+| `0x0200010b` | `0x6966b4` | `0x5747c8` | `0x5796f0` |
+| `0x02000178` | `0x6948fc` | `0x57492c` | `0x57d410` |
+| `0x02000175` | `0x6965c0` | `0x5749dc` | `0x57d280` |
+| `0x020001ef` | `0x69541c` | `0x574ac8` | `0x5816ec` |
+| `0x020001c2` | `0x695e58` | `0x574b30` | `0x58014c` |
+| `0x020001e6` | `0x694b5c` | `0x574bbc` | `0x5812a8` |
+| `0x020001ea` | `0x694a9c` | `0x574c30` | `0x5813ec` |
+| `0x020001ec` | `0x695430` | `0x574c54` | `0x581530` |
+| `0x020001f6` | `0x6953b8` | `0x574cd0` | `0x581a64` |
+| `0x020001fd` | `0x6953f4` | `0x574cfc` | `0x582020` |
+| `0x02000200` | `0x694b84` | `0x574d20` | `0x582200` |
+| `0x02000201` | `0x694b70` | `0x574d40` | `0x582240` |
+| `0x02000216` | `0x694dc4` | `0x574da4` | `0x582ee0` |
+| `0x0200021d` | `0x695fbc` | `0x574dd0` | `0x583ff0` |
+| `0x0200021f` | `0x694e3c` | `0x574df4` | `0x5843d4` |
+| `0x02000230` | `0x695514` | `0x574ea0` | `0x58490c` |
+| `0x02000297` | `0x6955f4` | `0x575360` | `0x58644c` |
+| `0x02000295` | `0x6972ac` | `0x5753c0` | `0x5863d0` |
+| `0x020002ad` | `0x6957a8` | `0x57542c` | `0x586738` |
+| `0x020002c2` | `0x69710c` | `0x57549c` | `0x58696c` |
+| `0x020002cd` | `0x695f6c` | `0x5754bc` | `0x586bf0` |
+| `0x020002d2` | `0x695f94` | `0x5754ec` | `0x586cd0` |
+| `0x020002d3` | `0x695fd0` | `0x57550c` | `0x586d34` |
+
+This table **includes** previously documented RPM, ACC, odometer and telltale routes; it does not mean 24 new routes on top of those examples. The previously documented `Gear_Display` DP `0x020001f7` comparison is in a separate HMI dispatcher code range (`0x569xxx`), so is not counted here. Likewise `0x020001f9` uses a dedicated event adapter at `0x5fdxxx`.
+
+Three newly examined handler bodies demonstrate **different consequences**:
+
+- **`0x020001ef` (`Gear_Display`, payload byte `+0x0a`) → `0x5816ec`:** invokes owner virtual `+0x08` with selector values **31, 32, 36** on successive paths; invokes receiver virtual `+0x70`; sets bit **`0x04` in receiver byte `+0xe4`**. This is a multi-object update, distinct from the gated boolean DP `0x020001f9`.
+- **`0x020002ad` (`CarOutline_HMI`, payload byte `+0x05`) → `0x586738`:** obtains an owner-held object via `0x2bae28`, then sets **bit `0x10` in object byte `+0xe6`**, and returns to the shared event dispatcher `0x597c7c`. The next code path at `0x586754` sets bit `0x20` in that same byte for a separate event. Do not infer a specific car-outline graphic without resolving the object.
+- **`0x02000225` (`HMI_EngineID_MKB`, payload byte `+0x0c`) → `0x584710`:** obtains an object through `0x6218cc` and forwards an event with kind **2** to a virtual receiver. It then proceeds to another receiver. The exact visible effect remains unknown.
+
+**Reproduction:**
+
+```sh
+python3 tools/fpk1/research/gtf2/scan_rte_hmi_dispatch.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-rte-hmi-dispatch.csv
+```
+
+The **24** count is for the strict `0x57xxxx` dispatcher scan only; not all 176 DP writes are expected to have this exact code shape. A matching event target is not equivalent to a pixel change. Follow-up should classify each handler by whether it writes object flags, calls a virtual receiver, changes a view selection, or performs only a guard check.

@@ -264,3 +264,59 @@ gtf2::startEfsDriver()  [0x699594]
 Read the ELF program headers and dynamic entries rather than relying on section names. For the original ELF SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`, executable `PT_LOAD` begins at VA `0x100000` / file offset zero. `DT_JMPREL` uses ELF32 `Elf32_Rel` entries (8 bytes); each relocation's `r_info >> 8` is the symbol index. Resolve `st_name` via `DT_STRTAB`. For `0x10e708`, the PLT slot is `0xa655dc`, matching the `ProcessTNG::start` JUMP_SLOT.
 
 **Next:** extract only the original `libosal.so` from the validated Stage2 catalog, inspect its exported `ProcessTNG` constructor/start symbols and disassemble `start()` to establish `spawn`/PID/error semantics. Keep firmware libraries out of Git.
+
+## GTF2-owned application architecture (scope: executable only)
+
+**Scope decision:** Do not reverse-engineer third-party library internals. Treat OSAL, EAL, KD, and IPC proxy implementations as opaque calls. The research target is **GTF2's own state, handlers, data loading, view switching, and event loop**. The preceding PLT/OSAL material is historical linkage verification, not a workstream.
+
+### Internal components supported by original ELF diagnostics
+
+The original GTF2 executable (SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`) contains the following NUL-terminated diagnostics; the hex coordinates here are **file offsets**, not ELF virtual addresses. Presence of a log string establishes a code/data anchor, not a proven runtime event.
+
+| Component | GTF2-owned role / diagnostic evidence |
+| --- | --- |
+| `GssMan2HMIReplyImpl` | `activate()`, `deactivate()`, `enterColdCrank()`, `leaveColdCrank()`, `coldCrankRep()`, `switchDisplayBacklight()`, `persistentData()`, `sendPersistentData()` |
+| `handleLoadingKZBs()` | Requests `EarlyTubes`, waits a frame count, requests `ClusterFull`, reports `ClusterFull loaded`, and requests/reports `3D Car` |
+| `CHMIGTFAssetManager` | KZB merge/attach, batch completion, asynchronous `KZBListener::process`, unexpected merge events/results |
+| `ViewManager` | `handleViewSwitchCenter`, `doSwitch`, `aboutToShow`, `justHidden`, context animation |
+| `BaseViewManager` | `processEvent(DP)`, `processEvent(StateMachine)`, `processEvent(Application)`, layout and render-property update |
+| Version screen controller | Key dispatch, speed-threshold checks, popup show/hide, timer and state-machine events |
+| Screenshot controller | CAN screenshot trigger and `kdgui_2dmgr/takeScreenshot` callback path |
+
+Selected exact log anchors:
+
+| File offset | Original GTF2 diagnostic |
+| --- | --- |
+| `0x6c15ac` | `handleLoadingKZBs()` |
+| `0x6c1650` | `handleLoadingKZBs(), EarlyTubes loaded` |
+| `0x6c1677` | `handleLoadingKZBs(), ClusterFull loaded` |
+| `0x6c169f` | `handleLoadingKZBs(), 3D Car Loaded` |
+| `0x6c16c8` | `handleLoadingKZBs(), Requesting Early Tubes` |
+| `0x6c16fc` | `handleLoadingKZBs(), Waiting %i frames` |
+| `0x6c1723` | `handleLoadingKZBs(), Done waiting -> Requesting Cluster Full` |
+| `0x6c1760` | `handleLoadingKZBs(), 3D Car Requested` |
+| `0x6c3b0f` | `Delay the HMI start by %u ms.` |
+| `0x6c3b9a` | `Non-ECL Mode Enabled. Starting HMI immediately.` |
+| `0x6beb58` | `GSS_GTF_ViewManager` |
+
+**Working hypothesis, not a proven state machine:** an activation callback may select immediate/delayed HMI startup; asset loading advances through early tubes, cluster and 3D car, while event handlers drive views and data updates. String order in `.rodata` does **not** establish control-flow order; it must be checked with code cross-references and conditional branches.
+
+### Reproducible evidence extraction
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_hmi_logic.py \
+  /path/to/extracted/STAGE2.1/bin/gtf2 \
+  --output build_fpk1/research-artifacts/gtf2-hmi-anchors.json
+```
+
+This read-only source script searches a small, explicit list of diagnostic strings and records offsets, without copying firmware content into the repository. Output remains local and ignored.
+
+### Next GTF2-only code analysis
+
+1. Locate ARM code references to the eight `handleLoadingKZBs` strings, identify the owning function's entry/basic blocks and conditionals, and draw a **branch-supported** resource-loading state diagram.
+2. Locate `GssMan2HMIReplyImpl::activate/deactivate/enterColdCrank` log references and identify changes to GTF2-owned state; leave IPC proxy implementation opaque.
+3. Follow `CHMIGTFAssetManager` completion callbacks into the view manager and any Stage3 initiation; distinguish resource request, merge completion and view readiness.
+4. Map `BaseViewManager::processEvent` dispatch by source (DP/state-machine/application) and the view-switch transition functions.
+5. Only after static mapping, compare with a guest-clock trace from QEMU; record evidence separately from hypotheses.
+
+Do **not** expand this into a survey of `libosal.so`, `libeal.so`, `libKD.so` or other library internals.

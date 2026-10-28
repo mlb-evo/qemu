@@ -597,3 +597,45 @@ The popup handler `0x121548` begins with a **guard on `this+0xdfb`** at `0x12154
 | `+0xe00` | Per-object countdown set in event-500 handler, decremented during frame processing |
 
 This directly links **UI event dispatch, skin switching, per-frame processing, KZB loading and popup handling inside the GTF2 executable**, without inspecting any external library implementation.
+
+### Named GTF2 functions, skin-switch handshake and DP fanout
+
+Literal-pool resolution in the **same GTF2 ELF** adds stronger names to two previously anonymous routines:
+
+- `0x121c70` logs **`executeSkinChange`** (string VA `0x7c12ce`, referenced via literal `0x121dac`). This is the function directly invoked by event-kind 9 / event ID 500. The same function logs **`Minimum skin change time set to %dms (can not go below %dms)`** (string VA `0x7c12e0`, literal `0x121db8`). Its input-derived `+0xe00` countdown is therefore part of a minimum skin-change timing policy. **Do not assume the integer-to-countdown conversion is real-time accurate without checking the event cadence.**
+- `0x121830` logs **`switchToNewSceneGraph`** (VA `0x7c1244`, literal `0x121c44`). This function is called at `0x122dd8` on the skin-switch validation/abort path. It also contains the diagnostic **`No KSS response for skin switch`** (VA `0x7c125a`, literal `0x121c48`) and **`Skin switched`** (VA `0x7c12c0`, literal `0x121c68`). These are exact **GTF2-owned** diagnostic names, not demangled symbols.
+- At `0x12185c–0x121870`, `switchToNewSceneGraph` repeatedly calls `0x10e348` on **`this+0xe04`** until its return's low byte is nonzero; at `0x1218a4–0x1218bc` it calls `0x10e09c` on the same address and tests its result. This is an explicit **blocking/polling condition** in the scene-graph switch path; the API and precise meaning of its return values are intentionally left opaque.
+- The code then compares the selected skin ID at `this+0xdfe` with the value from `0x69e144(6)` at `0x1218f4–0x12190c`. The scene-graph operation is therefore coupled to GTF2's current skin selection, not merely to a generic resource-load notification.
+- `0x121c20` calls `0x121498` with literal `Skin switched` before the function returns. The “skin switched” diagnostic is an *outcome of this GTF2 routine*, but its emission in a VM run is not established here.
+
+The resulting named chain is:
+
+```text
+GTF2 event kind 9 / ID 500
+  -> executeSkinChange [0x121c70]
+       set +0xdfd, reset +0xdf4, configure minimum countdown +0xe00
+  -> later frame events / handleLoadingKZBs [0x122c54]
+       check please-wait view, popup, skin ID
+       -> switchToNewSceneGraph [0x121830] on the validated/abort transition
+            poll this+0xe04; check skin selection; log result
+```
+
+**Correction to earlier phrasing:** `0x121830` is not just a generic “abort transition”. It has a named scene-graph switch role and a KSS-response diagnostic. The conditions for reaching its “Skin switched” log must be read from the function's later branches; the presence of the string is not evidence of success.
+
+#### Separate event-kind 2: DP-ID map propagation
+
+At `0x123bbc`, the dispatcher distinguishes **event kind 2** from the kind-9 application events and the kind-8 control events. It logs/uses **`DisplayManager::dp-ID-Map`** (string VA `0x7c18da`, literal `0x123e4c`) and then iterates **exactly 180 entries**:
+
+```text
+for index = 0..179:
+    if this[index + 0xd40] != 0:
+        call 0x11c8ec(
+            this + (index+32)*16,
+            ... event-associated data ...)
+```
+
+This follows directly from the `0x123be0–0x123c0c` ARM loop: `r6` starts at zero, `ldrb [this+r6+0xd40]` tests the per-slot flag, `add r1,r6,#32` then `add r1,this,r1,lsl #4` calculates the 16-byte slot, and `cmp r6,#180` terminates the loop. **The exact semantics of `0x11c8ec` are unknown**, but the GTF2-owned fanout and data structure layout are directly supported.
+
+After this loop, event-kind 2 compares the event payload word against several 32-bit IDs (including `0x02000114`, `0x020000be`, `0x020003f0`) and conditionally calls internal view/display routines. It may also route the payload to the popup handler `0x121548` through `0x123cf0`. These values are **not** the same namespace as kind-9 IDs 500/284; do not merge their enum labels.
+
+This reveals **three independent event categories inside one GTF2 dispatcher**: kind 9 (application/event-ID dispatch and frame gate), kind 8 (control events), and kind 2 (DP map propagation). The event-kind labels are descriptive and must be validated against original type information.

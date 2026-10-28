@@ -235,3 +235,32 @@ Verified string literals in the **original ELF** (all virtual addresses):
 This establishes a *direct code-to-string reference* to the Stage3 launcher, an in-function repeated-call check, and an object-oriented process-start path. It does **not** yet identify the exact API behind `0x10e708` or prove a successful spawn in any particular VM run. The global at `0xdb0f38` is a guard **candidate**; its exact semantics require tracing writes.
 
 A stock `llvm-objdump -d` on the original stripped QNX ELF prints no instructions for this range because it contains only `QNX_info` and `.shstrtab` section headers. Reproduction must disassemble the executable `PT_LOAD` using virtual address `0x100000`, or add a synthetic section header to a **temporary copy** without changing the load segment bytes. Never commit that copy.
+
+### Resolved dynamic linkage: `ProcessTNG::start()` (2026-10-28)
+
+This section **resolves** the previously unknown `0x10e708` callee and corrects the characterization of `0x10e7bc`. The original stripped ELF has no conventional `.text` section header, but executable `PT_LOAD` contains a standard ARM PLT. The `DT_JMPREL=0x10c52c`, `DT_PLTRELSZ=0x1248`, `DT_SYMTAB=0x10150c`, and `DT_STRTAB=0x1044ec` dynamic entries permit independent symbol resolution:
+
+| PLT entry | GOT slot | JUMP_SLOT symbol (ELF mangled) | Meaning |
+| --- | --- | --- | --- |
+| `0x10e708` | `0xa655dc` | `_ZN4osal10ProcessTNG5startEv` | **`osal::ProcessTNG::start()`** |
+| `0x10e7bc` | `0xa65618` | `_ZN3ipl12basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1EPKcRKS4_` | **`ipl::basic_string<char,...>::basic_string(char const*, allocator const&)`** |
+
+For both PLT entries, the ARM instruction sequence constructs the GOT address using PC-relative `add` and `ldr pc, [r12, #imm]!`; the GOT slots match relocation records **330** and **345**, with symbol indices **437** and **455** respectively. This is stronger evidence than proximity to strings or inferred C++ names.
+
+The actual Stage3 spawn chain is therefore:
+
+```text
+gtf2::startEfsDriver()  [0x699594]
+  -> construct IPL string from "/bin/start_stage3.sh" [0x10e7bc]
+  -> construct/configure OSAL ProcessTNG object [exact constructors not fully resolved]
+  -> osal::ProcessTNG::start() [PLT 0x10e708]
+  -> libosal.so implementation [not disassembled here]
+```
+
+`ProcessTNG::start()` **does not itself prove successful spawn**: return handling, PID assignment, OSAL implementation and the global duplicate-call guards require separate analysis. The earlier assertion that `0x10e7bc` was an unidentified helper is superseded: it is specifically an IPL string constructor.
+
+#### Reproduction notes
+
+Read the ELF program headers and dynamic entries rather than relying on section names. For the original ELF SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`, executable `PT_LOAD` begins at VA `0x100000` / file offset zero. `DT_JMPREL` uses ELF32 `Elf32_Rel` entries (8 bytes); each relocation's `r_info >> 8` is the symbol index. Resolve `st_name` via `DT_STRTAB`. For `0x10e708`, the PLT slot is `0xa655dc`, matching the `ProcessTNG::start` JUMP_SLOT.
+
+**Next:** extract only the original `libosal.so` from the validated Stage2 catalog, inspect its exported `ProcessTNG` constructor/start symbols and disassemble `start()` to establish `spawn`/PID/error semantics. Keep firmware libraries out of Git.

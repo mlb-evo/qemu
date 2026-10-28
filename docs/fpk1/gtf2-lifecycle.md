@@ -3182,3 +3182,36 @@ python3 tools/fpk1/research/gtf2/verify_fernlicht_event_arguments.py /path/to/gt
 ```
 
 **Narrowed conclusion:** the two IPC/DP events do not implement separate hardcoded high-beam drawing logic at their HMI dispatch sites. They **both delegate to the same pair of scene-bound receiver objects**, using the same calling convention and kind-2 event. To determine precisely which payload bit switches on/off or blinks the lamp, trace the origin of `r5/r6` and devirtualize the receiver's slot-0 implementation.
+
+### Resolved exact scene property names for shared Fernlicht events
+
+**Target milestone reached for two RTE DP event routes.** The same constructor that binds the two wrapper objects to scene paths also assigns their **exact property names** through the common helper `0x6343f0`. The helper stores the string in `wrapper+0x78`; the previously recovered path setter `0x6343d8` stores the node path in `wrapper+0x8c`.
+
+| IPC callback | DP ID | Scene node path | Exact property name |
+| --- | --- | --- | --- |
+| `ActTest_CommonSoftLEDs` | `0x020001e6` | `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht` | **`Fernlicht`** |
+| `ActTest_CommonSoftLEDs` | `0x020001e6` | `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht_BIG` | **`Fernlicht_BIG`** |
+| `TelltaleHMI_Display` | `0x020002d2` | `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht` | **`Fernlicht`** |
+| `TelltaleHMI_Display` | `0x020002d2` | `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht_BIG` | **`Fernlicht_BIG`** |
+
+Evidence for `Fernlicht`:
+
+- Node path pointer literal at `0x5beed4` → string `0x860d54`, used by call `0x5bf6ac → 0x6343d8`.
+- Property name pointer literal at `0x5beed8` → exact string **`Fernlicht`** at `0x860d7b`, used by call `0x5bf6d0 → 0x6343f0`.
+- Owner field `+0x1f5d0` used by both event handlers to reach this wrapper.
+
+Evidence for `Fernlicht_BIG`:
+
+- Node path pointer literal at `0x5bef14` → string `0x860dbb`, used by call `0x5bf864 → 0x6343d8`.
+- Property name pointer literal at `0x5bef18` → exact string **`Fernlicht_BIG`** at `0x860de2`, used by call `0x5bf88c → 0x6343f0`.
+- Owner field `+0x1fb00` used by both event handlers to reach this wrapper.
+
+The setter `0x6343f0` computes `r0=object+0x78` before tail-calling string assignment. The matching constructor uses `0x6343d8` to set the path at `+0x8c`. **This is a code-proven event-to-scene-property-name mapping**, not a claim about how the scene renders the property or what values mean.
+
+Reproduce:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_fernlicht_properties.py /path/to/gtf2
+```
+
+Further reverse engineering should stop at this boundary for each event: **IPC field → DP ID → HMI handler → named scene node → exact property name**. Avoid spending time on renderer internals unless the property identity is ambiguous.

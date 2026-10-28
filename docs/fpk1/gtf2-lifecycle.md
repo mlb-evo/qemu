@@ -3337,3 +3337,40 @@ The direct DP handler `0x586bf0` uses owner offset `0x453b8` via literal slot `0
 ```sh
 python3 tools/fpk1/research/gtf2/verify_esp_scene_property.py /path/to/gtf2
 ```
+
+### Automated scene wrapper/property join and coverage audit
+
+A new **whole-binary constructor-to-HMI join** removes the need to manually reverse engineer every property one at a time. `join_scene_wrapper_properties.py` scans for:
+
+1. `BL 0x6343d8`: path-string setter (`wrapper+0x8c`).
+2. Nearby `BL 0x6343f0`: property-name setter (`wrapper+0x78`).
+3. Owner-relative wrapper pointer store through `STR r0,[r4,rN]` and a PC-relative owner offset literal.
+4. HMI code `LDR r3,=owner_offset; LDR r0,[r4,r3]; BL 0x6218cc`, proving a use of the same wrapper.
+5. Conservative string validation: the property name must equal the last component of the node path. Nonmatching names are excluded rather than guessed.
+
+A first local scan against the original GTF2 ELF found **47 unique owner-relative scene wrappers referenced by this HMI getter pattern**, across **241 HMI use sites** (including many unrelated to the 49 RTE event routes). The broad constructor pass produced 1,278 candidate owner offsets, but these are **not all validated RTE event bindings**. The 47-object join is a conservative subset and can still include false-positive constructor proximity matches; individual property links need independent confirmation if the property name differs from the path component.
+
+Intersecting those HMI uses with the 49 known RTE routes, using conservative handler windows, yields **12 distinct DP routes** with at least one matched scene property. Examples beyond the earlier manually proven properties:
+
+| IPC callback | DP ID | Scene | Node within scene | Property | HMI use |
+| --- | --- | --- | --- | --- | --- |
+| `ActTest_SoftLEDs` | `0x020001ea` | `MV_ClusterFull` | `StatusBar.Motorlauflampe` | `Motorlauflampe` | `0x5813ec` |
+| `HVK_01` | `0x020001fe` | `MV_ClusterFull` | `StatusBar.ChargeIndicator` | `ChargeIndicator` | `0x5820e8` |
+| `HVK_01` | `0x020001fe` | `MV_ClusterFull` | `StatusBar.EVMode` | `EVMode` | `0x582114` |
+| `HVK_01` | `0x020001fe` | `MV_ClusterFull` | `StatusBar.Rekuperation` | `Rekuperation` | `0x582140` |
+| `ActTest_CommonSoftLEDs` | `0x02000200` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht_AUTO` | `Fernlicht_AUTO` | `0x582200` |
+| `ActTest_CommonSoftLEDs` | `0x02000201` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht_BIG` | `Fernlicht_BIG` | `0x582274` |
+| `TelltaleHMI_Display` | `0x0200021d` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht` | `Fernlicht` | `0x583ff0` |
+
+These are **static owner-offset/constructor joins**, not proof that the named property is changed for every possible payload value. The `HVK_01` DP fans out to several hybrid/EV status objects, showing why a one-DP-one-property table is inadequate.
+
+The local audit also generated a **176-write inventory** with scene/property columns: 180 CSV data rows after expanding one-to-many joins, **12 distinct DP IDs with at least one automatically resolved scene property**. The other IDs remain `unknown` or may use other dispatch mechanisms, different getter patterns, or non-Kanzi state updates.
+
+Reproduce the verified wrapper-use inventory:
+
+```sh
+python3 tools/fpk1/research/gtf2/join_scene_wrapper_properties.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-scene-wrapper-uses.csv
+```
+
+**Outstanding completeness limits:** this scanner handles the common `[r4,r3]` getter pattern only. It does not recover every virtual call, nested/indirect property binding, scene resource, or non-RTE IPC event. Do not claim full event-to-scene coverage based on the 47 wrappers or 12 DP routes. Continue by extending handler control-flow recovery and alternate wrapper-access patterns, retaining `unknown` until each link is proven.

@@ -2525,3 +2525,56 @@ For example, the scanner groups the **12 Gear_Display** direct writes under func
 **Validation:** executed the direct ARM scan against the original 10,180,269-byte GTF2 ELF locally and reproduced **176** matches, **176 distinct DP-ID values**, distributed across **45** candidate functions. Function grouping uses a heuristic prologue scan and must be cross-checked against service vtables before treating every candidate boundary as a named interface method.
 
 The follow-on task is the `IHmiKss` service method index → callback address mapping; the existing callback diagnostics are not sufficient to assign all 45 names with certainty.
+
+### Resolved IPC callback names from their own machine-code references
+
+The previously unnamed 45 direct-DP-write callback groups can now be associated with source-level **`IHmiKss` callback names** using each function's own PC-relative reference to the literal diagnostic `<method>(): batchLock() failed`. This avoids guessing names by proximity or callback order.
+
+**Verified against the original ELF:** **33 of 45** direct-write groups have an unambiguous diagnostic-derived name; **12 remain unidentified** because their function bodies do not reference that diagnostic form. This is stronger than string inventory alone: it associates the *specific ARM callback address* with the *named method* and with its exact DP writes.
+
+| Function address | `IHmiKss` callback | Direct DP writes |
+| --- | --- | ---: |
+| `0x694728` | `BMS_10` | 1 |
+| `0x694850` | `TelltaleAALA_Display` | 6 |
+| `0x69495c` | `Systeminfo01` | 2 |
+| `0x6949f0` | `ActTest_SoftLEDs` | 8 |
+| `0x694b14` | `ActTest_CommonSoftLEDs` | 9 |
+| `0x694c50` | `HVK_01` | 2 |
+| `0x694d90` | `TelltaleHMI_Blink` | 7 |
+| `0x694e9c` | `NVEM_02` | 2 |
+| `0x694f30` | `KombiDef` | 8 |
+| `0x695054` | `FanControl` | 2 |
+| `0x6950e8` | `Config_Antrieb` | 2 |
+| `0x69517c` | `DS_VCM_DisplayArea` | 3 |
+| `0x69526c` | `Gear_Display02` | 5 |
+| `0x695348` | `Gear_Display` | 12 |
+| `0x6954cc` | `Motor_Hybrid_06` | 3 |
+| `0x6955c0` | `ACC_HMI_Display` | 4 |
+| `0x695724` | `CarOutline_HMI` | 9 |
+| `0x6958d4` | `ACC_02` | 3 |
+| `0x6959b8` | `ACC_12` | 2 |
+| `0x695a60` | `VZE_01` | 4 |
+| `0x695bc4` | `HMI_C_NightVision_Display` | 6 |
+| `0x695cf4` | `Config_Driverassist_Media` | 14 |
+| `0x695ee8` | `TelltaleHMI_Display` | 10 |
+| `0x696140` | `ZPM_HMI_Info` | 2 |
+| `0x696264` | `Config_Coding` | 13 |
+| `0x6965f4` | `Config_View_Specifica` | 8 |
+| `0x69676c` | `HMI_EngineID_MKB` | 1 |
+| `0x696a90` | `HMI_Motor_26` | 2 |
+| `0x696cfc` | `Config_Installation_Coding` | 4 |
+| `0x696fc0` | `TSK_07` | 4 |
+| `0x6970d8` | `ODO_HMI_Distance` | 2 |
+| `0x697264` | `TCH_HMI_EngineRPM` | 2 |
+| `0x6976d8` | `ECT_HMI_Information` | 2 |
+
+The 12 currently unidentified direct-write groups start at `0x6942f0`, `0x694448`, `0x695898`, `0x696540`, `0x6965a8`, `0x696958`, `0x6969e8`, `0x696a20`, `0x696a58`, `0x696b6c`, `0x696c00`, `0x696f4c`. Some can be tiny helper routines or alternate callback implementations; **do not label them by adjacent method** without a callgraph or vtable reference.
+
+The new `name_rte_dp_callbacks.py` tool reproduces the **callback name → function address → DP ID → payload offset/width** mapping directly from ELF bytes:
+
+```sh
+python3 tools/fpk1/research/gtf2/name_rte_dp_callbacks.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-ipc-named-dp-fields.csv
+```
+
+This closes the callback-name attribution gap for **33 groups**, but not the ASI method-number/serialization gap. The latter requires vtable/registration analysis or runtime IPC traces.

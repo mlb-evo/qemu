@@ -1596,3 +1596,65 @@ This is the first **end-to-end mapping from GTF2's active ViewManager provider t
 python3 tools/fpk1/research/gtf2/map_view_names.py /path/to/gtf2
 python3 tools/fpk1/research/gtf2/inspect_lazy_object_factory.py /path/to/gtf2
 ```
+
+## Remaining 30 factory IDs resolved to CHMI ViewData constructor diagnostics
+
+The previous conservative `SV_*` string scanner resolved **62/92** supported view IDs. A second pass over the **original GTF2 ELF** identified direct pointers to `CHMI*ViewData::construct` diagnostic strings in the corresponding **30** lazy initializer functions. This establishes a firmware-embedded **class/construction diagnostic** for every previously unnamed ID, while preserving the distinction between an exact `SV_*` visual screen name and a C++ `ViewData` constructor name.
+
+| Factory ID | Direct constructor diagnostic | Initializer | Literal pointer site |
+| --- | --- | --- | --- |
+| 68 | `CHMIPvOpensourcelicensesViewData::construct` | `0x43edc8` | `0x43f760` |
+| 69 | `CHMIPvOpensourcelicensesLoadingViewData::construct` | `0x40f528` | `0x40fd18` |
+| 70 | `CHMIMvSlideshowscreenViewData::construct` | `0x461150` | `0x4613d4` |
+| 101 | `CHMIPvVersionsViewData::construct` | `0x44ed60` | `0x44f4d8` |
+| 147 | `CHMIPvIncomingcallViewData::construct` | `0x543288` | `0x543a48` |
+| 148 | `CHMIPvPpPhoneCallactionresultViewData::construct` | `0x542120` | `0x5428d0` |
+| 149 | `CHMIPvPhoneNotificationViewData::construct` | `0x5429b8` | `0x5431c8` |
+| 154 | `CHMIPvPartialpopupbapViewData::construct` | `0x557ba8` | `0x558350` |
+| 155 | `CHMIPvWarnpopupCaroutlineViewData::construct` | `0x5578a0` | `0x557b54` |
+| 156 | `CHMIPvWarnpopupDsssViewData::construct` | `0x5569b8` | `0x556dc8` |
+| 157 | `CHMIPvWarnpopupEspsupersportViewData::construct` | `0x555da8` | `0x5565dc` |
+| 158 | `CHMIPvWarnpopupFuelViewData::construct` | `0x554a38` | `0x555168` |
+| 159 | `CHMIPvWarnpopupLogewaViewData::construct` | `0x5544a8` | `0x5549bc` |
+| 160 | `CHMIPvWarnpopupOilViewData::construct` | `0x5536a0` | `0x554128` |
+| 161 | `CHMIPvWarnpopupPhevViewData::construct` | `0x557138` | `0x55741c` |
+| 162 | `CHMIPvWarnpopupPlaViewData::construct` | `0x552c78` | `0x553670` |
+| 163 | `CHMIPvWarnpopupPpBcmeViewData::construct` | `0x551ea8` | `0x55275c` |
+| 164 | `CHMIPvWarnpopupPpEtronreadyViewData::construct` | `0x556e40` | `0x5570e8` |
+| 165 | `CHMIPvWarnpopupPpStdViewData::construct` | `0x550c08` | `0x5513ac` |
+| 166 | `CHMIPvWarnpopupPpStdiconViewData::construct` | `0x551490` | `0x551e80` |
+| 167 | `CHMIPvWarnpopupPerformancestellringViewData::construct` | `0x557470` | `0x557844` |
+| 168 | `CHMIPvWarnpopupStdViewData::construct` | `0x54ef00` | `0x54f708` |
+| 169 | `CHMIPvWarnpopupStdiconViewData::construct` | `0x54f7e8` | `0x550010` |
+| 170 | `CHMIPvWarnpopupStdiconbigViewData::construct` | `0x550260` | `0x550bc4` |
+| 171 | `CHMIPvWarnpopupVerdeckViewData::construct` | `0x54eb20` | `0x54ee9c` |
+| 173 | `CHMIPvAccPopupViewData::construct` | `0x54a95c` | `0x54aa18` |
+| 174 | `CHMIMvClusterblackscreenViewData::construct` | `0x5d16a8` | `0x5d18ac` |
+| 176 | `CHMIMvClusterfullViewData::construct` | `0x59f678` | `0x5a0048` |
+| 177 | `CHMIMvClusterearlytubesViewData::construct` | `0x5cc5c8` | `0x5cd5d8` |
+| 178 | `CHMIMvEarlywelcomeViewData::construct` | `0x59daa0` | `0x59eaa8` |
+
+**Important limitation:** the scanner reads the **first `CHMI*ViewData::construct` pointer within 0x3000 bytes** of the lazy initializer, and some constructors are longer than others. Each table entry is backed by an exact literal site, but the literal-to-code reference and function boundary should still be verified when making a stronger claim about object creation. In particular, these are not necessarily the exact `SV_*` resource identifiers, and the strings alone do not prove the object's final visual appearance.
+
+### Key architectural result for FPK1 startup
+
+IDs **174, 176, 177, 178** are the firmware's **cluster startup/full/early** ViewData classes:
+
+```text
+174 -> CHMIMvClusterblackscreenViewData
+176 -> CHMIMvClusterfullViewData
+177 -> CHMIMvClusterearlytubesViewData
+178 -> CHMIMvEarlywelcomeViewData
+```
+
+This is a concrete link between the **named view factory** and the earlier GTF2 **EarlyTubes / ClusterFull / startup resource** analysis. The exact transition sequence among these IDs is **not** established by their names alone; next inspect callers that request these IDs and their event paths.
+
+### Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/map_view_construct_diagnostics.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/map_view_names.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x543288 --stop 0x5433b0
+```
+
+**Coverage statement:** 62 supported IDs have `SV_*` names via the shallow initializer scan, and the other 30 have `CHMI*ViewData::construct` diagnostics. Hence **92/92 factory-supported IDs have a firmware-derived identifier**, but **not** 92 confirmed `SV_*` names, 92 proven visual screen layouts, or 92 mapped DP event handlers.

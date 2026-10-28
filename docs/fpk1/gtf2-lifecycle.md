@@ -479,3 +479,40 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py \
 This reproduces all the address-based claims above without requiring `capstone` or reverse-engineering external libraries.
 
 **Next investigation target (GTF2 only):** track the event-ID 284 producer and the `+0x1ec` frame gate, trace `0x121548` popup-hide handling and `0x121830` skin-switch transition, and find the initialization/reset of `+0xdf4..+0xdfd`. These questions connect the loader to the UI lifecycle more directly than any OSAL implementation.
+
+### GTF2 object initialization and skin-switch reset (additional direct evidence)
+
+A full executable-segment scan for ARM `STRB` immediate-offset stores to `[r4,#0xdf4..0xdfd]` found a **contiguous initialization block** in the GTF2-owned function beginning near `0x122920`:
+
+| ARM VA | Initialization |
+| --- | --- |
+| `0x122980` | `this+0x1ec = 0` (frame-event gate) |
+| `0x1229b0` | `this+0xdf4 = 0` |
+| `0x1229c8–0x1229f4` | `this+0xdf5..0xdfd = 0`, including KZB request/handled flags, render-loop flag and skin-switch flags |
+| `0x1229f8` | `this+0xe00 = 0` (per-object countdown) |
+| `0x1229fc` | `this+0xe08 = 0xffffffff` (sentinel; meaning TBD) |
+| `0x122a00` | `this+0xe0c = 0` |
+
+This establishes that the loader flags are **instance state initialized together**, not independent process globals. The nearby code initializes many other object members; the constructor's class name and ownership hierarchy remain to be resolved.
+
+Another GTF2-owned routine at `0x121d80–0x121da4` explicitly **re-arms** the loading path:
+
+- `0x121d88`: `this+0xdf4 = 0`, clearing the handler's terminal/abort gate.
+- `0x121d90–0x121d9c`: transforms a signed integer input using `(x + 15) / 16` for nonnegative `x` (arithmetic right shift by 4), then writes the result to `this+0xe00` at `0x121d9c`.
+- This shows the countdown is **computed** from an input parameter rather than being an arbitrary fixed literal. The input's unit and the caller remain unproven; do not label it “milliseconds” or “frames” without checking callers. For negative values the ARM adjustment differs, implementing division truncation semantics.
+
+A separate internal routine at `0x121dbc` compares the active skin selection to an argument and clears `this+0xdfc` when equal (`0x121df8–0x121e00`), while its other path updates a skin ID and may initiate additional work. This provides an actual write site for skin-switch state outside `handleLoadingKZBs`.
+
+The contiguous initializer, frame dispatcher and re-arm routine now form a concrete **GTF2-owned lifecycle skeleton**:
+
+```text
+instance initialization (0x122920...)
+  -> frame event ID 284 sets +0x1ec
+  -> dispatcher calls handleLoadingKZBs()
+  -> staged requests + handled flags +0xdf5..+0xdf9
+  -> 3D handled -> +0xdf4 = 1 (handler stops)
+  -> separate re-arm routine clears +0xdf4 and sets +0xe00
+  -> subsequent frame events can run loader again
+```
+
+This is a **possible control-flow cycle**, not proof that the re-arm routine is invoked after every completion. The next step is to resolve its callsites and the skin-switch entry points, then compare their state writes with the frame-event dispatcher.

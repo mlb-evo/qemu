@@ -1862,3 +1862,43 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a94f4 --stop 0x6a96d0
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a8bc --stop 0x11a9e0
 ```
+
+## Derived ViewManager event preprocessor: startup-relevant state changes before base dispatch
+
+The derived vtable `0x7bfaf0` supplies **`+0x2c -> 0x11a8bc`**, and this routine has now been disassembled end-to-end. It is the **derived event preprocessor**, not merely another independent view-switch callback. At **`0x11ac34–0x11ac40`** it explicitly delegates to **base event handler `0x6a96d0`**, which performs the two virtual `+0x50` switch evaluations documented above. Therefore the actual application-owned pipeline is:
+
+```text
+derived ViewManager event +0x2c (0x11a8bc)
+  -> handle mode-specific events and update ViewManager state
+  -> base event handler 0x6a96d0
+       -> virtual +0x50 (derived 0x11a250)
+       -> current view virtual +0x4c, if applicable
+       -> optional queued-event processing
+       -> virtual +0x50 again
+```
+
+**Branch constraint:** this delegation occurs on the ordinary path. The derived preprocessor has at least one early-return path at **`0x11a9fc–0x11aa00`**, so not every recognized event necessarily reaches the base handler.
+
+### Derived event gates
+
+- At **`0x11a8f0–0x11a8f8`**, the preprocessor checks **`this+0x25`**. If zero, it jumps directly to base delegation. The specialized handling below is therefore conditional on this flag.
+- For **kind 9**, it calls GTF2 `0x6aa348` to validate the event record before reading **`[event+4]`** as an ID (`0x11a91c–0x11a930`). Recognized event IDs include **22, 23, 40, 41, 42, 43, 344, 426, 429, 430, 434, 547, 548**. Their symbolic names are not established from these numeric comparisons alone.
+- **Event 547** (literal `0x223`) sets **`this+0x88=1`** at **`0x11aab8–0x11aabc`**; **event 548** clears **`this+0x88=0`** at **`0x11aa94–0x11aaa0`**. This flag is the previously observed **needle-sweep / switch-suppression gate** checked at the beginning of derived `handleViewSwitch` (`0x11a2b8–0x11a324`). These events directly control whether a view transition may be deferred.
+- **Events 40 and 41** call **`0x12b0d8`** with mode argument **1** and **0**, respectively (`0x11aa68–0x11aa74`, `0x11aa3c–0x11aa48`). The callee is GTF2-owned; its precise mode name remains to be proven.
+- **Events 22, 23, 42, 43, 426, 429, 430** route through **`0x12a0e0`** or **`0x12b0d8`**, using boolean mode arguments; do not interpret these as direct numeric view IDs.
+- For **kind 2**, only a specific ID in **`[event+4]`** enters the specialized branch (`0x11aae4–0x11aaf0`). It calls **`0x14c990`** to derive a boolean from the event, then manages **`this+0x6c`** and calls GTF2 `0x12a348` / `0x12ae14` (`0x11ab14–0x11abe4`). This is a concrete **DP-driven state transition** before the base view handler.
+- For **kind 8 / subtype 16** (`[event+0xc]==16`), it invokes **`0x12b2f8`** (`0x11ac04–0x11ac30`) before base delegation.
+
+### Derived view selection, verified boundary
+
+The derived manager's virtual **`+0x58 -> 0x11871c`** checks `this+0x25` and `this+0x26`. If either is set, it writes **the current `this+0x1c` ID** to the output pointer and calls provider lookup **`0x6a9e9c`** with that ID (`0x11873c–0x118748`). Otherwise it tail-calls base selector **`0x6a8d5c`**. Thus **`+0x25/+0x26` gate which source of the view ID is used**; they are not themselves numeric view IDs.
+
+**Emulation consequence:** events **547/548** and **kind 8 subtype 16** can change transition behavior even without a new explicit screen ID in the same event. Startup sequencing must model these state updates before evaluating the view switch. The named cluster startup IDs **174/176/177/178** have **not** been observed as constants in this derived event preprocessor, so do not infer a hardcoded cluster screen order here.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a8bc --stop 0x11ac4c
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11871c --stop 0x118750
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a250 --stop 0x11a324
+```

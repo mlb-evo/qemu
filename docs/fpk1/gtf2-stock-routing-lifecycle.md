@@ -541,3 +541,33 @@ At `0x141e4c–0x141e54`, the consumer calls `0x1476f0` to test an indexed batch
 To locate real IPC registration, trace the `IHmiKss` interface descriptor `0xa7e838` forward through its owner field, and identify the transport subscribe/connect call independently. To establish Kanzi readiness, follow texture batch completion and scene activation separately. The three virtual targets above cannot be assigned exact concrete classes without resolving their runtime vtable pointers.
 
 Verifier: `tools/fpk1/research/gtf2/verify_waiting_batch_semantics.py`. Tested locally on stock GTF2 ELF: 10 literal strings, 3 virtual call sequences, 5 logging calls, and startup-to-consumer edge passed.
+
+## KZB startup handoff refined: configuration setter, not scene loader
+
+Following the `DisplaySupervisor.kzb` startup handoff through the concrete helper implementations resolves what is done at this point:
+
+```asm
+114a00  ldr r1,[pc,#0x2e0] ; "DisplaySupervisor.kzb"
+114a04  bl 0x141fd8       ; C-string -> C++ string wrapper
+141ff4  bl 0x10e7bc      ; construct temporary C++ string
+142004  bl 0x141fbc      ; apply string to configuration object
+141fc4  add r0,r0,#4     ; destination object+4
+141fc8  bl 0x10f26c      ; copy/assign string
+141fcc  mov r3,#0
+141fd0  strb r3,[r4]     ; clear object+0 byte
+```
+
+The optional follow-up path `0x114a44 → 0x142cec` also builds internal data and writes into an object substructure at `+0x54`:
+
+```asm
+142d0c  bl 0x142934
+142d1c  bl 0x142c04
+142d24  add r0,r6,#0x54
+142d2c  bl 0x142b30
+142d40  mov r3,#0
+142d44  strb r3,[r6]     ; clear object+0 state byte
+```
+
+**Correction:** the direct calls `0x141fd8` and `0x142cec` do **not** demonstrate opening `DisplaySupervisor.kzb` or activating a Kanzi scene. They configure a resource-bearing object and clear its state byte. A later consumer of the configured filename must be identified to prove actual resource loading. The precise semantic name of the state byte is not recovered.
+
+Verifier `tools/fpk1/research/gtf2/verify_kzb_config_not_load.py` was executed on original stock GTF2 ELF and checks eight call edges, seven instruction words, and the KZB literal. This leaves `IHmiKss` subscription timing independent and unresolved.

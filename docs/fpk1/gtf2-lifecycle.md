@@ -2440,3 +2440,51 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 ```
 
 For a KSS peer or input simulator, this establishes the application-side **keycode/eventcode → HMI event ID** mapping, while the exact KSS-to-`gss_ipc` RTE wire record remains a separate transport question.
+
+### RTE callback → exact DP-ID mapping: first byte-level examples
+
+Disassembly now ties named `IHmiKss` callbacks to **concrete data-pool IDs and payload offsets**, not just callback strings. The ARM routines first obtain a DP batch lock (`0x130b4c`), call `0x131390` with each **DP ID in r1** and **payload value in r2**, then release the batch (`0x1309ac`). These are GTF2-owned callback instructions; the data-pool library internals need not be reversed.
+
+**`TCH_HMI_EngineRPM` at `0x697264`:**
+
+| Incoming payload | Width | GTF2 DP ID | Evidence |
+| --- | --- | --- | --- |
+| `payload+0x00` | little-endian `uint16_t` | **`0x02000293`** | `0x697290–0x697298` |
+| `payload+0x02` | little-endian `uint16_t` | **`0x02000295`** | `0x6972a4–0x6972ac` |
+
+Both writes are conditional on successfully acquiring a **two-item batch**. A failed lock takes a diagnostic path and does not execute these two `0x131390` calls. Following the batch, the callback calls additional GTF2 functions `0x151558`, `0x14ebf8` and `0x1de81c`; their side effects are not yet classified.
+
+**`Gear_Display` at `0x69534c`:** it obtains a **12-item batch** and maps **11 byte offsets** from the incoming payload to exact DP IDs:
+
+| Incoming byte offset | DP ID | Incoming byte offset | DP ID |
+| ---: | --- | ---: | --- |
+| `+0x00` | `0x020001f7` | `+0x01` | `0x020001f5` |
+| `+0x02` | `0x020001fc` | `+0x03` | `0x020001f6` |
+| `+0x04` | `0x020001fa` | `+0x05` | `0x020001f8` |
+| `+0x06` | `0x020001fd` | `+0x07` | `0x020001fb` |
+| `+0x0a` | `0x020001ef` | `+0x09` | `0x020001ec` |
+| `+0x08` | `0x020001ee` | | |
+
+The **12th batch item** is a batch-management detail, not evidence of a 12th `uint8_t` field. The callback ends by releasing the batch via `0x1309ac`. The byte offsets are not in ascending order in the compiled code (`+0x0a` precedes `+0x09` and `+0x08`).
+
+These two callbacks demonstrate a reproducible path:
+
+```text
+KSS CAN/RTE record
+  -> gss_ipc local IHmiKss service
+  -> GTF2 HmiCommKssReplyImpl callback
+  -> payload field read (u8/u16)
+  -> DP ID passed to 0x131390
+  -> DP change events (kind 2) and subscribed view handlers
+  -> ViewManager event/selection logic where applicable
+```
+
+The last two arrows represent the **previously recovered downstream DP event mechanism**, not proof that either gear or RPM update necessarily changes the visible screen. This is the correct boundary for interpreting “which IPC signal causes which reaction.”
+
+To reproduce exact numeric fields (the script validates each literal-load instruction and each payload-load instruction):
+
+```sh
+python3 tools/fpk1/research/gtf2/decode_rte_dp_fields.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69534c --stop 0x6954cc
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x697264 --stop 0x697310
+```

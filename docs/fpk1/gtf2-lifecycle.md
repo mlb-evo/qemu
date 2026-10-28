@@ -3061,3 +3061,38 @@ python3 tools/fpk1/research/gtf2/trace_scene_node_xrefs.py /path/to/gtf2 --csv \
 ```
 
 The script verifies that the named null-terminated string exists, that the literal slot holds its exact VA, and that an ARM PC-relative LDR references that slot. It reports **six exact ARM references across four node names**. This is **stronger than a text match but weaker than a property-binding proof**.
+
+### Scene node path configuration: resolved helper 0x6343d8
+
+The three GTF2 scene-name use sites previously documented at `0x5c932c`, `0x2b6588`, and `0x557a28` all pass the string to a **common GTF2-owned helper `0x6343d8`**, rather than directly resolving a scene node. Instruction-level inspection recovers its complete body:
+
+```asm
+6343d8  mov  r3,r0
+6343dc  add  r0,r0,#0x8c
+6343e0  ldrb r2,[r3,#6]
+6343e4  orr  r2,r2,#2
+6343e8  strb r2,[r3,#6]
+6343ec  b    0x10da48
+```
+
+**Exact effect:** given a GTF2 object pointer `r0` and a string object `r1`, the helper sets **bit `0x02` of `object[0x06]`** and tail-calls the imported string-assignment thunk `0x10da48` with destination **`object+0x8c`**. It is therefore a **scene-path/string metadata setter**; it is **not** itself a scene node lookup, scene activation, or DP-to-property binding.
+
+Confirmed caller pairs:
+
+| Scene path | String literal slot | GTF2 path-setter call |
+| --- | --- | --- |
+| `MV_ClusterFull.TubeContainer.CenterTube.GearIndicator` | `0x5c8a0c` | `0x5c933c` |
+| same GearIndicator path, second initialization site | `0x2b627c` | `0x2b65a8` |
+| `PV_WarnPopup_CarOutline.GlassPlate.CarOutline` | `0x557b84` | `0x557a54` |
+
+The literal slots were checked to contain the actual null-terminated scene paths (`0x82369b` for GearIndicator, `0x85cb30` for popup CarOutline). The caller uses `0x10e7bc` to construct a string object, then `0x6343d8` to store it in an owner-held object, and `0x10f074` to release the temporary string.
+
+**Consequence for interpreting earlier event flags:** the `object+0x06` flags used by some HMI event handlers may refer to object metadata/configuration, not directly to redraw flags. Specifically, this helper sets `+0x06` bit `0x02`, whereas the odometer handler sets `+0x06` bit `0x08` on two other objects. These are distinct bit values; **do not infer they have the same meaning or act on the same class** without following their constructors/vtables.
+
+Reproducible byte-and-call-target verification:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_scene_path_setter.py /path/to/gtf2
+```
+
+**Remaining critical join:** identify the object whose `+0x8c` string receives the path, find its consumer that resolves the scene node, and show a concrete DP-driven property mutation on that same object. Until then, named scene-path initialization and the 24 RTE event routes remain two independently proven chains.

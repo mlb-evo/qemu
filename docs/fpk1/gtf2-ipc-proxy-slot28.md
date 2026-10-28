@@ -21,7 +21,7 @@ Proxy is ELF32 little-endian ARM EABI5 ET_DYN, stripped section headers; executa
 43b60 mov r0, r4
 43b64 bl 0x3ee0            ; wrapper cleanup
 ```
-Immediately preceding this dispatch: `0x43a00 mov r0,#6` and `0x43a04 bl 0x3f34` allocate a six-byte region; `0x43a18–0x43a2c` zero its bytes 0..5, followed by `0x43a30 bl 0x40720`. This **supports** a six-byte argument payload but does not by itself prove the wire format or how the bytes are filled. Branches `0x439d0–0x43a88` condition the allocation/decoding path.
+Immediately preceding this dispatch: `0x439fc mov r0,#6`, `0x43a00 ldr r1,[r4,r3]`, and `0x43a04 bl 0x3f34` allocate a six-byte region; `0x43a18–0x43a2c` zero its bytes 0..5, followed by `0x43a30 bl 0x40720`. This **supports** a six-byte argument payload but does not by itself prove the wire format or how the bytes are filled. Branches `0x439d0–0x43a88` condition the allocation/decoding path.
 
 ### Path B, 0x1ed2c–0x1ed44
 ```asm
@@ -44,3 +44,11 @@ Immediately preceding this dispatch: `0x43a00 mov r0,#6` and `0x43a04 bl 0x3f34`
 - The user-supplied GTF2 slot-28 target `0x696f4c` and DP-ID `0x02000224` remain earlier research claims pending independent cross-check against GTF2 disassembly in this evidence note.
 
 Do not infer selector = slot + constant; a separate example uses selector 177 and slot 136, but that does not prove a mapping rule.
+
+## Follow-up: precise branch and argument provenance
+
+At `0x439b0` the proxy loads an object from `[r5+0x18]`; `0x439c0–0x439c8` invokes its virtual slot 6 (`[vtable+0x18]`) with `r1=sp+0x170f` (derived from `sp+0x1700-1`). The status byte `[r10+4]` is tested at `0x439cc–0x439d4`: nonzero branches to `0x43a70` (failure/cleanup path). If zero, byte `[sp+0x173f]` is tested at `0x439dc–0x439e4`; nonzero uses `0x40720` at `0x439f0` directly, whereas zero constructs a six-byte zero-filled buffer at `0x439f8–0x43a30`. `0x40720` begins with `ldr r3,[r0,#4]` and `cmp r1,r3` (`0x40720–0x40728`); it is **not proven to be a six-byte wire decoder**. Its behavior depends on object arguments and should not be labeled deserialization until analyzed. At `0x43a34–0x43a6c`, two stack words are checked and a further virtual/utility call may gate the success path. Finally `0x43b3c–0x43b64` constructs the stack wrapper and invokes slot 28.
+
+The proxy also logs a value `128` at `0x43b2c`, but it is passed as `r1` to an indirect logging-like call and **must not be identified as the IPC selector** without further proof. Similarly `122` at `0x43928` is not a verified selector.
+
+**Correction:** the allocation length instruction is at `0x439fc`, not `0x43a00`. The previous shorthand address was wrong; the actual ARM instruction at `0x43a00` is `ldr r1,[r4,r3]`.

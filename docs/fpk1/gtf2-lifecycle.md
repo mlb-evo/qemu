@@ -4841,3 +4841,12 @@ The call to `0x1d90bc` has register arguments `r0=S[0x38]`, `r1=3`, `r2=S[0x3c]`
 `B[13] = (S[0x38] & 0x07) | ((S[0x3c] & 0x01) << 3) | ((S[0x40] & 0x07) << 4) | ((S[5] & 0x01) << 7)`.
 
 Consequently, the incoming `IHmiKss` callback `0x696f4c` byte `payload[5]` is written *raw* to DP `0x02000224`, but is normalized in `0x1d7f4c` to `S[5] = 1` only when the input equals 1 or 3. That state bit maps exactly to outgoing `persistentData[13]` **bit 7, mask `0x80`**. Other payload fields or zero-mask/readiness guards may still suppress or change the outgoing message. This replaces the earlier `B[13]` bit-position uncertainty with direct stock ELF evidence.
+
+
+### Resolved 4-byte paired-state branch of IPC callback 0x696f4c (2026-10-28)
+
+With the stock `gtf2` ELF restored, disassembly of `0x696f70..0x696f88` shows that callback `0x696f4c` forwards `payload[0]`, `[1]`, `[2]`, `[3]` as the four value arguments to `0x18bb88` (the fourth on stack). The callee packs them into four consecutive stack bytes at `0x18bbd0..0x18bbe0`, then calls `0x18a29c` at `0x18bbe8`; a nonzero result takes an early exit at `0x18bbf0..0x18bc10`. Hence downstream effects are conditional on this preliminary check.
+
+On the accepted path, `0x18bb88` compares pair A `(payload[0],payload[1])` against cached object bytes `[this+0x5f]` and `[this+0x60]` at `0x18bce8..0x18bd18`, and pair B `(payload[2],payload[3])` against `[this+0x61]` and `[this+0x62]` at `0x18bd18..0x18bd48`. For a changed nonzero pair it invokes `0x18c82c` with the two values and a temporary record buffer (`0x18bd08..0x18bd14` for A, `0x18bd38..0x18bd44` for B). At `0x18bd54..0x18bd60`, all four cached bytes are updated. The function then iterates over two 28-byte temporary records, with special handling for record type 2, and calls `0x1890ec` and `0x18a6c0` for generated records (`0x18bde4..0x18bdf8` or `0x18be44..0x18be58`). Those consumers' final effects remain to be named.
+
+**Confirmed fan-out for one event:** `payload[0..3] -> 0x18bb88 -> pair change detection / record dispatch`; independently `payload[5] -> raw DP 0x02000224`, `payload[5] -> setMflVariant(0x1a5e10)`, and `payload[5] -> normalized S[5] -> persistentData[13] bit7 -> conditional persistentDataRep`. The two-pair cache belongs to the object passed as `this` to `0x18bb88`; it is not automatically the persistent-data state record at `this+0x54` of another object. No claim about final HMI scene properties or QEMU behavior.

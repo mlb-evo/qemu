@@ -1818,3 +1818,47 @@ python3 tools/fpk1/research/gtf2/trace_view_switch_calls.py /path/to/gtf2
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6adb08 --stop 0x6adc20
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a7e0 --stop 0x11a824
 ```
+
+## View-switch request entry identified: BaseViewManager event callback, not KZB
+
+Direct disassembly now identifies **where the virtual `handleViewSwitch` is invoked**. The earlier direct-BL census missed it because it is a vtable call.
+
+### Vtable ownership and event entry
+
+The **base manager** vtable `0x891958` has:
+
+| Offset | Target | Observed role |
+| --- | --- | --- |
+| `+0x2c` | **`0x6a96d0`** | event-processing callback |
+| `+0x38` | **`0x6a94f4`** | `BaseViewManager::viewSwitch` (diagnostic string `0x891c48`) |
+| `+0x50` | **`0x6a91a8`** | `BaseViewManager::handleViewSwitch` |
+
+The **derived manager** vtable `0x7bfaf0` retains **`+0x38 -> 0x11a880`**, **`+0x2c -> 0x11a8bc`**, and overrides **`+0x50 -> 0x11a250`**. Thus the derived event/view-switch methods need separate inspection, but the base code reveals the calling contract.
+
+At **`0x6a96d0`**, the event callback reads **`[r1]`** (event kind) and explicitly recognizes **2**, **8**, and **9** (`0x6a9704–0x6a9728`). It invokes manager virtual **`+0x10`** first (`0x6a9730–0x6a973c`), then calls **virtual `+0x50`** at **`0x6a9798–0x6a97ac`** with `r0=this`, `r1=r2_original`, `r2=&local_result`. This is a **real event → view-switch handler boundary**.
+
+The same event callback has a **second virtual `+0x50` invocation** at **`0x6a9900–0x6a9914`**, after processing current-view notification. In between:
+
+- If current view exists, it excludes **kind 9 / ID 284** from a particular notification path (`0x6a97d8–0x6a97fc`). This matches the previously identified **frame event 284**, but **does not imply** that the entire event callback is skipped.
+- For other eligible events, it dispatches to the current view's **virtual `+0x4c`** at **`0x6a9808–0x6a9824`**, passing event, auxiliary argument and local flags. This is the same view callback slot implicated in the 180-slot DP flush mechanism.
+- The return code is used to decide whether to process queued events through GTF2 routines **`0x69c574`** and **`0x69d4c8`** (`0x6a984c–0x6a98d4`), before the second switch-handler invocation.
+
+**Implication:** the manager can evaluate a switch **both before and after delivering an event to the active view**, with pending-event/queue handling in between. A simplistic “one event = one switch” emulator would miss this two-pass behavior.
+
+### Separate explicit viewSwitch entry `0x6a94f4`
+
+The base vtable's **`+0x38`** function logs `BaseViewManager::viewSwitch` and invokes virtual **`+0x50`** at **`0x6a9534–0x6a9548`**. If a current view exists, it then performs staged view virtual callbacks **`+0x34`**, **`+0x38`**, and conditionally **`+0x3c`** at `0x6a95b0–0x6a9664`, separated by GTF2-local state updates through `0x6a8cb4`. This is a second verified route into the same switch handler, independent of the KZB resource hook.
+
+### What is and is not established
+
+**Established:** event kind 2/8/9 reaches a manager callback that calls virtual `+0x50`; the current view can receive the same event through `+0x4c`; a later second `+0x50` call may re-evaluate the requested view. The derived manager overrides the event callback and the switch implementation.
+
+**Not yet established:** the specific source of requested startup IDs **174, 176, 177, 178** in the event payload or derived manager's state; a definitive visible sequence still requires tracing **`0x11a8bc`** (derived event handler) and **`0x11871c`** (derived view selection) to their numeric ID sources.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a96d0 --stop 0x6a9984
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a94f4 --stop 0x6a96d0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a8bc --stop 0x11a9e0
+```

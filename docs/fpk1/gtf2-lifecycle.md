@@ -3006,3 +3006,34 @@ python3 tools/fpk1/research/gtf2/build_scene_event_matrix.py /path/to/gtf2 --csv
 ```
 
 **Next evidence threshold:** resolve the receiver wrapper `+0xb8` assignment and receiver vtables; identify property identifiers / scene node names in the GTF2-owned scene resources; match a specific DP-driven mutation to a scene binding or observer. Only then populate `property_id`, `scene_node`, `binding`, or `visual_effect` with concrete names.
+
+### Scene assets and node/property metadata: first concrete evidence from GTF2 ELF
+
+The extracted GTF2 binary itself contains **scene-resource filenames, node paths, and property metadata keys**. These are more useful for the scene question than classifying event dispatches alone. Examples with exact string virtual addresses:
+
+| Class | Exact literal in GTF2 | VA |
+| --- | --- | --- |
+| Scene resource | `AU736_CarOutline.kzb` | within the `0x7c30xx` resource filename block |
+| Scene resource | `AU736_Tubes.kzb` | within the `0x7c30xx` resource filename block |
+| Scene resource | `DisplaySupervisor.kzb` | present in ELF string data |
+| Node path | `MV_ClusterFull.TubeContainer.CenterTube.GearIndicator` | present in ELF string data |
+| Node path | `MV_ClusterFull.TubeContainer.RevoTube.GearIndicatorPHEV` | present in ELF string data |
+| Node path | `PV_WarnPopup_CarOutline.GlassPlate.CarOutline` | present in ELF string data |
+| Node path | `RV_ClusterFull_Additional.HubContentRevoTube.CarOutline` | present in ELF string data |
+| Property metadata key | `CRUISE_active_bool_propertyName` | `0x7fa8ec` |
+| Property metadata key | `AALA_active_bool_propertyName` | `0x7f7eac` |
+| Property metadata key | `MV_ClusterFull_Visibility_propertyName` | `0x8004e6` |
+| Property metadata key | `SV_BordComputer_EgoCar_Slider_propertyName` | `0x810282` |
+
+There are at least **35 distinct `.kzb` resource filename literals**, **35 distinct `_propertyName`-containing strings**, and **68 distinct `_anchorPath`-containing strings** in this executable. The binary also contains the API symbols `eal::api::INode::getProperty`, `eal::api::IProperty::set`, and `switchToNewSceneGraph`, supporting the architecture in which GTF2 resolves scene nodes and updates their properties.
+
+**Crucial evidence boundary:** these strings prove **GTF2 knows about named scene resources, node paths and configurable property names**. They do **not** prove that a particular RTE DP updates a particular node or that a `.kzb` asset was present/loaded in a given runtime. The provided firmware ZIP has image containers, but no directly listed `.kzb` entries; the KZB scene data must be recovered from the appropriate filesystem/image or from runtime traces to prove binding semantics.
+
+A new inventory tool emits virtual addresses and categorized literals from the original ELF:
+
+```sh
+python3 tools/fpk1/research/gtf2/inventory_scene_metadata.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-scene-metadata.csv
+```
+
+**Targeted next work:** find GTF2 code xrefs to specific metadata strings (e.g. `GearIndicator`, `CarOutline`, `CRUISE_active_bool_propertyName`), trace the node/property lookup and mutation, then join it to the already proven DP handlers. Until such a join is instruction-verified, the scene-event matrix keeps its node/binding columns unresolved.

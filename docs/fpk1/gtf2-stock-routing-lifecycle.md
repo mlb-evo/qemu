@@ -192,3 +192,35 @@ In the **63 vtables** with common receiver attachment slot `+0x30 → 0x6218b8`,
 The static argument `0x874100` is a data block containing zero values and other constants, not the scene node path string and not a proven resolved Kanzi node pointer. Therefore, do **not** interpret the `0x62fc60` call as the receiver binding operation: the latter is a separate method at slot `+0x30`, and its caller/timing remain unresolved.
 
 The demonstrated order for ESP is: **create wrapper → set scene path → set property name → store wrapper in owner → apply static descriptor via slot +0x3c**. Runtime receiver binding and IPC event delivery happen through other methods. Whether descriptor values represent defaults, constraints, or initial runtime state depends on the specific wrapper class; avoid assigning a universal semantic to the block without tracing its fields.
+
+## Resolved: exact ESP receiver binder call in owner constructor
+
+The previously unknown caller of the shared virtual binder **is present in the large owner constructor**. In the ESP block, the compiler interleaves unrelated field writes between setting up the virtual call and executing `BLX`, which explains why short-window searches missed it.
+
+The full, independently verified ARM instruction/data chain is:
+
+| Address | Operation | Proven effect |
+| --- | --- | --- |
+| `0x293ed0` | literal `0x45368` | owner field base used for `r8` |
+| `0x2945bc` | `add r8,r8,#0x50` | `r8 = 0x453b8` (ESP wrapper field) |
+| `0x29465c` | `str r0,[r4,r1]` | store constructed ESP wrapper at owner+`0x453b8` |
+| `0x294664` | `bl 0x62fc60` | descriptor dispatch through virtual slot `+0x3c` |
+| `0x294670` | `ldr r3,[r4,r8]` | fetch ESP wrapper |
+| `0x293ef8` | literal `0x45644` | embedded receiver subobject offset before increment |
+| `0x29469c` | `add r1,r1,#4` | receiver offset becomes `0x45648` |
+| `0x2946a0` | `add r1,r4,r1` | receiver address `owner+0x45648` |
+| `0x294698` | `ldr r3,[r3]` | wrapper's vtable |
+| `0x2946b4` | `ldr r3,[r3,#0x30]` | virtual receiver attachment slot |
+| `0x2946dc` | `e12fff33` (`BLX r3`) | **invoke receiver binder** |
+| `0x6218bc` | `str r1,[r0,#0xb8]` | save embedded receiver pointer into wrapper |
+| `0x6218cc` | `ldr r0,[r0,#0xb8]` | subsequent DP handler reads same pointer |
+
+The virtual slot `+0x30` resolves to `0x6218b8` in 63 verified wrapper vtables. The call in this ESP constructor is therefore a concrete attachment of the **owner-embedded receiver object** (not a scene node lookup). The runtime DP handler `0x586bf0` later fetches this pointer from the same ESP wrapper and invokes its receiver's virtual method.
+
+**Important lifecycle distinction:** the receiver is attached *during owner construction*, following static property descriptor initialization. This proves attachment does not require waiting for the first IPC event. It does **not** prove when the owner constructor itself is executed relative to loading/activating the Kanzi scene, nor that the receiver subobject is the final Kanzi node. The scene path and property name remain separately stored as wrapper metadata.
+
+Verifier: `tools/fpk1/research/gtf2/verify_esp_receiver_binding.py`, tested against original stock ELF; all instruction opcodes, literal offsets and the 63 shared method-pointer occurrences match.
+
+### Additional candidate attachment call sites
+
+A broad binary-wide scan found **66** slot-`+0x30` indirect call sites with the pattern `ldr wrapper,[owner,offset]`, `mov r0,wrapper`, `ldr vtable,[wrapper]`, `ldr method,[vtable,#0x30]`, `BLX method`, and `r1` computed from the owner. This is strong evidence that owner-embedded receiver attachment is a repeated generated constructor pattern, but these 66 sites are not all independently type-verified. Do not equate them with the number of DP IDs or the 63 wrapper classes.

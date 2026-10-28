@@ -3374,3 +3374,30 @@ python3 tools/fpk1/research/gtf2/join_scene_wrapper_properties.py /path/to/gtf2 
 ```
 
 **Outstanding completeness limits:** this scanner handles the common `[r4,r3]` getter pattern only. It does not recover every virtual call, nested/indirect property binding, scene resource, or non-RTE IPC event. Do not claim full event-to-scene coverage based on the 47 wrappers or 12 DP routes. Continue by extending handler control-flow recovery and alternate wrapper-access patterns, retaining `unknown` until each link is proven.
+
+### Expanded property join: receiver owner register r0 or r4
+
+The first automatic join was too narrow: it only recognized `LDR r0,[r4,r3]; BL 0x6218cc`. Several real handlers (including the independently verified `ESP` mapping) obtain their owner from a helper and use **`LDR r0,[r0,r3]`** instead. The join tool now scans backward from every `BL 0x6218cc` and accepts both owner base registers, while requiring the same exact constructor owner offset, path/property strings, and property setter.
+
+**Measured on the original GTF2 ELF:**
+
+- **691 candidate receiver-getter call sites** linked to constructor metadata.
+- **126 distinct owner-relative wrapper offsets** with a scene path and property name.
+- When intersected with the known 49 RTE dispatch handlers using a bounded local instruction window, **85 candidate handler-to-property rows**, covering **33 distinct DP IDs** and **36 distinct property names**.
+
+These are **candidate handler-local joins** until each handler's precise CFG boundaries and source register provenance are checked. The getter/constructor field identity itself is stronger evidence. The scanner still excludes properties whose names differ from the final node path component.
+
+New representative **candidate** mappings:
+
+| DP ID | Callback provenance | Scene root | Node suffix / property |
+| --- | --- | --- | --- |
+| `0x02000216` | `TelltaleHMI_Blink` | `RV_ClusterFull_Additional` | `FAS_Cluster.FAS_Cluster.Limiter` / `Limiter`; `Limiter_shadow`; `Cruise_shadow` |
+| `0x0200021f` | `TelltaleHMI_Blink` | `RV_ClusterFull_Additional` | `Limiter`; `Limiter_shadow`; `LIMorGRA_Speed` |
+| `0x02000220` | arithmetic route | `RV_ClusterFull_Additional` | `praediktivesACC`; `PEA_Foot`; `ACC_STA` |
+| `0x020002ae` | arithmetic route from `CarOutline_HMI` | `RV_ClusterFull_Additional` | `HubContentRevoTube.CarOutline.CarOutline` / `CarOutline` |
+| `0x02000296` | arithmetic route | `MV_ClusterFull` | `StatusBar.line1_auchEarlyWelcome.TirePressure` / `TirePressure` |
+| `0x020002cd` | `TelltaleHMI_Display` | `MV_ClusterFull` | `StatusBar.line1_auchEarlyWelcome.ESP` / `ESP` (previously independently verified) |
+
+The new scene root `RV_ClusterFull_Additional` is now recovered from the exact GTF2 scene-node path strings, in addition to `MV_ClusterFull`. The handler calls remain kind-2 event notifications; no rendered behavior is inferred.
+
+**Coverage accounting must remain explicit:** 33 of the 49 RTE dispatch routes have *candidate* property joins; this does not imply all 176 RTE DP writes have been traced, and it does not imply the 36 property names exhaust the scene. For each unjoined event the output remains `unknown`. The user's requested endpoint is scene root + node path + property name, not Kanzi rendering internals.

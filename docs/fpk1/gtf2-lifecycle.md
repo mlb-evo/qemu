@@ -3417,3 +3417,41 @@ The local full matrix deliberately distinguishes `candidate:constructor-owner+ha
 **Important research correction:** the 49 main-dispatch routes are only a subset of the 176 RTE DP writes. The remaining DP IDs may be consumed through another dispatcher, a direct state reader, a computed event transform, or a path not covered by the scanner. They must not be classified as unused without an additional search.
 
 For the requested full picture, keep this inventory as the authoritative **coverage ledger**: every source event exists as a row even when its scene/property remains `unknown`. Do not claim that the project has completely reconstructed all event semantics until those 143 gaps have been resolved or explicitly shown to be non-scene events.
+
+
+## Сводная архитектура внешнего IHmiKss и границы доказанного (2026-10-28)
+
+Этот раздел является **общей точкой интеграции** результатов исследований callback/proxy/ThreadMan; отдельные заметки остаются журналом доказательств, но не должны подменять полную схему. Источник: стоковый `gtf2`, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`.
+
+### 1. Проверенная цепочка и границы
+
+| Уровень | Установлено статическим анализом | Ещё неизвестно |
+|---|---|---|
+| Внешний интерфейс | В коде `0x6939b4` используются дескрипторы `asi.gss.ipc.rte.hmi.IHmiKss` (`0xa7f838`) и `IHmiKssReply` (`0xa7f83c`); вызывается импортированный `comm::Proxy::Proxy` (`0x10ebe8`) | Wire method ID, сериализация и маршрутизация конкретного входящего сообщения |
+| Экземпляры | `0x68ee80` создаёт два callback-объекта через `0x69780c`, аргументы экземпляров 1 и 2; оба имеют первичную vtable `0x88e6b8`; `0x697e94` настраивает каждый | Как экземпляры выбираются удалённой стороной |
+| Связь proxy/callback | `0x697e94` вызывает `0x6939b4` и передаёт основной объект и отдельно `object+4`; `0x6939b4` сохраняет исходный callback в поле `+0x48` выделенного коммуникационного объекта (`0x693c50`) | Чтение этого поля входящим диспетчером и конкретный virtual call |
+| Lifecycle | `object+4` имеет вторичную vtable `0x88e910`, передаётся как `comm::LifecycleListener*`; её слот 3 через `0x698014` вызывает `0x697e94` | Какое состояние `comm` вызывает этот слот |
+| RTE completion | **Первичная** vtable слот 136 (`0x88e8d8`) → `0x693ff0` → селектор `0x2afa` | Кто вызывает первичный слот 136; wire callback это или локальное completion-уведомление |
+| Внутренняя доставка | `0x2afa` поступает в индекс 3 `/eMsgBoxIDThreadManager`; локальная pthread FIFO; обработчик `0x12dfb0` | Не требуется моделировать как отдельный внешний QNX IPC endpoint |
+| Stage3 | `0x13076c` проверяет DP `0x02000236` (байт 2), затем `0x020002bb` (171); путь Stage3 через `0x699594`, иначе немедленный старт | Порядок внешних событий в реальном runtime |
+| HMI | 176 DP ID в прежней переписи, 49 основных маршрутов, 33 кандидатных DP→scene join и 143 ещё не сопоставленных | Полное покрытие всех свойств сцены и подтверждение candidate CFG |
+
+**Разные пространства идентификаторов:** индекс vtable 136, внутренний селектор `0x2afa`, номер локального канала 3, номер экземпляра 1/2 и внешний IPC method ID **не взаимозаменяемы**. Не назначать method ID по совпадению чисел.
+
+### 2. Что нового подтверждено при интеграции
+
+В исходном ELF есть точные диагностические строки **`HmiCommKssReplyImpl rteNoInit %d`** (VA `0x88ec08`), **`HmiCommKssReplyImpl rteTimeout %d`** (VA `0x88eed4`) и **`HmiCommKssReplyImpl lost server connection, reactivating...`** (VA `0x88f521`). Прямые адресные ссылки на них найдены соответственно в литералах `0x693d8c`, `0x694200` и `0x698054`. Последняя строка используется в `0x69801c` перед переходом к `0x697e94`. Это подтверждает смысл **реактивации при потере соединения**, а не гарантированное уведомление об успешном подключении. Наличие отдельных `rteNoInit` и `rteTimeout` показывает, что их нельзя сворачивать в единое событие `RTEUpdateDone` без проверки call graph.
+
+Проверка `0x693c40..0x693cd0` подтверждает сохранение указателя основного callback в `[r5+0x48]` **до** вызова конструктора `comm::Proxy`; при этом `object+4` отдельно передаётся как listener. Это важное структурное доказательство, но чтение `+0x48` диспетчером ещё не найдено.
+
+### 3. Практический контракт для эмулятора: что можно и нельзя считать установленным
+
+**Можно:** считать `IHmiKss/IHmiKssReply` реальной парой интерфейсов, различать два callback-экземпляра, моделировать отдельные события DP-init и RTE-update completion, а внутреннюю очередь ThreadMan реализовать как локальный FIFO, не как внешний IPC. Для startup учитывать оба DP-гейта `0x02000236` и `0x020002bb`.
+
+**Нельзя пока:** объявлять, что отправка внешнего сообщения с ID 136 или `0x2afa` вызывает готовность HMI; утверждать, что вторичный `LifecycleListener` вызывает completion; считать 176 DP-ID полным протоколом; считать 33 кандидатных join подтверждённой полной картой сцены.
+
+### 4. Оставшийся блокирующий эксперимент
+
+Вместо дальнейшего линейного перечисления адресов: **найти конкретное чтение поля callback `+0x48` в методах коммуникационного объекта, установить виртуальную цель и её входной message descriptor**. Параллельно проверить обработчики `rteNoInit`, `rteTimeout` и reactivation на отдельные переходы состояния. Если внешний dispatch находится в `comm` shared library, потребуется анализ соответствующей библиотеки из firmware, а не бесконечное расширение локального call graph `gtf2`.
+
+Связанные подтверждающие документы: `gtf2-hmicomm-two-callback-instances.md`, `gtf2-callback-instances-comm-proxy.md`, `gtf2-ihmikss-proxy-descriptor-proof.md`, `gtf2-ihmikss-proxy-lifecycle-listener.md`, `gtf2-threadman-message-send-receive.md`, `gtf2-message-box-pthread-fifo-implementation.md`.

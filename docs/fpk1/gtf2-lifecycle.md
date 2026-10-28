@@ -516,3 +516,84 @@ instance initialization (0x122920...)
 ```
 
 This is a **possible control-flow cycle**, not proof that the re-arm routine is invoked after every completion. The next step is to resolve its callsites and the skin-switch entry points, then compare their state writes with the frame-event dispatcher.
+
+## GTF2 skin-switch trigger and deferred dispatch (ARM control flow)
+
+A further pass follows the **actual callsites** of the skin-switch functions, rather than inferring their purpose from string placement. The full executable-segment ARM direct-`BL` scan found:
+
+| GTF2 callee | Direct callsite(s) | Role supported by code |
+| --- | --- | --- |
+| `0x121c70` | **`0x123a50` only** | Starts a skin-switch transaction, arms `this+0xdfd` |
+| `0x121dbc` | `0x123a34`, `0x123de4` | Applies/compares a requested skin ID |
+| `0x121548` | `0x123744`, `0x123cf8` | Handles popup-related event data |
+| `0x121830` | `0x122dd8` only | Internal skin-switch completion/abort transition |
+| `0x122c54` | `0x12376c` only | KZB loader called by GTF2 event dispatcher |
+| `0x1213e0` | `0x123680` only | Language-change handling |
+
+**Confirmed event-to-skin path:**
+
+```text
+GTF2 event dispatcher (0x123520), event kind 9
+  -> decode event ID via 0x122498
+  -> ID 500 (0x1f4) at 0x123a44
+  -> BL 0x121c70 at 0x123a50
+       -> this+0xdfd := 1 at 0x121cb8
+       -> invoke GTF2-owned setup and view/resource-related calls
+       -> clear this+0xdf4 at 0x121d88
+       -> compute this+0xe00 countdown at 0x121d90..0x121d9c
+  -> later frame event ID 284
+       -> this+0x1ec := 1
+       -> handleLoadingKZBs(this)
+            -> when this+0xdfd != 0, validate please-wait view,
+               popup inactivity, and selected skin
+            -> staged resource handling / abort
+```
+
+**Important correction:** `0x121d80` is **not the entry point of a separate re-arm function**. It is a basic block **inside the function beginning at `0x121c70`**; the previous subsection describing it as a separate routine is superseded. Therefore the loader re-arm and countdown are **directly linked to event ID 500**, rather than merely a hypothetical post-completion reset. The function's C++ name remains unidentified; “skin-switch transaction” is a descriptive label.
+
+The `0x121c70` path explicitly stores `this+0xdfd = 1` at `0x121cb8`, then calls internal functions `0x6a8d1c`, `0x13d098`, `0x68c34c`, `0x1418c4`, `0x13b070` and a sequence of logging/resource calls before the `0x121d88` re-arm. Its input is the object pointer `this`; the countdown is computed from a value returned by internal logic, not from an immediate event payload. Exact time units are still not established.
+
+### Other application event IDs handled in the same GTF2 function
+
+These values are **immediate comparisons in ARM code**, not inferred enumeration names:
+
+| Event ID (decimal / hex) | ARM compare / branch | Observed GTF2 action |
+| --- | --- | --- |
+| 276 / `0x114` | `0x123938` | Calls `0x68a0dc` on `this+0x30` with argument 1 |
+| 275 / `0x113` | `0x123954` | Calls `0x68a0dc` on `this+0x30` with argument 0 |
+| 283 / `0x11b` | `0x123978` | Calls `0x689eac` on `this+0x30` |
+| 154 / `0x09a` | `0x123994` | Calls five internal routines `0x68beec`, `0x68bd84`, `0x68bc30`, `0x68badc`, `0x68b988` on `this+0x30` |
+| 519 / `0x207` | `0x1239d4` | Tree lookup in GTF2-owned structure, dispatches a 16-bit ID to `0x121dbc` |
+| **500 / `0x1f4`** | **`0x123a44`** | **Calls `0x121c70`, arms skin switching** |
+| 537 / `0x219` | `0x123a64` | Calls internal `0x13d098`, then `0x13ab38` |
+| 547 / `0x223` | `0x123a84` | Sets **`this+0xdfb = 1`**; clears a global counter; calls popup handler `0x121548` |
+| 548 / `0x224` | `0x123ad8` | Reads a global pair of counters and logs/handles them; precise effect needs more tracing |
+| 289 / `0x121` | `0x123864` | Calls `0x69a418` with argument 0 |
+| 271 / `0x10f` | `0x123884` | Calls `0x68db98`, then `0x692914` with argument 1 |
+| 270 / `0x10e` | `0x1238a4` | Calls `0x68db98`, then `0x692914` with argument 0 |
+| 291 / `0x123` | `0x1238c8` | Calls `0x12e294`, `0x12dccc`, then `0x699ca8(1)` |
+| 290 / `0x122` | `0x1238ec` | Calls same pair, then `0x699ca8(0)` |
+| 282 / `0x11a` | `0x123914` | Conditional calls `0x128184` and `0x128c4c` |
+
+Do not assign symbolic names to these numeric IDs until the original event table or enum definitions are found. The comparison for ID 500 is made only in the **event-kind 9** branch (`0x12384c`), which is important for any future synthetic event injection.
+
+### Deferred skin-ID handling at the end of dispatch
+
+The dispatcher tests `this+0xdfc` at **`0x123cfc`**. If nonzero, it **clears that byte immediately** at `0x123d14`, performs a tree lookup keyed by event-derived data, then calls `0x121dbc` with a 16-bit skin ID at `0x123de4`. This is a distinct, deferred skin-change path from event 500. The same `0x121dbc` is also called directly after an earlier tree lookup at `0x123a34` for event 519. In `0x121dbc`, the current skin is compared with the requested ID; when equal, `this+0xdfc` is cleared at `0x121e00`.
+
+The popup handler `0x121548` begins with a **guard on `this+0xdfb`** at `0x12154c–0x12155c`. Event 547 sets this byte before invoking the handler, so that event follows the guarded path rather than the normal event-data processing path. Exact semantics (suppression, acknowledgement or transaction state) remain unproven.
+
+### Consolidated object state
+
+| Object offset | Evidence-backed purpose |
+| --- | --- |
+| `+0x1ec` | Frame event gate, set on kind 9 / ID 284 and cleared after processing |
+| `+0xdf4` | KZB handler terminal/abort gate; cleared at skin transaction start |
+| `+0xdf5..+0xdf9` | Staged KZB request/handled flags |
+| `+0xdfa` | Render loop on/off control |
+| `+0xdfb` | Popup-handler guard, set by event 547 |
+| `+0xdfc` | Deferred skin-ID processing flag, cleared by dispatcher and skin-ID comparator |
+| `+0xdfd` | Skin-switch validation enabled by event 500 |
+| `+0xe00` | Per-object countdown set in event-500 handler, decremented during frame processing |
+
+This directly links **UI event dispatch, skin switching, per-frame processing, KZB loading and popup handling inside the GTF2 executable**, without inspecting any external library implementation.

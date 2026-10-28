@@ -1779,3 +1779,42 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x122f28 --stop 0x123110
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x123260 --stop 0x123334
 ```
+
+## Actual screen switching: virtual-dispatch boundaries and a separate state-driven lookup
+
+A new direct-call census of the **original executable PT_LOAD** clarifies why the KZB resource sequence cannot be treated as the visible startup sequence.
+
+| GTF2 method | Address | Direct ARM BL callsites |
+| --- | --- | --- |
+| `BaseViewManager::handleViewSwitch` | `0x6a91a8` | **1**: `0x11a80c` (derived fallback) |
+| `ViewManager::handleViewSwitch` | `0x11a250` | **0** |
+| `ViewManager::handleViewSwitchCenter` | `0x118c74` | **0** |
+| `ViewManager::doSwitch` | `0x119688` | **0** |
+| Provider view lookup `0x6a9e9c` | `0x6a9e9c` | **7** |
+| KZB resource preparation `0x1217c8` | `0x1217c8` | **24** |
+
+These counts are for **direct ARM BL calls** in this binary, **not total runtime invocations**. The three derived ViewManager methods are **reachable through virtual dispatch** in the previously verified vtable `0x7bfaf0`: `+0x50`, `+0x5c`, `+0x60`. A zero direct-call count therefore **does not** imply dead code. Conversely, the **24 direct KZB resource-hook calls** cannot be mistaken for 24 visible screen switches.
+
+### Additional state-driven view lookup at `0x6adb08`
+
+The GTF2-owned function **`0x6adb08–0x6adc0c`** independently retrieves a numeric ID from an inner state object at **`this+0x13c`** through its **virtual `+0x08`**, then:
+
+1. Compares the resulting ID with the cached **`this+0x140`** (`0x6adb4c–0x6adb54`).
+2. If changed, caches the new ID at **`0x6adb88`**.
+3. Calls the registered view provider **`0x6a9e9c`** at **`0x6adb8c`**.
+4. If a non-null view is returned, invokes that **view's virtual `+0x00`** with a literal argument from **`0x6adc10`** (`0x6adb9c–0x6adba8`).
+5. Stores the result in **`this+0x138`** (`0x6adbac–0x6adbb0`).
+
+The precise semantics of the view's `+0x00` method and the owner of `this+0x13c` are **not yet proven**. This is evidence of a **second state-driven consumer of the ID registry**, not evidence of an actual `ViewManager::doSwitch` transition. In particular, **do not conflate this function's `this+0x140` cache with the ViewManager's `this+0x1c` current view ID**; they belong to different object layouts.
+
+### What is still needed for the visible startup sequence
+
+The missing evidence is **the source and timing of the view-switch request records** consumed by virtual `+0x50`, and the values selected by the GTF2 state machine. The proven KZB order is **resource readiness**, not a screen timeline. Any startup sequence such as “black screen → early tubes → full cluster” is still a **hypothesis**, even though the corresponding view classes and resource-preparation hooks have now been identified.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/trace_view_switch_calls.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6adb08 --stop 0x6adc20
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a7e0 --stop 0x11a824
+```

@@ -2749,3 +2749,51 @@ python3 tools/fpk1/research/gtf2/verify_gear_selector_dp.py /path/to/gtf2
 ```
 
 **Consequence:** a nonzero incoming Gear_Display field does not trigger this receiver's true state outside those six selector values, and even inside the allowed set the receiver's active/no-target branch can suppress a state update (see preceding section).
+
+### Additional IPC events: engine RPM and a second Gear_Display field
+
+To avoid overfocusing on `Gear_Display` DP `0x020001f9`, the HMI event dispatchers have now been traced for **two other DP IDs** written by `IHmiKss` callbacks.
+
+**Engine RPM (`TCH_HMI_EngineRPM`, incoming `payload+0x02`, DP `0x02000295`):**
+
+```text
+0x6972a4: callback writes DP 0x02000295
+  -> HMI event dispatcher:
+     0x5753bc: load literal 0x02000295 from 0x575130
+     0x5753c0: compare event DP ID in r8
+     0x5753c4: on equality branch to 0x5863d0
+  -> 0x5863d0:
+     load first object pointer from owner-relative slot
+     object1[0xe3] |= 0x10
+     load second object pointer from another owner-relative slot
+     object2[0xe3] |= 0x02
+     branch to common dispatcher continuation 0x597c7c
+```
+
+This is a **direct two-object dirty-flag reaction** to a particular engine-RPM DP change. It does not require a `Gear_Display` selector gate and does not prove immediate rendering. The two owner-relative slot constants are at `0x58554c` and `0x585550`; identifying the object classes requires following their initialization.
+
+**Gear_Display, another field (`payload+0x00`, DP `0x020001f7`):**
+
+```text
+0x695374: callback writes DP 0x020001f7
+  -> HMI event dispatcher:
+     0x569150: load literal 0x020001f7 from 0x569ccc
+     0x569154: compare event DP ID in r4
+     0x569158: on equality branch to 0x56d2b4
+  -> 0x56d2b4:
+     obtain GTF2 object via 0x2bae28
+     invoke virtual method at vtable+0x08 with argument 31
+     call 0x5600d8 to obtain another receiver
+     invoke its virtual method at vtable+0x70
+     update receiver flags and return to dispatcher
+```
+
+Thus **two fields of the same incoming `Gear_Display` record trigger different HMI mechanisms**: `0x020001f9` follows the gated boolean-state adapter, while `0x020001f7` invokes object virtual methods. The semantic meaning of argument `31` and the receiver classes remain unresolved; do not infer a particular gear symbol or screen.
+
+The original ELF was checked locally with **21 exact ARM instruction words and both conditional branch targets**, using:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_other_ipc_events.py /path/to/gtf2
+```
+
+**Classification caution:** references in `0x2a0xxx` and `0x59exxx` for other DP IDs are often bulk descriptor initialization (`LDR literal` followed by `STR`), not event consumers. The two paths above are established by **literal comparison → conditional branch → receiver-side effects**, a higher evidence standard than a mere xref.

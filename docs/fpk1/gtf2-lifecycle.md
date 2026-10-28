@@ -2454,7 +2454,7 @@ Disassembly now ties named `IHmiKss` callbacks to **concrete data-pool IDs and p
 
 Both writes are conditional on successfully acquiring a **two-item batch**. A failed lock takes a diagnostic path and does not execute these two `0x131390` calls. Following the batch, the callback calls additional GTF2 functions `0x151558`, `0x14ebf8` and `0x1de81c`; their side effects are not yet classified.
 
-**`Gear_Display` at `0x69534c`:** it obtains a **12-item batch** and maps **11 byte offsets** from the incoming payload to exact DP IDs:
+**`Gear_Display` at `0x69534c`:** it obtains a **12-item batch** and maps **12 byte offsets** from the incoming payload to exact DP IDs:
 
 | Incoming byte offset | DP ID | Incoming byte offset | DP ID |
 | ---: | --- | ---: | --- |
@@ -2463,9 +2463,9 @@ Both writes are conditional on successfully acquiring a **two-item batch**. A fa
 | `+0x04` | `0x020001fa` | `+0x05` | `0x020001f8` |
 | `+0x06` | `0x020001fd` | `+0x07` | `0x020001fb` |
 | `+0x0a` | `0x020001ef` | `+0x09` | `0x020001ec` |
-| `+0x08` | `0x020001ee` | | |
+| `+0x08` | `0x020001ee` | `+0x0b` | `0x020001f9` |
 
-The **12th batch item** is a batch-management detail, not evidence of a 12th `uint8_t` field. The callback ends by releasing the batch via `0x1309ac`. The byte offsets are not in ascending order in the compiled code (`+0x0a` precedes `+0x09` and `+0x08`).
+The 12-item batch corresponds to **12 actual `uint8_t` fields**, including `payload+0x0b` → `0x020001f9` at `0x695450–0x695458`. The callback ends by releasing the batch via `0x1309ac`. The byte offsets are not in ascending order in the compiled code (`+0x0a` precedes `+0x09` and `+0x08`).
 
 These two callbacks demonstrate a reproducible path:
 

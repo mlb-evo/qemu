@@ -4830,3 +4830,14 @@ Let `S` be the state record pointer stored in the serializer's input wrapper (`[
 This join follows from the previously documented instructions, without guessing an IPC schema. In callback `0x696f4c`, the byte at incoming `payload+5` is passed to `0x1d7f4c` (`0x696fb8`) and separately written to DP `0x02000224` (`0x696f64`). `0x1d7f4c` maps values 1 and 3 to 1, all others to 0, then stores the normalized byte at `[this+0x59]` (`0x1d7f6c`). Its tail call to `0x1d796c` serializes a state record beginning at `this+0x54`. Therefore the normalized byte is precisely record offset `0x59-0x54 = 5`, or `S[5]`. The serializer `0x1d940c` passes `S[5]` along with `S[0x38]`, `S[0x3c]`, `S[0x40]` to bit-packing helper `0x1d90bc` for output byte `B[13]` (`0x1d95ec..0x1d9614`).
 
 **Confirmed lineage:** `IHmiKss callback 0x696f4c, payload[5] -> DP 0x02000224 (raw byte)` and independently `payload[5] -> (1|3 ? 1 : 0) -> S[5] -> persistentData[13] (packed) -> changed-buffer check -> GssMan2HMIReplyImpl::sendPersistentData -> persistentDataRep`. Do not conflate the raw DP value with the normalized packed value. Exact bit position/width in `B[13]` is still unknown until helper argument widths are decoded. The downstream send is conditional on readiness, zero-mask flag, cached-buffer difference, and service presence as documented above; this is not a guarantee of a message for every IPC event. This is a static cross-function offset join using already inspected stock instructions, not new dynamic evidence.
+
+
+### Exact persistentData[13] bit allocation from extracted stock ELF (2026-10-28)
+
+Re-extracted `bin/gtf2` (10,180,269 bytes, SHA256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`) from `STAGE2.1` of the original Q7 0378 update in Google Drive. Stage2 SIFS LZO blocks were decompressed with checksum validation; no emulator used. Re-disassembled ARM32 instructions `0x1d90bc..0x1d9184` and the call at `0x1d95ec..0x1d9614`.
+
+The call to `0x1d90bc` has register arguments `r0=S[0x38]`, `r1=3`, `r2=S[0x3c]`, `r3=1`, and stack arguments `S[0x40], 3, S[5], 1` (caller stores them at `[sp]`, `[sp+4]`, `[sp+8]`, `[sp+12]`). The helper treats the second value of each pair as a **bit count**; it checks the sum `3+1+3+1 <= 8` at `0x1d90ec` and combines masked fields at `0x1d916c..0x1d9178`. Exact output:
+
+`B[13] = (S[0x38] & 0x07) | ((S[0x3c] & 0x01) << 3) | ((S[0x40] & 0x07) << 4) | ((S[5] & 0x01) << 7)`.
+
+Consequently, the incoming `IHmiKss` callback `0x696f4c` byte `payload[5]` is written *raw* to DP `0x02000224`, but is normalized in `0x1d7f4c` to `S[5] = 1` only when the input equals 1 or 3. That state bit maps exactly to outgoing `persistentData[13]` **bit 7, mask `0x80`**. Other payload fields or zero-mask/readiness guards may still suppress or change the outgoing message. This replaces the earlier `B[13]` bit-position uncertainty with direct stock ELF evidence.

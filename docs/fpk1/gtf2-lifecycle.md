@@ -2933,3 +2933,42 @@ A new verifier checks **22 exact ARM words** (including literals, context arithm
 ```sh
 python3 tools/fpk1/research/gtf2/verify_shared_hmi_receivers.py /path/to/gtf2
 ```
+
+### Event purpose must be separated into source semantics, state mutation, and rendering
+
+The key research question is **what each event means**, not just which handler it reaches. An event can update a DP, cause a model/object dirty flag, and let the declarative HMI scene react later. A dirty bit or virtual event call **does not prove immediate drawing**. A precise mapping must distinguish:
+
+1. **Source contract (confirmed):** `IHmiKss` callback name, payload field offset/width, DP ID. Callback names are taken from GTF2's **own diagnostic strings**, not guessed from addresses.
+2. **HMI reaction (confirmed when traced):** dispatcher comparison, handler, receiver objects, flags, virtual calls, value predicates.
+3. **Screen meaning (open until proven):** the specific warning lamp, gauge, icon, text, view/scene and visible result. This requires receiver class/property bindings, view data, scene resources or runtime evidence.
+
+A reproducible catalog now maps all **24** directly dispatched RTE-fed DP fields in the `0x57xxxx` dispatcher to their **actual source callbacks**; **23/24** have a diagnostic-string-confirmed callback name, one remains unidentified.
+
+| Source callback | DP ID → payload field offset (width) | Source-level meaning / limitation |
+| --- | --- | --- |
+| `HMI_EngineID_MKB` | `0x02000225` → `+0x0c` (u8) | Engine identification/configuration input; precise enum unknown |
+| `Config_View_Specifica` | `0x0200010b` → `+0x0a` (u8) | View-specific configuration; exact view/bit unknown |
+| `TelltaleAALA_Display` | `0x02000178` → `+0x09` (u8) | AALA telltale display field; exact lamp unknown |
+| **unidentified** | `0x02000175` → `+0x02` (u8) | Source callback not identified; do not label |
+| `Gear_Display` | `0x020001ef` → `+0x0a`; `0x020001ec` → `+0x09`; `0x020001f6` → `+0x03`; `0x020001fd` → `+0x06` (all u8) | Four distinct gear-related fields; do **not** conflate with already studied `0x020001f7` and `0x020001f9` |
+| `Config_Driverassist_Media` | `0x020001c2` → `+0x0f` (u8) | Driver-assist/media configuration; precise option unknown |
+| `ActTest_CommonSoftLEDs` | `0x020001e6` → `+0x01`; `0x02000200` → `+0x03`; `0x02000201` → `+0x02` (all u8) | **Actuator test** of common software indicators; individual LED identity unknown |
+| `ActTest_SoftLEDs` | `0x020001ea` → `+0x06` (u8) | Actuator test of software indicators; individual LED identity unknown |
+| `TelltaleHMI_Blink` | `0x02000216` → `+0x02`; `0x0200021f` → `+0x01` (u8) | **Blink control** fields, distinct from steady display |
+| `TelltaleHMI_Display` | `0x0200021d` → `+0x08`; `0x020002cd` → `+0x04`; `0x020002d2` → `+0x06`; `0x020002d3` → `+0x0b` (u8) | **Display state** fields for telltales; which lamp and value meanings unknown |
+| `Motor_Hybrid_06` | `0x02000230` → `+0x04` (u16) | Hybrid powertrain input; exact quantity/units unknown |
+| `ACC_HMI_Display` | `0x02000297` → `+0x08` (u16) | ACC display input; precise display property unknown |
+| `TCH_HMI_EngineRPM` | `0x02000295` → `+0x02` (u16) | Engine RPM-related input; scale/units not established from callback name alone |
+| `CarOutline_HMI` | `0x020002ad` → `+0x05` (u8) | Vehicle-outline display input; exact door/zone/icon unknown |
+| `ODO_HMI_Distance` | `0x020002c2` → `+0x08` (u8) | Odometer/distance-related field; **not necessarily the complete odometer value** |
+
+**New cross-event insight:** `ActTest_CommonSoftLEDs` field `+0x01` (DP `0x020001e6`) and `TelltaleHMI_Display` field `+0x06` (DP `0x020002d2`) reach **the same pair of receiver wrappers** (owner offsets `0x1f5d0` and `0x1fb00`). A reasonable **hypothesis** is that ordinary telltale display and software-indicator actuator testing converge on shared UI elements. This is **not yet proof** of which individual lamps or that the two values have the same interpretation. A shared receiver can distinguish events by ID or context.
+
+**Reproduce the source-semantic inventory:**
+
+```sh
+python3 tools/fpk1/research/gtf2/catalog_rte_event_semantics.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-event-semantics.csv
+```
+
+**Research priority:** trace the two shared receivers' `wrapper+0xb8` targets and concrete vtables, and search their property/scene bindings. Separately, recover the per-field value-to-enum/bit meaning from GTF2 consumers or firmware schema; **never equate a callback name with an exact display effect**. The table is limited to 24 strictly verified `0x57xxxx` dispatch edges; other RTE DP writes, including non-direct and separate-dispatch paths, remain to be cataloged.

@@ -2867,3 +2867,26 @@ python3 tools/fpk1/research/gtf2/scan_rte_hmi_dispatch.py /path/to/gtf2 --csv \
 ```
 
 The **24** count is for the strict `0x57xxxx` dispatcher scan only; not all 176 DP writes are expected to have this exact code shape. A matching event target is not equivalent to a pixel change. Follow-up should classify each handler by whether it writes object flags, calls a virtual receiver, changes a view selection, or performs only a guard check.
+
+### Further classification: single-object dirty bit versus two-receiver event fan-out
+
+The previously identified 24 RTE-fed HMI dispatch edges are **not uniform**. Two additional handlers have been examined at instruction level, illustrating two distinct behaviors:
+
+| DP ID / incoming callback | Dispatcher match | Handler | Verified behavior |
+| --- | --- | --- | --- |
+| `0x02000230` — `Motor_Hybrid_06` (direct writer at `0x695514`) | `0x574ea0` → BEQ `0x574ea4` | `0x58490c` | Load owner-held object at offset **`0x2e7b4`** and set **`object[0xe3] |= 0x01`**, then branch to `0x597c7c` |
+| `0x020002d2` — `TelltaleHMI_Display` (direct writer at `0x695f94`) | `0x5754ec` → BEQ `0x5754f0` | `0x586cd0` | Resolve **two distinct receivers** via `0x6218cc`, invoke each receiver's virtual slot `+0x00` with event kind **2**, then branch to `0x597c7c` |
+
+**Exact `0x02000230` effect** at `0x58490c–0x584920`: `LDR` object pointer from owner `+0x2e7b4`, `LDRB` from `object+0xe3`, `ORR #1`, `STRB` to `object+0xe3`, unconditional return to common dispatch. No virtual receiver call occurs in this handler. The preceding/following dispatch handlers can set other bits in the same byte, but those must not be attributed to this event.
+
+**Exact `0x020002d2` effect** at `0x586cd0–0x586d30`: first receiver resolved at `0x586ce0` and invoked at `0x586d00`; second resolved at `0x586d0c` and invoked at `0x586d2c`. Both invocations use `r3=2`, i.e. HMI event kind 2. The handler itself does **not** directly set a dirty bit. Whether either receiver ultimately changes an icon depends on its concrete vtable implementation.
+
+These paths are useful for classification of the other dispatcher targets: a **direct flag write** and **virtual event fan-out** are different operations, even though both are triggered by an incoming RTE DP update. This does not yet establish a screen/view switch for either case.
+
+Reproduce with the exact ARM-word verifier:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_hmi_dirty_vs_fanout.py /path/to/gtf2
+```
+
+The verifier checks **23** literal/instruction words including both event branch sites, the object offset, the bytewise flag update, and both virtual event calls.

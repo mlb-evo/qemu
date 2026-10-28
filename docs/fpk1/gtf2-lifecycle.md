@@ -3133,3 +3133,31 @@ python3 tools/fpk1/research/gtf2/verify_scene_wrapper_fields.py /path/to/gtf2
 ```
 
 **Next priority:** cross-reference wrapper offsets `0x1f5d0`, `0x1fb00`, and the GearIndicator/CarOutline owner offsets in their constructors; prove their path strings, then trace assignments to `+0xb8` to recover the concrete receiver class and property semantics.
+
+### Proven scene-node identity for two shared telltale/test event receivers
+
+**New evidence:** the two owner-relative wrapper offsets shared by RTE DP events `0x020001e6` (`ActTest_CommonSoftLEDs`) and `0x020002d2` (`TelltaleHMI_Display`) are initialized with **specific named scene nodes**. This resolves the previously unknown scene identities of these two receivers:
+
+| Owner field offset | Scene path configured in constructor | Constructor path assignment | Constructor owner-field store |
+| --- | --- | --- | --- |
+| `0x1f5d0` | `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht` | `0x5bf68c` string load → `0x5bf6ac` call `0x6343d8` | `0x5bf6dc` loads offset; `0x5bf6f4` stores wrapper pointer |
+| `0x1fb00` | `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht_BIG` | `0x5bf84c` string load → `0x5bf864` call `0x6343d8` | `0x5bf898` loads offset; `0x5bf8a0` stores wrapper pointer |
+
+The literal strings are at `0x860d54` and `0x860dbb`, via pointer slots `0x5beed4` and `0x5bef14`. The constructor calls the path setter `0x6343d8`, which stores string metadata at `wrapper+0x8c`.
+
+Both event handlers subsequently load these **same owner fields**, call `0x6218cc` to fetch `wrapper+0xb8`, and invoke the receiver's virtual slot 0:
+
+- `0x020001e6` handler `0x5812a8`: owner offset literal `0x581b84` = `0x1f5d0`, and `0x581b88` = `0x1fb00`.
+- `0x020002d2` handler `0x586cd0`: owner offset literal `0x587410` = `0x1f5d0`, and `0x587540` = `0x1fb00`.
+
+**Conclusion, supported by the object identity join:** both a normal telltale display event and a common soft-LED actuator-test event are delivered to **the same two Fernlicht (high-beam) scene wrappers**. The two named nodes likely represent different high-beam presentations, but their actual visibility policy and visual changes remain unproven. The event handlers pass the shared event kind `2`, distinct owner-relative state fields, and other arguments to the receiver. Further decoding is needed to say which incoming payload bits or property values turn the indicator on, off, or animate it.
+
+Reproduction against the original GTF2 ELF:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_fernlicht_scene.py /path/to/gtf2
+```
+
+This verifier checks exact instruction words, scene strings, pointer literals, and ARM PC-relative LDR use sites. It was executed against the original binary and reported the two verified Fernlicht bindings.
+
+**This is the first per-object, instruction-backed join of an RTE DP event route to concrete named scene nodes** in this research. It is still not a proof of the ultimate property mutation or rendered output.

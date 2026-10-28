@@ -178,3 +178,15 @@ These are **host elapsed times from a previous synthetic QEMU boot**, not guest 
 2. Disassemble the entry point, `DT_INIT`, `startEfsDriver`, `handleLoadingKZBs`, `enterColdCrank`, and mode request handling.
 3. Instrument `gss_ipc` request/response timestamps, GTF2 `hmi` Alive registration, `ClusterFull` completion, Stage3 marker, and KD/GL calls in a single guest-clock trace.
 4. Compare successful activation vs dropped `1/2` request under identical boot flags, keeping original trace artifacts out of Git.
+
+### Constructor inventory: directly checked against extracted ELF
+
+The ELF's second `PT_LOAD` maps virtual `0x00a644dc` to file offset `0x009634dc`. The 1,408-byte `DT_INIT_ARRAY` contains **352 nonzero, distinct ARM32 function pointers**, with observed minimum `0x0010f48c` and maximum `0x007bbdf4`. First eight targets: `0x10f48c`, `0x10fb48`, `0x114ff8`, `0x115fb8`, `0x11616c`, `0x116e34`, `0x117b38`, `0x11bae8`. These are raw pointers from the original extracted ELF; no constructor function names or call ordering beyond array order are asserted. Reproduce the complete JSON inventory with:
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_init_array.py \
+  build_fpk1/research-artifacts/stage2/STAGE2.1/bin/gtf2 \
+  --output build_fpk1/research-artifacts/gtf2-constructors.json
+```
+
+The research script is source-only and validates file-backed `PT_LOAD` mappings; do not commit the extracted binary or the JSON output.

@@ -3215,3 +3215,26 @@ python3 tools/fpk1/research/gtf2/verify_fernlicht_properties.py /path/to/gtf2
 ```
 
 Further reverse engineering should stop at this boundary for each event: **IPC field → DP ID → HMI handler → named scene node → exact property name**. Avoid spending time on renderer internals unless the property identity is ambiguous.
+
+### Resolved property: TelltaleHMI_Display DP 0x020002d3 → Laserlight
+
+The next independent DP-to-scene-property trace has been **verified against the original GTF2 ELF**:
+
+| IPC callback | DP ID | Handler | Owner wrapper | Scene node | Exact scene property |
+| --- | --- | --- | --- | --- | --- |
+| `TelltaleHMI_Display` | `0x020002d3` | `0x586d34` | `owner+0x1f11c` | `MV_ClusterFull.StatusBar.Laserlight` | **`Laserlight`** |
+
+Instruction-backed join:
+
+- Handler `0x586d34` loads owner offset from literal slot `0x58754c`, whose value is **`0x1f11c`**, then calls the wrapper receiver getter `0x6218cc` at `0x586d3c`.
+- Constructor `0x5bf4a4–0x5bf4b0` loads the path string via literal `0x5bee9c` (string VA `0x860d09`), then calls `0x6343d8` to assign it to wrapper `+0x8c`.
+- Constructor `0x5bf4c8–0x5bf4dc` loads property string via literal `0x5beea4` (string VA `0x860d22`), then calls `0x6343f0` to assign it to wrapper `+0x78`.
+- Constructor `0x5bf4c4` loads **`0x1f11c`** from literal slot `0x5beea0`; `0x5bf4ec` stores the configured wrapper pointer to that exact owner field.
+
+This is the same evidence threshold used for `Fernlicht` and `Fernlicht_BIG`: matching owner field, constructor path/property assignments, and HMI event dispatch. The output rendering and numeric value semantics are deliberately out of scope.
+
+Reproduce:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_laserlight_property.py /path/to/gtf2
+```

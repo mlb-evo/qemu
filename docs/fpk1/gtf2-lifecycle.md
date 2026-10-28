@@ -787,3 +787,47 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 ```
 
 The index is unsigned-bounded in both the enable and disable paths, avoiding out-of-bounds writes through this public interface. No external library disassembly was used.
+
+## DP subscription owners: six concrete call paths
+
+Scanning the original GTF2 executable's ARM `BL` instructions identifies **five direct callsites** to `enableSlot(0x120e94)` and **three** to `disableAndFlushSlot(0x122338)`. This connects the per-slot accumulator to **caller-owned subscription lifecycle**, not to a single global render-loop update.
+
+| Operation | Direct caller VA | Evidence from surrounding ARM instructions |
+| --- | --- | --- |
+| enable | `0x119870` | Caller loads slot index from `[r4+0x1c]` into `r1`; the object pointer `r0` is returned by immediately preceding helper `0x113e50`; follows with `0x12a77c` and `0x12a348` |
+| enable | `0x119bb0` | Same slot index field `[r4+0x1c]`, same helper `0x113e50`; sets up separate caller-local state |
+| enable | `0x11a710` | Same slot index field `[r4+0x1c]`, same helper `0x113e50`; different surrounding caller path |
+| enable | `0x6a9298` | Same index field `[r4+0x1c]`, helper `0x113e50`, then virtual method at vtable `+0x54` |
+| enable | `0x6a9174` | Fifth direct callsite in same `0x6a91xx` region; inspect full enclosing function for its preconditions |
+| disable/flush | `0x119d1c` | `r1=[r4+0x18]` (receiver), `r2=[r4+0x1c]` (slot index), `r0` from `0x113e50`; after flush invokes `0x6a9e9c` and `0x117c40` |
+| disable/flush | `0x11a588` | Same receiver/index fields and helper; after flush invokes `0x6a9e9c` and `0x117c40` |
+| disable/flush | `0x6a92f0` | Same receiver/index fields and helper; then invokes receiver's virtual method at vtable `+0x28` |
+
+The repeated `[caller+0x18]` / `[caller+0x1c]` layout is **strong evidence for a shared subscriber object convention**: one field is the notification receiver, the other the integer slot ID. The `0x113e50` helper provides the GTF2 manager object on which the slot functions operate. Its internal implementation is not needed to follow this caller-level contract.
+
+**Important boundary:** these caller objects reside in GTF2's own executable, but their exact C++ class names and relationship to `ViewManager` remain unproven. The evidence supports subscriber/receiver ownership, **not** a claim that each callsite is a distinct screen or that the receiver is necessarily a view.
+
+### Confirmed callback interface
+
+The disable/flush routine `0x122338` dispatches each pending ID by loading the receiver's vtable and calling its entry at **`+0x4c`** (`0x1223f0–0x1223fc`). That is a **virtual callback interface** into the caller-supplied receiver. The receiver is passed explicitly in `r1`; no global rendering API is invoked by the flush routine.
+
+The caller at `0x6a92f0` then invokes a **different** receiver virtual entry at `+0x28` (`0x6a92f4–0x6a930c`), consistent with a separate post-unsubscribe lifecycle action. The exact interface method names remain unknown.
+
+### Full direct-caller inventory for insertion helper
+
+The GTF2-local ordered-map insertion helper `0x11c8ec` has **11** direct ARM `BL` callsites:
+
+`0x11d7a8`, `0x11db48`, `0x11efd4`, `0x121430`, `0x123c00`, `0x1ab00c`, `0x1ab040`, `0x6a4874`, `0x6a49b8`, `0x6a4b38`, `0x6a5080`, `0x6a5148`.
+
+**Correction:** there are **12**, not 11, entries in the list above. This is the direct-call inventory; other indirect callers are possible. The presence of insertion calls outside the event dispatcher and language-change handler means the ordered-map helper is reused in other GTF2-owned structures; not every call to `0x11c8ec` necessarily targets the 180-slot array. Its semantics are a generic map insertion, and the *caller-provided descriptor* determines the map.
+
+### Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/scan_dp_slot_calls.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119b70 --stop 0x119bd0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119ce0 --stop 0x119d40
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a9284 --stop 0x6a9318
+```
+
+**Next GTF2-only task:** resolve vtable(s) of the receiver object passed as `[caller+0x18]`, and locate the implementations at offsets `+0x4c` and `+0x28`. This should identify how pending DP-ID notifications are consumed without analyzing external libraries.

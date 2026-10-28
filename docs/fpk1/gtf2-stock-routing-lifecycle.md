@@ -114,3 +114,37 @@ The direct 24 plus arithmetic 25 dispatcher routes cover only 49 known main-disp
 6. Validate runtime ordering with **instrumentation** in QEMU or stock logs: wrapper construction → receiver attachment → incoming event → virtual call → scene transition. Static disassembly alone cannot establish the exact temporal sequence.
 
 **Do not overstate completeness:** the stock architecture is substantially understood, but the precise receiver binding lifecycle and complete source-DP coverage are not yet proven.
+
+## New proof: receiver attachment is a shared virtual interface
+
+The apparent absence of direct `BL 0x6218b8` callers is explained by a concrete vtable pattern in the original stock ELF. Searching for the little-endian function pointer `0x006218b8` yields **63 occurrences**, all in the binary's vtable-like data region. Each occurrence is at **offset +0x30 from the start of a distinct table**, and all 63 have plausible code pointers in neighboring method slots.
+
+Examples:
+
+| Vtable start | Binding slot (+0x30) | Slot 0 implementation |
+| --- | --- | --- |
+| `0x881b68` | `0x881b98 → 0x6218b8` | `0x622570` |
+| `0x881bb8` | `0x881be8 → 0x6218b8` | `0x628a38` |
+| `0x881c08` | `0x881c38 → 0x6218b8` | `0x62b240` |
+| `0x88ae90` | `0x88aec0 → 0x6218b8` | `0x62373c` |
+
+The common binding method body is:
+
+```asm
+6218b8  ldrb r3,[r0,#6]
+6218bc  str  r1,[r0,#0xb8]   ; store dynamic receiver pointer
+6218c0  orr  r3,r3,#0x40
+6218c4  strb r3,[r0,#6]     ; mark flag bit 6
+6218c8  bx   lr
+```
+
+The getter `0x6218cc` simply loads `[r0,#0xb8]`. Thus, **receiver attachment is a virtual operation implemented identically across at least 63 wrapper classes**. This strongly indicates a shared interface/base-class method, but does not identify the caller or prove whether it is invoked on scene creation, scene activation, or lazily on demand.
+
+**Evidence strength:** all 63 function-pointer occurrences, table layout and method bodies were checked directly against the original GTF2 ELF. The repeatable verifier is `tools/fpk1/research/gtf2/verify_receiver_vtables.py`:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_receiver_vtables.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/verify_receiver_vtables.py /path/to/gtf2 --csv
+```
+
+**Next precise reverse-engineering step:** search ARM indirect call sites loading slot `+0x30` from a wrapper's vtable, follow the call's `r1` producer backward to the scene lookup result, and then find the lifecycle caller. Avoid treating an ordinary function pointer occurrence as proof of invocation or a timestamp.

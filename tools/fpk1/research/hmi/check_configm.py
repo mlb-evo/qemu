@@ -81,8 +81,8 @@ class CodingChecks(unittest.TestCase):
         peer.RUN_REQUEST_DELAY = 0
         peer.handle(7, ipc.CID_GSS_STATUS, b'\x01')
         peer.handle(7, ipc.CID_GSS_STATUS, b'\x01')
-        self.assertEqual(len(peer.outbox), 16)
-        for frame, (_, key, value) in zip(peer.outbox[2:], all_signals(parse_coding(DEFAULT_CODING))):
+        self.assertEqual(len(peer.outbox), 17)
+        for frame, (_, key, value) in zip(peer.outbox[2:-1], all_signals(parse_coding(DEFAULT_CODING))):
             self.assertEqual(ipc.parse_frame(frame), [(0x11, 0, ipc.l4c_message(key, value + b'\0'), True)])
         first = peer.next_frame()
         self.assertEqual(peer.next_frame(), first, 'frame retained until ACK')
@@ -93,7 +93,7 @@ class CodingChecks(unittest.TestCase):
         peer.delivered(peer.next_frame())
         peer.last_alive = 0
         peer.tick()
-        self.assertEqual(len(peer.outbox), 17)  # alive, two clamps, fourteen ConfigM
+        self.assertEqual(len(peer.outbox), 18)  # alive, two clamps, fourteen ConfigM, closures
 
     def test_complete_configuration_against_original_kss(self):
         oracle = Oracle()

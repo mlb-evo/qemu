@@ -2,6 +2,7 @@ import unittest
 
 import gss_ipc_frames as ipc
 import kss_peer
+from research.hmi.closures import updates as closure_updates
 
 
 class FakeSocket:
@@ -66,7 +67,7 @@ class KssTests(unittest.TestCase):
         status = ipc.build_frame([(7, ipc.CID_GSS_STATUS, b'\x01', True)])
         kss.receive(status)
         kss.receive(status)
-        self.assertEqual(len(kss.outbox), 2)
+        self.assertEqual(len(kss.outbox), 3)
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
         self.assertEqual((lun, cid, last), (ipc.LUN_RTE, 0, True))
         self.assertEqual(data, ipc.l4c_message(ipc.L4C_VS_HMI_VERSIONS_INFO, kss.VERSIONS_INFO + b'\x00'))
@@ -75,7 +76,10 @@ class KssTests(unittest.TestCase):
         self.assertEqual((lun, cid, data, last),
                          (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x00' + bytes(range(16)), True))
         kss.tick()
-        self.assertEqual(len(kss.outbox), 1, 'run request waits for the persistency')
+        self.assertEqual(len(kss.outbox), 2, 'run request waits for startup data')
+        kss.delivered(kss.next_frame())
+        self.assertEqual(ipc.parse_frame(kss.next_frame())[0][2],
+                         closure_updates(0))
         kss.delivered(kss.next_frame())
         kss.tick()
         lun, cid, data, last = ipc.parse_frame(kss.next_frame())[0]
@@ -91,7 +95,8 @@ class KssTests(unittest.TestCase):
         messages = [ipc.parse_frame(frame)[0] for frame in kss.outbox]
         self.assertEqual(messages[0][:2], (7, ipc.CID_GSS_ALIVE_REQUEST))
         self.assertEqual([m[2] for m in messages[1:]],
-                         [ipc.l4c_message(0x79, b'\x01\x00'), ipc.l4c_message(0x7a, b'\x01\x00')])
+                         [ipc.l4c_message(0x79, b'\x01\x00'), ipc.l4c_message(0x7a, b'\x01\x00'),
+                          closure_updates(0)])
 
     def test_empty_frame_ack_does_not_drop_unsent_run_request(self):
         kss = kss_peer.Kss(lambda text: None)

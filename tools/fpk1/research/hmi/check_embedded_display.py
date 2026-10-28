@@ -28,8 +28,7 @@ def main():
     socket_path.unlink(missing_ok=True)
     app = QApplication([])
     peer = view_frames.KssPeer(out / 'unused-kss.sock', None)
-    window = view_frames.Viewer(out / 'unused.ppm', out, keys=out / 'unused-keys',
-                               kss=peer, embedded_name=name)
+    window = view_frames.Viewer(out / 'unused.ppm', out, kss=peer, embedded_name=name)
     window.showMaximized()
     decoy = QWidget()
     decoy.setWindowTitle(f'QEMU ({name}-0)')

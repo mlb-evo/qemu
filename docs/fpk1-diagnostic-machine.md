@@ -147,6 +147,23 @@ fully configured HMI startup.
 `run.sh` always opens the viewer. The viewer is also the KSS peer
 (`kss_peer.py` in a thread on the `kss` chardev): its log is shown under the
 frame and saved as `kss.log`. Closing the window stops the KSS link.
+The steering-wheel panel sends short clicks and single roller ticks through
+`MFL_Tasten_Kon_01` (RTE dataID 0x1cc) on this link, rather than typing on
+the serial console. VIEW, left/right, OK, BACK and roller up/down are enabled
+with `--kss`. Click after the HMI has started; early clicks can be dropped
+before its IPC client connects. Long holds and simultaneous combinations
+are not implemented. See the recovered wire format in
+`docs/fpk1-firmware-research.md`.
+Below the wheel, six checkable buttons show the front left/right doors,
+rear left/right doors, bonnet and boot as `Closed` or `Open`. Click a button
+to toggle it; checked means open. Initial state is all closed. States are
+independent, can be selected before HMI startup, and repeat with KSS alive
+traffic through `CarOutline_HMI` (dataID 0x10). Without KSS, controls are
+disabled. This local fixture leaves the rear window and fuel flap closed.
+An open selection also sends `CarOutline_HMI_Active` (0x1c2); closing all six
+clears it. The local warning fixture also sends `ZPM_HMI_Info` (0x272),
+WarnID 0xa800 while open and 0 when all closed. It does not select or override
+the cluster design.
 
 The output holds `qemu/qemu-system-arm`, the GLES `bridge/` (guest shim and
 `glhost`), `media/emmc.img`, a `venv/` with `lzokay` (sharing system PySide6)

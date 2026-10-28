@@ -17,6 +17,11 @@ VersionsScreen_VS_VersionInfo right after Rte_Start ("Update HOOK from RTE")
 and logs "returned 1" (never received) if KSS has not sent it by then. This is a research stand-in; it
 knows nothing of KSS's real behaviour beyond those messages.
 
+CarOutline_HMI carries the persistent six-closure state (initially closed),
+sent before application run and repeated with alive traffic. The viewer's
+closure_commands queue updates that state; research/hmi/closures.py records
+the original wire bit assignments.
+
 With --coding HEX or FPK1_CODING it sends fourteen ConfigM signals before
 application run and repeats them with alive traffic. Long coding supplies
 seven signals; the remaining internal coding and startup vehicle identity
@@ -141,7 +146,7 @@ class Kss:
     # drops values that arrive before gtf2 connects, so they must repeat.
     CLAMPS = ((ipc.L4C_CLAMPS_CLAMP15, b'\x01'), (ipc.L4C_CLAMPS_CLAMPS, b'\x01'))
 
-    def __init__(self, log, persistency=bytes(16), coding=None):
+    def __init__(self, log, persistency=bytes(16), coding=None, wheel_commands=None, closure_commands=None):
         self.log = log
         self.config_signals = []
         coding = coding if coding is not None else os.environ.get('FPK1_CODING')
@@ -158,6 +163,13 @@ class Kss:
         self.status = None
         self.run_pending = False
         self.run_request_at = None
+        self.application_running = False
+        from research.hmi.closures import Closures
+        self.closures = Closures(self, closure_commands)
+        self.wheel = None
+        if wheel_commands is not None:
+            from research.hmi.mfl import WheelInput
+            self.wheel = WheelInput(self, wheel_commands)
 
     def queue(self, lun, cid, data):
         for record in ipc.fragment(lun, cid, data):
@@ -171,6 +183,9 @@ class Kss:
         # Its ACK must not consume that newly queued, unsent message.
         if self.outbox and self.outbox[0] == frame:
             self.outbox.pop(0)
+            self.closures.delivered(frame)
+            if self.wheel:
+                self.wheel.delivered(frame)
             if not self.outbox and self.run_pending:
                 self.run_pending = False
                 self.run_request_at = time.monotonic() + self.RUN_REQUEST_DELAY
@@ -195,6 +210,8 @@ class Kss:
             self.status = data
         if name != 'GSS_ALIVE_RESPONSE':
             self.log(f'rx lun {lun:#04x} cid {cid:#04x}{" " + name if name else ""}: {data.hex()}')
+        if name == 'GSS_MODE_RESPONSE' and len(data) >= 2:
+            self.application_running = data[:2] == b'\x01\x02'
         if name == 'GSS_STATUS' and data == b'\x01':
             # 1 = "IPC COM ready": send the RTE data gss_ipc reads at Rte_Start
             # and the stored persistency (mode 1 submode 0; submode 2 ignores
@@ -206,6 +223,7 @@ class Kss:
             self.log('tx GSS_MODE_REQUEST mode 1 submode 0 (persistency)')
             self.queue(*ipc.gss_mode_request(1, 0, self.persistency))
             self.queue_config(log=True)
+            self.closures.send(log=True)
             self.run_pending = True
 
     def queue_config(self, log=False):
@@ -221,6 +239,7 @@ class Kss:
         self.last_alive = time.monotonic()
 
     def tick(self):
+        self.closures.tick()
         if self.run_request_at is not None and time.monotonic() >= self.run_request_at:
             self.run_request_at = None
             self.request_run()
@@ -232,6 +251,9 @@ class Kss:
                 self.queue(*ipc.rte_signal(data_id, value))
             # gss_ipc's DP client can connect after application run.
             self.queue_config()
+            self.closures.send()
+        if self.wheel:
+            self.wheel.tick()
 
 
 def connect(path, attempts=600):
@@ -246,7 +268,7 @@ def connect(path, attempts=600):
     raise SystemExit(f'kss_peer: cannot connect to {path}')
 
 
-def run(path, period, emit=None, coding=None):
+def run(path, period, emit=None, coding=None, wheel_commands=None, closure_commands=None):
     """Serve the link until QEMU disconnects; emit(line) gets each log line."""
     start = time.monotonic()
     emit = emit or (lambda line: print(line, flush=True))
@@ -254,7 +276,7 @@ def run(path, period, emit=None, coding=None):
     def log(text):
         emit(f'[kss {time.monotonic() - start:8.2f}] {text}')
 
-    kss = Kss(log, coding=coding)
+    kss = Kss(log, coding=coding, wheel_commands=wheel_commands, closure_commands=closure_commands)
     sock = connect(path)
     log(f'connected to {path}')
     link = Link(sock, log, period)

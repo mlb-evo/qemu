@@ -13,14 +13,9 @@ saves the current frame without opening a window (usable headless).
 With --capture-scanout the launcher also writes dc-scanout.ppm from QEMU's
 display controller and selects that source. Its JSON describes capture limits.
 
-With --keys FIFO (run_stage1_console.py passes one), a steering-wheel button
-panel types keys on the guest serial console using grengme's console key
-bytes (libengmenufw): '4'/'6' turn the roller by -1/+1 tick, '5' selects,
-'0' goes back. The firmware disables that backend (/config/gem.json
-"consoleInput":false) and grengme's stdin is not the console, so these bytes
-reach the login shell, not the menu. In the car the buttons reach the HMI
-through KSS (MFL_Tasten_Kon_01 -> gss_ipc -> gtf2); moving the panel onto
-tools/fpk1/kss_peer.py is the intended route.
+With --kss SOCKET the steering-wheel panel sends MFL_Tasten_Kon_01 events
+through the KSS SPI peer to gss_ipc and gtf2. Each click is a short button
+pulse or one roller tick.
 
 With --kss SOCKET the viewer is also the KSS peer: it runs kss_peer.py's SPI
 master in a thread on QEMU's kss chardev and shows its log under the frame
@@ -28,12 +23,12 @@ master in a thread on QEMU's kss chardev and shows its log under the frame
 """
 import argparse
 import json
-import os
 from pathlib import Path
 import sys
 import threading
+from queue import Queue, Full
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, QSignalBlocker
 from PySide6.QtGui import QFontDatabase, QImage
 from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout,
                                QLabel, QPlainTextEdit, QSplitter, QToolButton,
@@ -44,57 +39,43 @@ from viewer_widgets import FrameView, fit_to_screen  # noqa: E402
 
 FOLLOW = 'Most recent'
 
-# Right steering-wheel cluster: (label, row, column, console byte or None).
+# Right steering-wheel cluster: (label, row, column, MFL action).
 # The roller's up/down are its turn direction. Keys are sent only by clicking
 # these buttons (no mouse-wheel or keyboard shortcuts).
 WHEEL_BUTTONS = (
-    ('\u25c1', 0, 0, None),
-    ('\u25b7', 0, 1, None),
-    ('\u25b2', 1, 0, b'4'),
-    ('VIEW', 1, 1, None),
-    ('OK', 2, 0, b'5'),
-    ('\u21a9', 2, 1, b'0'),
-    ('\u25bc', 3, 0, b'6'),
+    ('\u25c1', 0, 0, 'left'),
+    ('\u25b7', 0, 1, 'right'),
+    ('\u25b2', 1, 0, 'up'),
+    ('VIEW', 1, 1, 'view'),
+    ('OK', 2, 0, 'ok'),
+    ('\u21a9', 2, 1, 'back'),
+    ('\u25bc', 3, 0, 'down'),
 )
 
 
-def send_keys(path, data):
-    """Write bytes to the launcher's key FIFO; False when nobody reads it."""
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
-    except OSError:
-        return False
-    try:
-        return os.write(fd, data) == len(data)
-    except OSError:
-        return False
-    finally:
-        os.close(fd)
-
-
 class WheelPanel(QWidget):
-    def __init__(self, keys, report):
+    def __init__(self, peer, report):
         super().__init__()
-        self.keys, self.report = keys, report
+        self.peer, self.report = peer, report
         grid = QGridLayout(self)
         grid.addWidget(QLabel('Steering wheel'), 4, 0, 1, 2, Qt.AlignHCenter)
         for label, row, column, data in WHEEL_BUTTONS:
             button = QToolButton()
             button.setText(label)
             button.setMinimumSize(56, 40)
-            if data is None:
+            if peer is None:
                 button.setEnabled(False)
-                button.setToolTip('No console key in grengme (needs the KSS path)')
+                button.setToolTip('Steering wheel needs the KSS peer (--kss)')
             else:
-                button.setToolTip(f'Types {data.decode()!r} on the console')
+                button.setToolTip(f'MFL {data} via KSS')
                 button.clicked.connect(lambda _=False, d=data: self.press(d))
             grid.addWidget(button, row, column)
 
     def press(self, data):
-        if send_keys(self.keys, data):
-            self.report(f'sent {data.decode()!r}')
+        if self.peer and self.peer.send_wheel(data):
+            self.report(f'queued MFL {data}')
         else:
-            self.report(f'cannot send {data.decode()!r}: no reader on {self.keys}')
+            self.report(f'cannot queue MFL {data}: KSS stopped or input queue full')
 
 
 class KssPeer(QObject):
@@ -105,6 +86,28 @@ class KssPeer(QObject):
         super().__init__()
         self.socket_path = str(socket_path)
         self.log_file = log_path.open('a', buffering=1) if log_path else None
+        self.wheel_commands = Queue(maxsize=32)
+        self.closure_commands = Queue(maxsize=32)
+        self.stopped = False
+
+    def set_closure(self, name, opened):
+        from research.hmi.closures import BITS
+        if self.stopped or name not in BITS:
+            return False
+        try:
+            self.closure_commands.put_nowait((name, bool(opened)))
+            return True
+        except Full:
+            return False
+
+    def send_wheel(self, action):
+        if self.stopped:
+            return False
+        try:
+            self.wheel_commands.put_nowait(action)
+            return True
+        except Full:
+            return False
 
     def start(self):
         threading.Thread(target=self.serve, name='kss', daemon=True).start()
@@ -117,9 +120,53 @@ class KssPeer(QObject):
     def serve(self):
         import kss_peer
         try:
-            kss_peer.run(self.socket_path, 0.01, self.emit)
+            kss_peer.run(self.socket_path, 0.01, self.emit, wheel_commands=self.wheel_commands,
+                         closure_commands=self.closure_commands)
         except (OSError, SystemExit) as error:
             self.emit(f'[kss] stopped: {error}')
+        finally:
+            self.stopped = True
+
+
+class ClosurePanel(QWidget):
+    """Six independent, persistent KSS closure switches (checked = open)."""
+    def __init__(self, peer, report):
+        super().__init__()
+        from research.hmi.closures import CLOSURES
+        self.peer, self.report = peer, report
+        self.buttons = {}
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel('Doors / lids'))
+        for name, label, _ in CLOSURES:
+            button = QToolButton()
+            button.setCheckable(True)
+            button.setText(f'{label}: Closed')
+            button.setMinimumSize(156, 28)
+            button.setEnabled(peer is not None)
+            button.setToolTip('Checked = open; click to open or close via KSS')
+            button.toggled.connect(lambda opened, n=name, l=label: self.change(n, l, opened))
+            self.buttons[name] = button
+            layout.addWidget(button)
+
+    def change(self, name, label, opened):
+        button = self.buttons[name]
+        if self.peer and self.peer.set_closure(name, opened):
+            button.setText(f'{label}: {"Open" if opened else "Closed"}')
+            self.report(f'KSS {label}: {"open" if opened else "closed"} queued')
+        else:
+            with QSignalBlocker(button):
+                button.setChecked(not opened)
+            self.report(f'Cannot change {label}: KSS stopped or input queue full')
+
+
+class InputPanel(QWidget):
+    def __init__(self, peer, report):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        self.wheel = WheelPanel(peer, report)
+        self.closures = ClosurePanel(peer, report)
+        layout.addWidget(self.wheel)
+        layout.addWidget(self.closures)
 
 
 def read_ppm(path):
@@ -164,7 +211,7 @@ def newest(found):
 
 
 class Viewer(QWidget):
-    def __init__(self, frame, client_dir, keys=None, kss=None, source=None, embedded_name=None):
+    def __init__(self, frame, client_dir, kss=None, source=None, embedded_name=None):
         super().__init__()
         self.frame_path, self.client_dir = frame, client_dir
         self.setWindowTitle('FPK1 display')
@@ -188,10 +235,8 @@ class Viewer(QWidget):
         self.keys_status = QLabel()
         middle = QHBoxLayout()
         middle.addWidget(self.view, 1)
-        self.panel = None
-        if keys:
-            self.panel = WheelPanel(keys, self.keys_status.setText)
-            middle.addWidget(self.panel, 0, Qt.AlignVCenter)
+        self.panel = InputPanel(kss, self.keys_status.setText)
+        middle.addWidget(self.panel, 0, Qt.AlignVCenter)
         layout = QVBoxLayout(self)
         if not embedded_name:
             layout.addLayout(top)
@@ -259,7 +304,7 @@ class Viewer(QWidget):
 
 class PeerWindow(QWidget):
     """KSS log/controls only; QEMU owns the live display window."""
-    def __init__(self, keys=None, kss=None):
+    def __init__(self, kss=None):
         super().__init__()
         self.setWindowTitle('FPK1 KSS')
         layout = QVBoxLayout(self)
@@ -274,11 +319,10 @@ class PeerWindow(QWidget):
             kss.line.connect(self.kss_log.appendPlainText)
         middle.addWidget(self.kss_log, 1)
         self.keys_status = QLabel()
-        if keys:
-            middle.addWidget(WheelPanel(keys, self.keys_status.setText))
+        middle.addWidget(InputPanel(kss, self.keys_status.setText))
         layout.addLayout(middle, 1)
         layout.addWidget(self.keys_status)
-        self.resize(900, 400)
+        self.resize(900, 580)
 
 
 def main():
@@ -292,8 +336,6 @@ def main():
     parser.add_argument('--log-only', action='store_true',
                         help='only KSS log/controls; QEMU displays the image directly')
     parser.add_argument('--embed-qemu-name', help='embed the uniquely named native QEMU console')
-    parser.add_argument('--keys', type=Path,
-                        help="launcher key FIFO (run_stage1_console.py --keys); shows the button panel")
     parser.add_argument('--kss', type=Path,
                         help="QEMU kss chardev socket; run kss_peer.py here and show its log")
     parser.add_argument('--kss-log', type=Path, help='also append the KSS log to this file')
@@ -308,8 +350,8 @@ def main():
         return
     app = QApplication(sys.argv)
     kss = KssPeer(args.kss, args.kss_log) if args.kss else None
-    viewer = (PeerWindow(args.keys, kss) if args.log_only else
-              Viewer(args.frame, args.client_dir, args.keys, kss, args.source, args.embed_qemu_name))
+    viewer = (PeerWindow(kss) if args.log_only else
+              Viewer(args.frame, args.client_dir, kss, args.source, args.embed_qemu_name))
     fit_to_screen(viewer)
     viewer.show()
     if kss:

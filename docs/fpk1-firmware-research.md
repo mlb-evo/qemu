@@ -1893,8 +1893,9 @@ How the buttons reach the cluster software (static analysis plus runs with
 `--diag-shell`):
 
 - KSS receives the CAN signal `MFL_Tasten_Kon_01` (`MFL_Tastencode_1/2`,
-  `MFL_Eventcode_1/2`, `MFL_Marke`, `MFL_Variante`, one byte each in
-  `gss_ipc`'s trace formatter) and forwards it over the SPI link. `gss_ipc`
+  `MFL_Eventcode_1/2`, `MFL_Marke`, `MFL_Variante`) and forwards it over the
+  SPI link. The event and identity fields are packed nibbles, despite their
+  `uint8` trace names; see the recovered wire format below. `gss_ipc`
   keeps it in its RTE (`RTE incoming event: MFL_Tasten_Kon_01`,
   `Rte_Read_MFL_Tasten_Kon_01_...`) and passes it on through the comm service
   `asi.gss.ipc.rte.hmi.IHmiKss` ("data ignored, since client not connected"
@@ -1920,12 +1921,184 @@ How the buttons reach the cluster software (static analysis plus runs with
 
 So without patching, buttons need the KSS peer: model SLINK1 and the CC6/DD7
 handshake, have a host KSS peer bring `gss_ipc` up and request application
-run, then send `MFL_Tasten_Kon_01` updates when buttons are pressed. Still
-open: the LUN/record layout of RTE signal updates in `gss_ipc`, and the MFL
-keycode table in `gtf2`. `stage3/bin/app/gssipc-kbd` (a firmware test tool
+run, then send `MFL_Tasten_Kon_01` updates when buttons are pressed. The
+LUN/record layout and MFL keycode table have since been recovered (below).
+`stage3/bin/app/gssipc-kbd` (a firmware test tool
 linked against the IHmiKss and BAP proxies, printing
 "Key1 %d, Event1 %x, Key2 %d, Event2 %x") is a reference for the expected
 values.
+
+### Recovered MFL wire format and local viewer input
+
+Original Q7 0378 `gss_ipc` descriptor at `0x1ae1e0` (indexed from the l4c
+table `0x1abdf0`) gives dataID **0x1cc**, signal length **4**, common
+unpacker `0x1643a8`, callback `0x169700`. That callback calls the signal
+unpacker `0x1656b0`, then `Rte_Write(0x6e, 0, value, status)`.
+
+The four **wire** bytes are:
+
+| Byte | Contents |
+| --- | --- |
+| 0 | eventcode1 in low nibble, eventcode2 in high nibble |
+| 1 | Marke in low nibble, Variante in high nibble |
+| 2 | keycode1 |
+| 3 | keycode2 |
+
+The unpacker rearranges these to the internal RTE layout (key1, key2,
+packed events, packed identity); copying that internal layout directly onto
+the wire is incorrect. Append status byte 0 and wrap with the existing
+`rte_signal(0x1cc, ...)` (LUN 0x11, CID 0).
+
+In `gtf2`, converter `0x18c82c` indexes key table `0x7da8a4`, button flags
+`0x7d9d30`, and six-event table `0x7da5a8`. Event names can be checked
+through the pointer table at `0x752e3c` indexed by HMI event ID:
+
+| Panel action | MFL keycode | Eventcode | Result |
+| --- | --- | --- | --- |
+| VIEW | 0x01 | 1 | KEY_View_pressed (0x1ef) |
+| Right | 0x02 | 1 | KEY_ArrowRight_pressed (0x1bc) |
+| Left | 0x03 | 1 | KEY_ArrowLeft_pressed (0x1b7) |
+| OK | 0x07 | 1 | KEY_Ok_pressed (0x1d9) |
+| BACK | 0x08 | 1 | KEY_Back_pressed (0x1bf) |
+| Roller up | 0x06 | 1 | rotary, -1 tick |
+| Roller down | 0x06 | 15 | rotary, +1 tick |
+
+For buttons, event 3 also maps to pressed, 4 to longPressed, and 2/5/6
+produce no converted event. The roller accepts 1..7 as -1..-7 ticks and
+9..15 as +7..+1 ticks; 0/8 are ignored. Handler `0x18bb88` suppresses
+unchanged key/event pairs, including repeated same-direction roller ticks.
+GEM handler `0x18ce04` explicitly maps HMI 0x1d9 to OK and 0x1bf to BACK.
+
+The local viewer now queues MFL actions to its KSS thread. Each button click
+sends event 1, event 2, then neutral; roller clicks send one tick then neutral.
+Updates wait for SPI ACK and an additional 150 ms host settling interval
+before advancing, to give guest RTE/DP tasks time to process each state.
+Marke/Variante are zero in this fixture; the second key slot is unused.
+Long holds and simultaneous key combinations are not implemented by the panel.
+Before the application-run response, clicks are rejected in the KSS log.
+Without `--kss`, the panel is disabled; it never types serial-console keys.
+
+Local research scripts:
+
+- `tools/fpk1/research/hmi/inspect_mfl.py`: reproduces extraction, descriptor
+  checks, key tables and disassembly from the original archive (capstone/lzokay).
+- `tools/fpk1/research/hmi/check_wheel.py`: wire fixtures, ACK/pacing/repeat
+  checks and real Qt panel routing, using `build_fpk1/venv/bin/python`.
+- `tools/fpk1/research/hmi/probe_wheel.py`: boots the original executables
+  with debug tracing and clicks all panel actions, including repeats.
+
+All extracted binaries, reports and probe outputs are under
+`build_fpk1/research-artifacts/wheel/`. This is local research, not an upstream
+contribution.
+
+Validation on 2026-10-28: run `wheel/20261028-233657` lasted 110 seconds.
+Nine real Qt panel clicks produced 24 RTE updates. `gss_ipc` logged the
+decoded fields, and `gtf2` logged dispatch to HMI: rotary ticks `-1, -1, +1`,
+OK `473`, BACK `447`, Left `439`, Right `444`, VIEW `495` twice. Thus repeated
+equal inputs survived the converter's duplicate suppression. Saved
+`wheel-check.json` reports `passed: true`; reproduce the check with
+`probe_wheel.py --verify build_fpk1/research-artifacts/wheel/20261028-233657`.
+This verifies delivery and HMI dispatch, not the appearance of every resulting
+screen. The serial `--keys` FIFO and console-button forwarding were removed
+from the launcher and viewer. The selected peer/frame/viewer/input suite
+passes 24 tests after that removal.
+
+### Doors, bonnet and boot: CarOutline_HMI
+
+Original Q7 0378 `gss_ipc` l4c descriptor `0x1abf30` gives **dataID 0x10**,
+length **2**, common unpacker `0x1643a8` and callback `0x169bb0`. The callback
+calls `0x16728c`, which preserves both wire bytes, then
+`Rte_Write(0x3c, 0, value, status)`. Formatter `0x13b73c` names the bits:
+
+| Byte 0 bit | Field | UI |
+| --- | --- | --- |
+| 0 | car_frontLeftDoor_b | Front left |
+| 1 | car_frontRightDoor_b | Front right |
+| 2 | car_rearLeftDoor_b | Rear left |
+| 3 | car_rearRightDoor_b | Rear right |
+| 4 | car_boot_b | Boot |
+| 5 | car_bonnet_b | Bonnet |
+| 6 | car_rearWindow_b | Kept closed |
+| 7 | car_spareWheel_b | Kept zero |
+
+Byte 1 bit 0 is `car_tankDoor_b`; remaining bits are unused. This fixture
+keeps byte 1 zero. One means open, zero means closed. For example, front
+left and boot open is `11 00`, bonnet alone is `20 00`, all six open is
+`3f 00`. Append valid status byte 0 and use `rte_signal(0x10, ...)`.
+
+The viewer has six independent checkable switches under the wheel. Each
+shows `Open`/`Closed`; checked means open. Commands cross a separate thread
+queue, preserving other selected openings. Initial state is all closed;
+pre-start selections are retained. KSS sends initial state before application
+run, sends changes immediately after run, and repeats the current bitmap
+with alive traffic so a late HMI client receives it. Changed states wait
+for ACK plus 150 ms host settling time. Rejected UI commands roll back the
+switch instead of showing an unsent selection. These are input selections,
+not an acknowledgement that the guest has rendered them. The later activation
+fix below adds CarOutline_HMI_Active and the ZPM CarOutline warning.
+
+Research scripts: `research/hmi/inspect_closures.py` records descriptor and
+disassembly from the original binary extracted by `inspect_mfl.py`;
+`research/hmi/check_closures.py` checks independent bits, combined openings,
+open/close pacing, pre-start retention, repeating state and Qt rollback.
+`research/hmi/probe_wheel.py --closures --seconds 125` runs the six real Qt
+switches against the firmware, opening/closing each individually then all
+together. Outputs stay under `build_fpk1/research-artifacts/closures/`.
+
+Validation on 2026-10-28: `closures/20261028-234552` ran for 125 seconds.
+All 24 Qt selections reached `gss_ipc`, with the expected independent bit
+transitions, combined `3f 00`, and final `00 00`. `GSS_APP_CarOutline` logged
+updates, opening detection and warning reevaluation. The bonnet and boot
+view-model logs each showed `0, 1, 0, 1, 0`. The four door view-model logs
+stayed at their initial zero in this configuration, despite their input bits
+and application callbacks changing; warning reevaluation logged `stage=0`
+and `condTemplateIsDoorWarningActive=0`. This confirms input delivery and
+application processing, not visible door-warning graphics. No additional
+activation signal is inferred from these logs. `closure-check.json` records
+both transport/app evidence and view-model limitations; reproduce with
+`probe_wheel.py --closures --verify build_fpk1/research-artifacts/closures/20261028-234552`.
+The selected peer/frame/viewer/wheel/closure suite passes 29 tests; the
+KSS-only window also passes its no-frame-reader/no-polling-timer check.
+
+### CarOutline activation and warning (2026-10-29)
+
+The initial six-switch implementation delivered door bits but omitted the
+separate activation signal. Descriptor `0x1ae118` gives dataID **0x1c2**,
+length 1, callback `0x16908c` -> `Rte_Write(0x3c, 1)`. The GSS proxy reads
+that element at `0x131590`. In `gtf2`, receiver `0x6956fc` writes DPID
+`0x02000198` and triggers `GSS_APP_CarOutline::triggerUpdate`. Four door
+display conditions at `0x6208dc`..`0x6209fc` require this DPID as well as
+the corresponding door bit. This explains the previous zero-only door
+view-model logs even while incoming door fields changed.
+
+The local fixture now sends the bitmap, Active and warning in one l4c stream,
+retained until SPI ACK. Active is 1 if any of the six supported openings
+is open, otherwise 0; this is the stand-in's activation policy, not a claim
+to reproduce the original KSS warning arbitration. Startup and alive
+repetition carry these signals.
+
+`gtf2::updateDoorWarning` at `0x1b9020` also checks template eligibility
+(`0x217bac`) and active/ignition (`0x2182fc`). Merely sending Active repairs
+all six view models but does not make an ineligible template show a popup.
+For the standard warning route, `ZPM_HMI_Info` is dataID **0x272**, ten
+wire bytes (callback `0x1699ac`, unpacker `0x167688`, RTE component 0x46,
+element 7). Wire order: packed flags, BE16 WarnID, BE16 PopupID, BE16
+acoustic sync, sound, repetition, extra byte. The fixture sets WarnID
+**0xa800** while an opening is selected, all other fields zero; closing
+all six clears WarnID. The original gtf2 ZPM DB entry at `0xa687f8` and
+special handling at `0x172048` identify this as CarOutline. This is a
+minimal local warning source, not complete KSS warning priority arbitration.
+
+The selected design was investigated separately. Original NvM block 0x4b
+has a 19-byte ROM fallback at `0x10f37b4`, with selected-design byte 18 = 0.
+Sending that selection did not resolve the missing warning. No automatic
+design selection or environment override was retained. The user confirmed
+CarOutline displays without it.
+
+`inspect_closures.py` saves the original descriptors, activation/condition
+disassembly and NvM ROM metadata. `probe_wheel.py --closures --capture
+--seconds 125` additionally retains selected QEMU scanout frames under its
+private output directory.
 
 ## SLINK1 slave model and a host KSS stand-in: gtf2 starts
 

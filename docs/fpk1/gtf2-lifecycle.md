@@ -190,3 +190,25 @@ python3 tools/fpk1/research/gtf2/inspect_init_array.py \
 ```
 
 The research script is source-only and validates file-backed `PT_LOAD` mappings; do not commit the extracted binary or the JSON output.
+
+### Independent direct-call verification (2026-10-28)
+
+The extracted original `STAGE2.1/bin/gtf2` was scanned at four-byte ARM-state instruction alignment within its executable ELF `PT_LOAD`. The instruction encoding `BL immediate` at **exactly three** locations resolves to `startEfsDriver() = 0x699594`:
+
+| Instruction address | ARM branch target | Prior research context |
+| --- | --- | --- |
+| `0x122eac` | `0x699594` | `handleLoadingKZBs()` / `ClusterFull` |
+| `0x130794` | `0x699594` | delayed HMI start |
+| `0x692f20` | `0x699594` | `GssMan2HMIReplyImpl::enterColdCrank()` |
+
+This independently confirms the **direct branch encodings**, while the symbolic names are taken from the existing reverse-engineering notes. It does **not** prove that any call site executes in a given run or exclude indirect calls. The branch-scan method can interpret inline data as instructions; full disassembly and basic-block validation remain follow-up work.
+
+Reproduce without committing the binary:
+
+```sh
+python3 tools/fpk1/research/gtf2/scan_direct_calls.py \
+  build_fpk1/research-artifacts/stage2/STAGE2.1/bin/gtf2 \
+  --target 0x699594
+```
+
+The same scan finds a direct `BL` at `0x6995a0` targeting `0x699530` in the prologue of `startEfsDriver()`; that callee is not yet semantically identified.

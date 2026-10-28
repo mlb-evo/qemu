@@ -1499,3 +1499,100 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 ```
 
 **Next GTF2-only target:** follow representative initializer functions `0x341e30`, `0x383098`, `0x344a40` to identify actual object vptrs and diagnostic class/screen names; then systematically connect the 92 mapped IDs to their concrete view classes and DP subscription slots.
+
+## First concrete screen names recovered from the registered view factory
+
+Following the provider-to-factory proof above, the **per-ID initializer functions contain literal references to `SV_*` view names and `CHMI*ViewData::construct` diagnostic names**. A reproducible scanner, `map_view_names.py`, follows the **92 supported factory branches** and reads only string literals directly referenced by their GTF2-owned initializer prologues.
+
+With a deliberately conservative **128-byte initializer scan**, **62 of the 92** supported view IDs already yield an exact embedded **`SV_*`** screen name. The remaining **30 are unresolved by this shallow scan**, not absent. These are **actual names embedded in this firmware**, not speculative UI labels.
+
+### Concrete view-ID map (representative confirmed names)
+
+| ID | Exact GTF2 view name | Initializer |
+| --- | --- | --- |
+| **1** | `SV_AudioFPK_HinweisTexte` | `0x341e30` |
+| **2** | `SV_AudioFPK_MediaBrowser` | `0x383098` |
+| **3** | `SV_AudioFPK_ReceptionList` | `0x344a40` |
+| **4** | `SV_AudioFPK_FavoritesList` | `0x373b88` |
+| **5** | `SV_AudioFPK_TuneScanMode` | `0x342530` |
+| **6** | `SV_AudioFPK_StationListUpdate` | `0x343398` |
+| **7** | `SV_AudioFPK_Empty` | `0x342444` |
+| **8** | `SV_AudioFPK_NA` | `0x3824f0` |
+| **18** | `SV_BordComputer` | `0x3b0db8` |
+| **19** | `SV_Car_Sportfunktionen_Laptimer` | `0x3fb848` |
+| **20** | `SV_Car_Sportfunktionen_Sportanzeigen` | `0x3f3748` |
+| **21** | `SV_Car_Sportfunktionen_Statistik` | `0x3e5588` |
+| **22** | `SV_Car_EnergyFlow` | `0x43d470` |
+| **23** | `SV_Car_ReducedView` | `0x4382c0` |
+| **24** | `SV_Car_Submenu_HybridDisplayMode` | `0x40fdd8` |
+| **25** | `SV_Car_Submenu_AdditionalDisplays` | `0x413320` |
+| **26** | `SV_Car_Submenu_AdditionalDisplays_Sport` | `0x4192b0` |
+| **60** | `SV_Car_Layout_WaitLayoutSwitching` | `0x40e478` |
+| **61** | `SV_Car_Layout_LayoutChoice` | `0x4384fc` |
+| **62** | `SV_Car_Layout_Disclaimer` | `0x43a980` |
+| **63** | `SV_Car_Layout_LayoutChoice_InitialBigStage` | `0x438a1c` |
+| **64** | `SV_Car_Layout_VelocityThreshold` | `0x438f30` |
+| **65** | `SV_NightVision` | `0x40d1c8` |
+| **66** | `SV_NightVision_Init` | `0x40d978` |
+| **67** | `SV_Welcome_EnergyFlow` | `0x40b978` |
+| **71** | `SV_Test_Font` | `0x459220` |
+| **72** | `SV_TransportMode` | `0x44bb48` |
+| **96** | `SV_Empty` | `0x44b958` |
+| **97** | `SV_Safe_CP` | `0x44e2f0` |
+| **98** | `SV_LogoAnimGoodbye` | `0x460c8c` |
+| **99** | `SV_LogoAnimWelcome` | `0x4607a0` |
+| **100** | `SV_Empty_Startup` | `0x44ba44` |
+| **111** | `SV_Nav_Submenu_Autozoom` | `0x476cc8` |
+| **112** | `SV_Nav_Submenu_MapColor` | `0x4737d0` |
+| **113** | `SV_Nav_Submenu_MapDisplay` | `0x4702e0` |
+| **114** | `SV_Nav_Submenu_MapType` | `0x46ade8` |
+| **115** | `SV_Nav_Submenu_Voice` | `0x466ea0` |
+| **116** | `SV_LVDS_FPK_NavMap` | `0x4a2a48` |
+| **117** | `SV_NavFPK_Favourites` | `0x4961d0` |
+| **118** | `SV_NavFPK_LastDestinations` | `0x487040` |
+| **119** | `SV_NavFPK_Compass` | `0x4a2698` |
+| **120** | `SV_NavFPK_Compass_MobileDevice` | `0x466da4` |
+| **121** | `SV_NavFPK_HinweisTexte` | `0x4a20b8` |
+| **122** | `SV_NavFPK_NA` | `0x47a1b8` |
+| **132** | `SV_Phone_NA` | `0x4cc910` |
+| **133** | `SV_Phone_AutoRedialing` | `0x4cf260` |
+| **134** | `SV_Phone_EmergencyCall_Confirm` | `0x50abb8` |
+| **135** | `SV_Phone_HinweisTexte` | `0x4d63f8` |
+| **136** | `SV_Phone_NoListsAvailable` | `0x4cc334` |
+| **137** | `SV_Phone_ActiveCall_MultipleCalls` | `0x5276d8` |
+| **138** | `SV_Phone_ActiveCall_OneCall` | `0x538bb0` |
+| **139** | `SV_Phone_Adressbook_DetailedNumbers` | `0x5039e8` |
+| **140** | `SV_Phone_Adressbook_Overview` | `0x50d0e0` |
+| **141** | `SV_Phone_CombinedNumbers` | `0x4e3a08` |
+| **142** | `SV_Phone_Mailbox_NotAvailable` | `0x4cd4b8` |
+| **143** | `SV_Phone_Favorites` | `0x4d69c8` |
+| **144** | `SV_Phone_AudiService` | `0x4d0f68` |
+| **145** | `SV_Phone_AudiService_InfoCall` | `0x4d44e8` |
+| **146** | `SV_Phone_AudiService_ServiceCall` | `0x4d25e0` |
+| **152** | `SV_WarnRoller` | `0x54b720` |
+| **172** | `SV_Test_ImageDecorator` | `0x54aa28` |
+| **179** | `SV_DEBUG_List` | `0x5617a0` |
+
+**Important distinction:** this table names *view IDs in the active provider* and their lazy initializer routines, not the **180 DP subscription slots**. The numeric ranges overlap, but a direct proof that every view ID equals its DP subscription slot has not been established. The special transition sentinel **181** is outside the provider's 1..179 factory range.
+
+### Verified chain, end to end
+
+```text
+GTF2 startup 0x222070
+  -> 0x25a8f4: construct singleton provider, vptr 0x82bdd8
+  -> 0x6a9ef4: register provider in global 0xdb1900
+ViewManager view lookup
+  -> 0x6a9e9c: provider virtual +0x00
+  -> 0x25a940: 179-entry ID jump table
+  -> per-ID lazy singleton initializer
+  -> named CHMI*ViewData::construct / SV_* screen
+```
+
+This is the first **end-to-end mapping from GTF2's active ViewManager provider to named application screens**. Next: resolve the 30 shallow-scan misses, then follow specific view constructors to their DP subscriptions and UI event handlers.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/map_view_names.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/inspect_lazy_object_factory.py /path/to/gtf2
+```

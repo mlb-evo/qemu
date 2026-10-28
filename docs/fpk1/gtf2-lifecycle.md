@@ -320,3 +320,60 @@ This read-only source script searches a small, explicit list of diagnostic strin
 5. Only after static mapping, compare with a guest-clock trace from QEMU; record evidence separately from hypotheses.
 
 Do **not** expand this into a survey of `libosal.so`, `libeal.so`, `libKD.so` or other library internals.
+
+### `handleLoadingKZBs()`: ARM branch-supported internal state (2026-10-28)
+
+**Directly disassembled** original ELF SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. The ARM function begins at **0x122c54** (`push {r4,r5,r6,r7,r8,lr}`; `r4 = r0`, the current object). These are GTF2-owned code paths, not library internals.
+
+| Object byte | Read / write evidence | Working semantic label |
+| --- | --- | --- |
+| `this+0xdf4` | checked at `0x122c80`; set at `0x122dc4` | terminal/abort guard (exact meaning TBD) |
+| `this+0xdf5` | checked `0x122f28`; set `0x122fec` | `EarlyTubes` requested |
+| `this+0xdf6` | checked `0x122dec` and `0x123000`; set `0x122e5c` | `EarlyTubes` loaded/handled |
+| `this+0xdf7` | checked `0x122e60` and `0x122ff4`; set `0x12332c` | `ClusterFull` requested |
+| `this+0xdf8` | checked `0x122e6c` and `0x123340`; set `0x122eb4` | `ClusterFull` loaded/handled |
+| `this+0xdf9` | checked `0x122eb8` and `0x123334`; set `0x123480` | 3D car requested |
+| `this+0xdfd` | checked `0x122cac` | gate selecting earlier vs subsequent loading path; meaning TBD |
+
+**Observed branch structure:**
+
+1. `0x122c80`: if `+0xdf4 != 0`, exit. Two preliminary internal calls and another gate `+0xdfd` determine whether the function enters the completion handling at `0x122de0` or an earlier path at `0x122cb8`.
+2. `0x122de0–0x122e5c`: if `+0xdf5 != 0 && +0xdf6 == 0`, log `EarlyTubes loaded`, invoke the internal resource path using `EarlyTubes` and `DisplaySupervisor.kzb`, then mark `+0xdf6 = 1`.
+3. `0x122e60–0x122eb4`: if `+0xdf7 != 0 && +0xdf8 == 0`, log `ClusterFull loaded`, call internal function `0x121498` with the `ClusterFull` literal, then **`BL 0x699594` at `0x122eac`** (`startEfsDriver()`), then mark `+0xdf8 = 1`. This is a verified call ordering in the branch, **not proof of resource load success**: actual completion criteria depend on the preceding internal gates.
+4. `0x122f28–0x122ff0`: if `+0xdf5 == 0`, log `Requesting Early Tubes`, build an `Initial` request with IDs 174/177 through internal calls, then set `+0xdf5 = 1`.
+5. `0x122ff4–0x123330`: if `+0xdf7 == 0 && +0xdf6 != 0`, prepare the `ClusterFull` request; a **global signed counter** read at `0x123034` (pointer from literal `0x1234e8`) gates the request. If counter > 0, branch to `0x123380` and decrement at `0x123380–0x123384`; otherwise continue to the request setup at `0x12338c` (see below for separate 3D gate). The `ClusterFull` request branch sets `+0xdf7 = 1` at `0x12332c`.
+6. `0x123334–0x123484`: if `+0xdf9 == 0 && +0xdf8 != 0`, log `3D Car Requested`, use `DisplayManager::getFilenameCar3D` and `DP_ID_WarnRoller_3DCar_kzbFileName`, then set `+0xdf9 = 1`.
+
+**Correction about frame waits:** `0x123370–0x123388` is in the **3D car request gate** (`+0xdf9 == 0 && +0xdf8 != 0`), and decrements a global counter before requesting the 3D model. A separate counter/gate exists for the `ClusterFull` path at `0x123030`. Do not conflate these two stages or infer the exact frame counts without tracing the initialization of their counters.
+
+#### State diagram (branch-backed, not timing-backed)
+
+```text
+GTF2 loading handler 0x122c54
+  |
+  +-- this+0xdf4 set -----------------------------> return
+  |
+  +-- EarlyTubes requested, not handled ---------> process EarlyTubes;
+  |                                                 this+0xdf6 = 1
+  +-- ClusterFull requested, not handled --------> process ClusterFull;
+  |                                                 startEfsDriver();
+  |                                                 this+0xdf8 = 1
+  +-- EarlyTubes not requested ------------------> request Initial/EarlyTubes;
+  |                                                 this+0xdf5 = 1
+  +-- EarlyTubes handled, Cluster not requested -> wait/request ClusterFull;
+  |                                                 this+0xdf7 = 1
+  +-- Cluster handled, 3D not requested ---------> wait/request 3D car;
+                                                    this+0xdf9 = 1
+```
+
+**Caveat:** The labels “requested” and “handled” follow diagnostic text and writes; the exact asynchronous callback that sets the underlying resource-ready state is still to be mapped. These flags do not by themselves prove GPU readiness or visible output.
+
+#### Reproduce the relevant branch sites
+
+For stripped QNX ELF, disassemble its executable `PT_LOAD` (VA `0x100000`, file offset zero) using an ARM-aware disassembler. The binary lacks a standard `.text` section header; a temporary synthetic `.text` section referencing the unchanged executable segment permits:
+
+```sh
+llvm-objdump -d --start-address=0x122c54 --stop-address=0x123490 /tmp/gtf2-with-text-section.elf
+```
+
+The synthetic-section file is a **local disassembly aid only**, never committed or distributed.

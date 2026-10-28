@@ -1007,3 +1007,69 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 ```
 
 These results use the GTF2 ELF itself; no shared libraries or proprietary firmware bytes are committed.
+
+## Derived ViewManager::handleViewSwitch — delayed transition state machine
+
+Direct disassembly of **`0x11a250–0x11a828`** in the original GTF2 ELF establishes the **derived** view switch handler. The diagnostic literal `0x11a830 -> 0x891bc2` is **`ViewManager::handleViewSwitch`** (as opposed to the base handler's `BaseViewManager::handleViewSwitch`). The routine contains several independently gated transition paths, not just a single base-method delegation.
+
+### Entry gates and time comparisons
+
+- `0x11a2a0–0x11a2b8`: check two byte flags **`this+0x25`** and **`this+0x26`**. If *both zero*, branch to **`0x11a800`**, which directly invokes base **`0x6a91a8`** at `0x11a80c`, then calls `0x119614`. This proves that the derived manager **retains the base transition path** in its ordinary/no-special-mode case.
+- If either flag is nonzero, check **`this+0x88`** at `0x11a2b8`. When nonzero, compare a timestamp against a **1000-unit** offset (`0x11a2c4–0x11a2f8`), log **`handleViewSwitch(isPopup=%d), needle sweep active, suppressing all view changes`**, store timestamp words at **`this+0x80/+0x84`**, then exit. The code strongly supports a **needle-sweep suppression gate**; the time unit of the 64-bit clock is not proven solely by the immediate 1000.
+- `0x11a32c–0x11a43c`: when **`this+0x25`** and **`this+0x54`** are nonzero, compare a 64-bit deadline at **`this+0x50`** against a clock plus **200** (`0x11a350–0x11a37c`). A target change updates **`this+0x3c`** and **`this+0x58`**, and caches a 64-bit time at **`this+0x60/+0x64`** (`0x11a37c–0x11a3ec`). A further clock comparison uses **1000** and may log **`handleViewSwitch, waiting for end of delay`** (`0x11a3f0–0x11a43c`).
+- `0x11a440–0x11a464`: when the delay branch is not taken, compare the current target with the cached **`this+0x3c`** and set **`this+0x54=1`** if the target differs.
+
+### Deferred view-switch cancellation and notification
+
+- `0x11a468–0x11a4c0`: build a temporary event/result record. If **`this+0x26`** is nonzero, call internal **`0x118878`** to prepare additional state. Then query manager helper **`0x1224b8`**, storing the result in `r10`.
+- `0x11a4d8–0x11a5fc`: if **`this+0x25`** and **`this+0x71`** are set, compare the target against **`this+0x1c`**. When equal, log **`delayed view switch canceled, sending view %s aboutToShow`**, call current view's **virtual `+0x24`** (`0x11a544–0x11a574`), then **disable/flush its DP slot** through `0x122338` at `0x11a588`. The handler also calls GTF2-owned helpers `0x117c40`, `0x11de04`, and `0x120048`. The diagnostic **`delayed view switch canceled, fading in %s`** belongs to the alternate branch where the target differs (`0x11a5c4–0x11a5f8`), which sets **`this+0x40=1`** and clears **`this+0x54`**.
+- `0x11a610–0x11a634`: if special-mode processing proceeds, clear **`this+0x70`** and **`this+0x71`**, then call the derived manager's virtual **`+0x5c`** (vtable `0x7bfaf0` maps this to **`0x118c74`**). This is a concrete virtual transition hook absent from the base table.
+
+### Deferred transition launch
+
+- `0x11a638–0x11a674`: verify requested target differs from current **`this+0x1c`**, current view pointer **`this+0x18`** is nonnull, and `this+0x71` is zero.
+- If **`this+0x70`** is set, `0x11a678–0x11a738` clears it, logs **`delayed view switch to %s, sending view %s justHidden`**, invokes current view's virtual **`+0x30`** (`0x11a6d0–0x11a6f8`), calls **`enableSlot`** at `0x11a710`, sets **`this+0x71=1`** and resets **`this+0x68=0`**.
+- Otherwise `0x11a73c–0x11a7dc` logs **`trying to trigger delayed view switch to %s from %s`**, constructs two temporary state records via `0x118750`, and invokes GTF2-owned **`0x11cbb0`** with a function pointer literal **`0x117fd4`** and `this`. This is a **callback-driven delayed transition request**; the exact callback's effects require separate analysis.
+
+### Source-anchored diagnostic strings
+
+| Literal pool VA | String VA | Exact GTF2 diagnostic |
+| --- | --- | --- |
+| `0x11a830` | `0x891bc2` | `ViewManager::handleViewSwitch` |
+| `0x11a834` | `0x7bf63c` | `handleViewSwitch(viewID=%d, viewName=%s)` |
+| `0x11a83c` | `0x7bf665` | `handleViewSwitch(isPopup=%d), needle sweep active, suppressing all view changes` |
+| `0x11a840` | `0x7bf6b5` | `handleViewSwitch, target changed within delay time, reset delay timer for %s` |
+| `0x11a844` | `0x7bf702` | `handleViewSwitch, waiting for end of delay` |
+| `0x11a848` | `0x7bf72d` | `handleViewSwitch(), delayed view switch canceled, sending view %s aboutToShow` |
+| `0x11a850` | `0x7bf796` | `handleViewSwitch(), delayed view switch canceled, fading in %s` |
+| `0x11a854` | `0x7bf7d5` | `handleViewSwitch(), delayed view switch to %s, sending view %s justHidden` |
+| `0x11a85c` | `0x7bf839` | `handleViewSwitch(), trying to trigger delayed view switch to %s from %s` |
+
+### Reconstructed high-level state model
+
+```text
+derived ViewManager::handleViewSwitch
+  if !flag25 && !flag26:
+      BaseViewManager::handleViewSwitch()
+      additional derived follow-up
+  else if needle_sweep_flag88:
+      suppress view change, update timestamp
+  else:
+      compare target/deadline, maybe wait and cache target
+      inspect pending delayed-switch state
+      if delayed switch canceled:
+          notify current view (+0x24), flush DP IDs
+          or mark fade-in/reset pending flag
+      else if special transition needs continuation:
+          invoke virtual manager +0x5c
+      else if current view exists and target differs:
+          if pending justHidden flag70:
+              notify current view (+0x30)
+              enable old DP slot; set flag71
+          else:
+              schedule callback-driven delayed switch via 0x11cbb0
+```
+
+This is **not a claim of exact source-level control-flow equivalence**: branch names are derived from diagnostic strings and observed state writes, and the callback at `0x117fd4` still needs decoding. However, the key conclusion is robust: the derived ViewManager contains an **asynchronous/delayed view-transition state machine** that the base `0x6a91a8` handler alone does not describe.
+
+**Next GTF2-owned targets:** callback `0x117fd4`, virtual manager `+0x5c -> 0x118c74`, and derived `+0x60 -> 0x119688`. Together they should clarify the scheduling, cancellation, and completion of view transitions.

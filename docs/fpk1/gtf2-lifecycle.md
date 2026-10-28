@@ -3161,3 +3161,24 @@ python3 tools/fpk1/research/gtf2/verify_fernlicht_scene.py /path/to/gtf2
 This verifier checks exact instruction words, scene strings, pointer literals, and ARM PC-relative LDR use sites. It was executed against the original binary and reported the two verified Fernlicht bindings.
 
 **This is the first per-object, instruction-backed join of an RTE DP event route to concrete named scene nodes** in this research. It is still not a proof of the ultimate property mutation or rendered output.
+
+### Fernlicht event semantics: both routes have identical receiver call arguments
+
+Compared **instruction by instruction** the two scene-wrapper fan-outs already proven for `ActTest_CommonSoftLEDs` (`0x020001e6`, handler `0x5812a8`) and `TelltaleHMI_Display` (`0x020002d2`, handler `0x586cd0`). After accounting for differing PC-relative literal offsets and BL displacements, **both event handlers use the same instructions and arguments** for both Fernlicht wrappers:
+
+| Wrapper / node | Test event call sequence | Normal telltale call sequence | Argument data |
+| --- | --- | --- | --- |
+| `owner+0x1f5d0` / `Fernlicht` | `0x5812a8–0x5812d8` | `0x586cd0–0x586d00` | `r1=owner+0x1f5cc` |
+| `owner+0x1fb00` / `Fernlicht_BIG` | `0x5812dc–0x581304` | `0x586d04–0x586d2c` | `r1=owner+0x1fafc` |
+
+Both call `0x6218cc` to obtain `wrapper+0xb8` and then invoke **receiver virtual slot `+0x00`**. The other inputs are identical **in structure**: `r2=r6`, `r3=2`, stack arguments `[r5,-1,0]`. The handler does **not** test the lamp's incoming value, select an animation, or toggle visibility inline.
+
+**Important nuance:** identical argument setup does **not** imply identical *runtime values* of `r5` and `r6`; they originate upstream in the event dispatcher. A receiver can distinguish the test and normal-display events using the passed event identity, field/state pointer, or other context. The actual receiver implementation and its interpretation of these parameters remain to be resolved.
+
+Verified locally against the original GTF2 ELF. New verifier:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_fernlicht_event_arguments.py /path/to/gtf2
+```
+
+**Narrowed conclusion:** the two IPC/DP events do not implement separate hardcoded high-beam drawing logic at their HMI dispatch sites. They **both delegate to the same pair of scene-bound receiver objects**, using the same calling convention and kind-2 event. To determine precisely which payload bit switches on/off or blinks the lamp, trace the origin of `r5/r6` and devirtualize the receiver's slot-0 implementation.

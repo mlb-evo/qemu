@@ -1346,3 +1346,30 @@ Reproduce:
 ```sh
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x146200 --stop 0x146380
 ```
+
+## GTF2 view-object vtable candidate census and shared notification implementation
+
+A direct, read-only scan of the original GTF2 ELF found **94 candidate pointer-table starts** in `0x7b0000..0x8c0000` with at least **30 consecutive callable-looking entries**, including a callable **`+0x74`** entry. This is a **heuristic census**, not 94 confirmed C++ classes: runs of function pointers can be non-vtable structures, and alignment/pointer-boundary assumptions can introduce false positives. The reproducible scanner is `tools/fpk1/research/gtf2/scan_view_vtables.py`.
+
+Several strong, structurally similar candidates demonstrate that the previous view-property call can dispatch to **different GTF2-owned methods** depending on the object's vptr:
+
+| Candidate table VA | `+0x00` | `+0x4c` | `+0x74` | `+0x78` |
+| --- | --- | --- | --- | --- |
+| `0x7c5518` | `0x135594` | `0x145198` | `0x1355f0` | `0x143a54` |
+| `0x892df0` | `0x6aea64` | `0x145198` | `0x6aeae0` | `0x143a54` |
+| `0x893098` | `0x6af270` | `0x145198` | `0x6af2ec` | `0x143a54` |
+| `0x893450` | `0x6afa60` | `0x145198` | `0x6afabc` | `0x143a54` |
+| `0x895458` | `0x6baa44` | `0x145198` | `0x6baaa0` | `0x143a54` |
+
+The shared **`+0x4c -> 0x145198`** is a substantial GTF2 routine, not the simple `BaseViewManager` getter at `0x1173d4`. Its entry at `0x145198` loads the receiver's vptr and invokes its **virtual `+0x70`** at `0x1451b4–0x1451b8`, then continues into GTF2-owned `0x6218cc`. This supplies concrete evidence that the **view receiver's `+0x4c` callback** used by the DP flush path may be a shared adapter that delegates through another virtual slot. The precise relationship of these five candidate tables to the receiver objects passed at `0x122338` still needs constructor tracing.
+
+**Practical next step:** instead of treating `+0x74` as a single method, cross-reference each candidate table's vptr literal against constructor stores; inspect the per-class `+0x74` methods (`0x6aeae0`, `0x6af2ec`, `0x6afabc`, etc.), then map the constructed objects into the provider lookup `0x6a9e9c`. Do not equate these candidate tables with named screens until those links are proven.
+
+### Reproduce the census
+
+```sh
+python3 tools/fpk1/research/gtf2/scan_view_vtables.py /path/to/gtf2 \
+  --start 0x7b0000 --stop 0x8c0000 --code-stop 0x7b0000 --min-methods 30
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 \
+  --start 0x145198 --stop 0x1451c0
+```

@@ -2488,3 +2488,24 @@ python3 tools/fpk1/research/gtf2/decode_rte_dp_fields.py /path/to/gtf2
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69534c --stop 0x6954cc
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x697264 --stop 0x697310
 ```
+
+### Automated scan of direct RTE payload-to-DP writes (176 sites)
+
+A conservative ARM32 static scanner over the GTF2-owned callback code range `0x680000–0x6a0000` identifies **176 distinct call sites** to the DP setter `0x131390` where:
+
+1. The call is a direct ARM `BL` to `0x131390`.
+2. The immediately preceding code loads **r1** with a PC-relative 32-bit literal DP ID whose top byte is `0x02`.
+3. The same short instruction sequence loads **r2** using a direct `LDRB` or `LDRH` field read from the incoming payload.
+
+Reproduce against the original extracted GTF2 ELF:
+
+```sh
+python3 tools/fpk1/research/gtf2/scan_rte_dp_writes.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-ipc-dp-fields.csv
+```
+
+The **176** figure counts instruction-level field-to-DP write sites, **not** 176 different incoming CAN signals or 176 unique DP IDs. The matches are clustered across code pages: **47** in `0x694000–0x694fff`, **80** in `0x695000–0x695fff`, **40** in `0x696000–0x696fff`, and **9** in `0x697000–0x697fff`. Other callbacks may write through computed values, use non-literal IDs or call wrappers and therefore are intentionally absent.
+
+The scan exposed and corrected a previous documentation omission: **`Gear_Display` writes 12 bytes**, including the last `payload+0x0b` → `0x020001f9` mapping at `0x695450–0x695458`. A 12-item batch is therefore consistent with 12 actual direct writes. This is verified from the ARM disassembly, not inferred from the batch count.
+
+**Interpretation boundary:** this identifies how GTF2 maps payload fields into DP state. It does not by itself establish the corresponding SPI LUN/record layout or whether the values are subsequently used to switch views. The next stage is associating each callback entry with its `IHmiKss` service method and tracing its downstream DP consumers.

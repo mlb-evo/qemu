@@ -369,3 +369,40 @@ Together, these traces give a stronger ordering:
 The remaining high-value proof points are: identify the call to the IPC transport's actual subscribe/connect method, and trace `0x141fbc`/`0x142cec` to the concrete KZB open and scene-activation APIs. An asynchronous IPC worker could still process messages before the main loop; the above order does not exclude that.
 
 Verifier: `tools/fpk1/research/gtf2/verify_ipc_descriptor_and_kzb_startup.py`, checked against original stock ELF.
+
+## Resolved: startup explicitly waits on an RTE object
+
+Within the same startup routine `0x114650`, after constructing the HMI owner and before later context/design setup, the original ARM code enters an explicit wait loop:
+
+```asm
+114ab0  bl 0x13d098         ; obtain service/global object
+114ab4  bl 0x14199c         ; service-related operation
+114ab8  mov r0,r5
+114abc  bl 0x10e870
+114ac0  mov r0,#2
+114ac4  mov r1,#0
+114ac8  bl 0x10dcc4        ; waiting/yield operation, exact API unverified
+114acc  bl 0x13d098
+114ad0  bl 0x13a614        ; test RTE object state
+114ad4  cmp r0,#0
+114ad8  bne 0x114ab0      ; repeat while not ready
+```
+
+The test is particularly simple:
+
+```asm
+13a63c  ldr r0,[r4,#0xc]  ; read object field +0x0c
+13a640  subs r0,r0,#0
+13a644  movne r0,#1      ; normalize to boolean
+13a648  pop {r4,pc}
+```
+
+After the loop, `0x114b08–0x114b1c` computes a difference between previously saved timing values and logs the literal **`%dms waited on RTE`** (at `0x7bdefa`) through `0x10e264`. This directly grounds the interpretation as an **RTE wait**; it is not merely inferred from a field or generic loop. The wait body also performs other service operations; their exact role is not yet known.
+
+This sharpens the startup chain:
+
+**construct HMI owner/receiver objects** → **perform resource/configuration setup** → **wait for RTE state to clear** → **query active design/variant and set context hooks** → **main event loop**.
+
+**Important boundary:** `RTE object+0x0c == 0` is the precise exit condition, but its semantic name is not recovered. The diagnostic calls it RTE waiting, yet it does **not** prove that all `IHmiKss` subscriptions are registered, that incoming events cannot arrive asynchronously, or that Kanzi scene nodes have been activated. The `DisplaySupervisor.kzb` reference nearby is passed through a temporary string/configuration path and should not be treated as proof of actual KZB loading.
+
+Reproducible verifier: `tools/fpk1/research/gtf2/verify_rte_startup_wait.py`; executed successfully against the original stock GTF2 ELF.

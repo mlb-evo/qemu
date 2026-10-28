@@ -2166,3 +2166,37 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69c68c --stop 0x69c974
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d7b0 --stop 0x69d878
 ```
+
+## Two callers of chain synchronization found; source ID is a requested record, not a hardcoded startup constant
+
+A full direct ARM BL census of the executable found exactly **two** callsites of **`0x69c68c`**, both in the same GTF2-owned surrounding routine:
+
+| Callsite | Inputs reconstructed | Follow-up |
+| --- | --- | --- |
+| **`0x69cca8`** | `r0=r6` manager, `r1=r7` requested ID, `r2=r5` result of `0x6ac100([r6], [r4+8])`, `r3=r4` source object | `0x69ccac–0x69ccc8` converts result to boolean and updates current selection with `0x69c64c` |
+| **`0x69d068`** | `r0=r6` manager, `r1=r5` requested record, `r2=r8` alternative resolved record, `r3=r4` source object | `0x69d06c–0x69d088` again calls `0x69c64c` with selected record ID |
+
+At **`0x69cc74–0x69cc80`**, the first path explicitly reads **`[r4+8]`**, then resolves that value through the **32-byte record array**. The selected ID is therefore carried through a **source object's field at `+0x08`**, rather than being an immediate constant at the synchronization call.
+
+At **`0x69d000–0x69d008`**, the second path updates a record's **`next_id_04`** and calls **`0x69d84c`**, which sets or clears **bit 4 (`0x10`)** of its `flags_10`. This is a **separate flag** from the bit-0 read gate and bits-1/2 write gate, so it must not be conflated with the view-selection block.
+
+The verified chain now spans:
+
+```text
+source object's requested ID at +0x08
+  -> indexed record lookup 0x6ac100
+  -> chain synchronization 0x69c68c (two direct callers)
+  -> conditional selected_id_14 writes 0x69d810
+  -> BaseViewManager selector 0x6a8d5c
+  -> provider factory
+  -> event-driven virtual switch handler
+```
+
+The **precise upstream writer of the source object's `+0x08`** and the initial contents of the 32-byte record array remain unknown. No evidence yet proves that this source emits startup IDs **174/176/177/178**. This is the next boundary for tracing, not an excuse to infer the visible startup order.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69cc48 --stop 0x69ccd0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69cfdc --stop 0x69d08c
+```

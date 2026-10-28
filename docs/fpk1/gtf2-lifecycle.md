@@ -1073,3 +1073,46 @@ derived ViewManager::handleViewSwitch
 This is **not a claim of exact source-level control-flow equivalence**: branch names are derived from diagnostic strings and observed state writes, and the callback at `0x117fd4` still needs decoding. However, the key conclusion is robust: the derived ViewManager contains an **asynchronous/delayed view-transition state machine** that the base `0x6a91a8` handler alone does not describe.
 
 **Next GTF2-owned targets:** callback `0x117fd4`, virtual manager `+0x5c -> 0x118c74`, and derived `+0x60 -> 0x119688`. Together they should clarify the scheduling, cancellation, and completion of view transitions.
+
+### Deferred callback resolved: `0x117fd4` arms the `justHidden` transition
+
+The function pointer `0x117fd4` passed to GTF2-owned scheduler `0x11cbb0` at `0x11a7d4` resolves to a **tiny GTF2 callback**:
+
+```text
+0x117fd4:
+    log diagnostic (when log level permits)
+    if callback_this == NULL: invoke failure/assert helper
+    callback_this->byte_0x70 = 1  [STRB at 0x118028]
+    return
+```
+
+This closes an actual state-machine loop, not merely a suggestive log string:
+
+1. Derived `ViewManager::handleViewSwitch` at `0x11a7d4` schedules callback **`0x117fd4`** through `0x11cbb0`.
+2. When invoked with a valid manager pointer, the callback sets **`this+0x70=1`**.
+3. A later `handleViewSwitch` call checks **`this+0x70`** at `0x11a66c–0x11a674`.
+4. The armed branch **clears `+0x70`** at `0x11a67c`, calls the current view's virtual **`+0x30`** (the diagnostic labels this `justHidden`), enables its DP slot via `0x120e94`, sets **`this+0x71=1`** and resets **`this+0x68=0`** (`0x11a700–0x11a730`).
+
+```text
+delayed view switch requested
+  -> schedule callback 0x117fd4
+       -> manager.flag70 = 1
+  -> next eligible ViewManager::handleViewSwitch
+       -> manager.flag70 = 0
+       -> outgoing_view.virtual(+0x30)
+       -> enable DP slot
+       -> manager.flag71 = 1
+       -> manager+0x68 = 0
+  -> subsequent delayed/cancellation branches observe flag71
+```
+
+This **proves a two-stage delayed view transition handshake**: a scheduled callback signals readiness by writing `+0x70`, and the view manager consumes the signal in a subsequent dispatch. It does **not** establish the callback's wall-clock delay, scheduler threading model, or the exact meaning of the receiver's virtual method beyond the diagnostic label.
+
+The next extended virtual method **`+0x5c -> 0x118c74`** is a larger state-machine routine. Its entry (`0x118cc4–0x118d44`) checks **`+0x40`**, **`+0x25`** and a cached target at **`+0x3c`**; on a target change it updates `+0x3c`, then dispatches the derived virtual **`+0x60`**. Another branch (`0x118d48–0x118d64`) consumes **`+0x48`** by clearing it before further view processing. This links the derived virtual hooks to the same target/cancellation flags, but their full semantics require continued analysis.
+
+Reproduce:
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x117fd4 --stop 0x118044
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x118c74 --stop 0x118d70
+```

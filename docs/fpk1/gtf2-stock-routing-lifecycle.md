@@ -262,3 +262,35 @@ Combining this with the ESP constructor trace yields:
 This resolves *who creates the owner and how its construction is guarded*. It does **not** yet establish whether the `0x222070` startup-like function executes before IPC callback registration or Kanzi scene activation. Also, the owner-embedded receiver pointer is not itself proof that the Kanzi scene node has been resolved.
 
 Verifier: `tools/fpk1/research/gtf2/verify_owner_singleton.py`, executed successfully on original stock GTF2 ELF (including the direct-call counts).
+
+## Resolved: owner construction precedes entry into main event loop
+
+The stock executable has a concrete startup chain:
+
+```
+0x68c860 (outer startup/loop routine)
+  0x68c894 BL 0x114650  (initialization)
+    0x1146b8 BL 0x222070
+      0x222074 BL 0x2bae28 (guarded owner getter)
+        0x2bae50 BL 0x25ef60 (owner constructor on first call)
+    0x1146bc BL 0x14aaf4
+    0x1146c0 BL 0x69b71c
+    0x1146c4 BL 0x222ea4
+    ... further initialization
+  0x68c898 check init return status
+  0x68c8b0 loop condition
+  0x68c8c0 BL 0x11459c (event processing loop body)
+  0x68c8d0 branch back to loop condition
+```
+
+This proves that, **on the normal successful startup path**, the singleton HMI owner and its ESP wrapper/embedded receiver are constructed before the program enters the event-processing loop at `0x68c8b0`. In particular, the owner is not first constructed by a later DP event on this path. The singleton getter remains available for other callers, and it is guarded against repeated construction.
+
+The `0x114650` routine calls several more initialization functions after `0x222070`, so **this does not establish when IPC callbacks are registered or when the Kanzi scene is loaded/activated**. Nor does the loop ordering alone prove that no asynchronous IPC callback can arrive before the loop; that would require tracing registration/thread creation and synchronization. The verified statement is strictly **owner construction before the primary event loop**.
+
+Reproduction:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_startup_event_loop_order.py /path/to/gtf2
+```
+
+The verifier checks all eight direct `BL` edges, the main-loop branch instructions, and the order of initialization and loop entry against the original ELF. Tested successfully on the stock binary.

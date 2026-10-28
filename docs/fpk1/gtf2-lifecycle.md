@@ -2909,3 +2909,27 @@ python3 tools/fpk1/research/gtf2/verify_rte_event_fanout.py /path/to/gtf2
 ```
 
 This verifier checks both event DP literals, both `CMP`/conditional branch edges, **four receiver slot literals**, **four indirect calls**, and the **four event-kind assignments**. The two concrete receiver classes and visual elements are still unknown. Importantly, a fan-out is not a screen transition; it only proves multiple object-level event deliveries.
+
+### Cross-event convergence: two different DP IDs, the same HMI receivers
+
+Comparing the already identified fan-out handlers revealed a **shared pair of receiver wrappers**. This is stronger evidence than merely seeing the same virtual call sequence.
+
+| Incoming DP | Handler | Wrapper 1 owner offset | Wrapper 2 owner offset | Context 1 offset | Context 2 offset |
+| --- | --- | --- | --- | --- | --- |
+| `0x020001e6` | `0x5812a8` | `0x1f5d0` | `0x1fb00` | `0x1f5cc` | `0x1fafc` |
+| `0x020002d2` | `0x586cd0` | `0x1f5d0` | `0x1fb00` | `0x1f5cc` | `0x1fafc` |
+
+**Proof from original ARM code:**
+
+- `0x581b84` and `0x587410` contain the same first wrapper offset `0x1f5d0`; `0x581b88` and `0x587540` contain the same second wrapper offset `0x1fb00`.
+- Both handlers construct context pointers using `ADD owner,#0x1f400; ADD #0x1cc` and `ADD owner,#0x1f800; ADD #0x2fc`, respectively, yielding `owner+0x1f5cc` and `owner+0x1fafc`. **Each context is four bytes before its wrapper**, in both handlers.
+- The function previously described as a generic receiver resolver, `0x6218cc`, is actually just `LDR r0,[r0,#0xb8]; BX lr`: it dereferences the wrapper's **`+0xb8` target pointer**. Thus each handler's call sequence is `wrapper=owner[slot]` → `receiver=wrapper[0xb8]` → `receiver->vtable[0](receiver,context,event,kind=2,...)`.
+- Four indirect `BLX r12` calls (`0x5812d8`, `0x581304`, `0x586d00`, `0x586d2c`) and four `MOV r3,#2` sites prove both events are forwarded to **both** receivers with event kind `2`.
+
+**Interpretation:** distinct DP updates converge onto the same two receiver objects and matching per-receiver contexts. This indicates shared HMI object-level handling, **not** necessarily identical rendered output: the incoming event ID and arguments can still differ. The concrete vtable implementations and visible properties remain to be recovered.
+
+A new verifier checks **22 exact ARM words** (including literals, context arithmetic, pointer accessor, event kinds and indirect calls) against the original ELF. It was executed successfully on the local binary:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_shared_hmi_receivers.py /path/to/gtf2
+```

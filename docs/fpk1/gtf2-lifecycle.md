@@ -889,3 +889,57 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 ```
 
 No external library implementations were analyzed.
+
+## BaseViewManager vtable recovered from actual constructor writes
+
+The GTF2 ELF contains a **concrete virtual-function table at VA `0x891958`**. This is not a guessed C++ layout: multiple GTF2-owned routines load this exact pointer from literal pools and write it into `[this]`.
+
+**Direct constructor/vptr evidence:**
+
+- `0x117a34–0x117a7c`: constructor-like routine initializes members and writes `0x891958` into `[this]` at **`0x117a6c`** (literal `0x117a84`).
+- `0x117a88–0x117acc`: a second constructor-like routine writes the same vptr at **`0x117abc`** (literal `0x117ad0`).
+- `0x6a8d24–0x6a8d2c`: tiny vptr-reset function stores the same pointer; literal `0x6a8d30`.
+- `0x6a8d3c–0x6a8d54`: destructor-like routine writes the vptr and calls a cleanup helper; literal `0x6a8d58`.
+- `0x11ad68` is another exact literal reference to the table, not yet attributed to a constructor.
+
+**All 21 table entries, directly read from the original ELF** (addresses relative to vptr `0x891958`):
+
+| Slot | GTF2 function | Slot | GTF2 function |
+| --- | --- | --- | --- |
+| `+0x00` | `0x6a8d24` | `+0x04` | `0x6a8d3c` |
+| `+0x08` | `0x6a8d34` | `+0x0c` | `0x117398` |
+| `+0x10` | `0x1173a8` | `+0x14` | `0x1173bc` |
+| `+0x18` | `0x1173cc` | `+0x1c` | `0x6a9008` |
+| `+0x20` | `0x6a8f80` | `+0x24` | `0x6a8f14` |
+| `+0x28` | `0x6a8e84` | `+0x2c` | `0x6a96d0` |
+| `+0x30` | `0x6a9468` | `+0x34` | `0x6a93e0` |
+| `+0x38` | `0x6a94f4` | `+0x3c` | `0x6a8dac` |
+| `+0x40` | `0x6a9064` | `+0x44` | `0x1179dc` |
+| `+0x48` | `0x6a9334` | `+0x4c` | `0x1173d4` |
+| **`+0x50`** | **`0x6a91a8`** | | |
+
+The `+0x50` entry is the previously identified `BaseViewManager::handleViewSwitch` implementation. This **confirms its virtual slot**, which is valuable for locating callsites that dispatch through `[vptr+0x50]` without a direct ARM `BL`.
+
+**Other decoded entries:**
+
+- `+0x08 -> 0x6a8d34`: returns `this+0x1c` (the view/slot identifier).
+- `+0x18 -> 0x1173cc`: returns byte `this+0x24`.
+- `+0x4c -> 0x1173d4`: returns byte `this+0x23`. This is a trivial getter **for BaseViewManager objects**, **not** the per-view notification callback seen in `disableAndFlushSlot`. That callback is invoked through the *view receiver's own vtable*, whose concrete type may differ.
+- The table ends after `+0x50` (the following word `0x8919ac` is zero), followed by other ELF data and diagnostics.
+
+**Caution on class identification:** the strings `BaseViewManager::handleViewSwitch` and `handleViewSwitch` prove the diagnostic context of `0x6a91a8`; constructor vptr stores prove the table belongs to the same GTF2 object family. Whether derived view-manager classes replace this vptr with their own table at runtime is still to be determined. Do not treat all virtual dispatch as necessarily targeting this base table.
+
+### Reproducible vtable extraction
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_vtable.py /path/to/gtf2 \
+  --vtable 0x891958 --entries 21
+
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 \
+  --start 0x117a34 --stop 0x117ad4
+
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 \
+  --start 0x6a8d24 --stop 0x6a8d5c
+```
+
+**Next GTF2-only analysis:** find vtables for the **view receiver** objects passed to `disableAndFlushSlot`, then map their `+0x4c` implementations and the manager's `+0x58` virtual view lookup. The latter is **not** an entry in this 21-entry base table, suggesting that a derived table or different manager object is involved. The code evidence above resolves the base table, not yet all derived classes.

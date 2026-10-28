@@ -499,3 +499,45 @@ Tracing the **contents of the startup-enqueued work item** rather than only its 
 The queue consumer `0x14199c` examines several state bytes (`+0x14`, `+0x54`, `+0x64`) and processes nested collections and virtual calls before removing the 52-byte head item at `0x141f08–0x141f30`. The work item is therefore **not just a boolean notification**. However, the *semantic type* of the startup item and its relationship to actual `IHmiKss` transport subscription are **still unknown**. In particular, `r3=0` is a verified input value, not a recovered event enum name.
 
 Reproduce: `python3 tools/fpk1/research/gtf2/verify_rte_queue_record_sources.py /path/to/gtf2`. Tested against the original stock ELF: all 12 call edges, 16 instruction words and direct-call counts matched.
+
+## Critical correction: startup queue consumer is image/texture batch processing, NOT IPC subscription
+
+Disassembly of the **entire** consumer `0x14199c–0x141f48`, especially the virtual calls previously left unidentified, reveals diagnostic strings referenced by its own instructions. These give much stronger semantic evidence than the nearby startup log `%dms waited on RTE`:
+
+| Literal address | Referenced text |
+| --- | --- |
+| `0x141f84` | `handleWaitingBatch()` |
+| `0x141f88` | `batchInFlight` |
+| `0x141f8c` | `mergeFinished` |
+| `0x141f90` | `imagesLoaded` |
+| `0x141f94` | `imageIdsWaitFor` |
+| `0x141f9c` | `handleWaitingBatch(), image %s couldn't be loaded` |
+| `0x141fa0` | `handleWaitingBatch(), texture %s couldn't be created` |
+| `0x141fa4` | `handleWaitingBatch(), texture %s couldn't be created from atlas` |
+| `0x141fac` | `handleWaitingBatch() %d textures created` |
+| `0x141fb0` | `handleWaitingBatch(), batch completed, completionID = %d` |
+
+The actual virtual calls are:
+
+```asm
+141ab4  bl 0x10e90c        ; imported lookup, object in r0
+141ac4  ldr r3,[r6]       ; vtable
+141ac8  ldr r3,[r3,#0xc]  ; slot +0x0c
+141acc  blx r3            ; invoke on looked-up image-like object
+...
+141c78  ldr r3,[r6]
+141c80  ldr r3,[r3,#0xc]
+141c84  blx r3            ; branch creating texture
+...
+141cf4  ldr r3,[r6]
+141cf8  ldr r3,[r3,#0xc]
+141cfc  blx r3            ; atlas-related branch
+```
+
+At `0x141e4c–0x141e54`, the consumer calls `0x1476f0` to test an indexed batch/completion state before final dequeue. At `0x141eac–0x141ecc` it logs `batch completed, completionID = %d` and invokes a completion-related function. The handler processes image IDs, constructs textures (including atlas paths), and reports completed batches. The queue's producer and consumer identified in earlier sections therefore belong to **graphics resource/batch processing**.
+
+**This invalidates the prior working hypothesis that following this particular queue would identify `IHmiKss` subscription registration.** It does *not* invalidate the mechanically verified startup order, queue layout, or synchronous dequeue. The `%dms waited on RTE` diagnostic names the startup waiting stage, but does not mean that the queue itself is an IPC registration queue. Earlier sections referring to the queue as "RTE-related work" should be read with this narrower graphics-batch interpretation.
+
+To locate real IPC registration, trace the `IHmiKss` interface descriptor `0xa7e838` forward through its owner field, and identify the transport subscribe/connect call independently. To establish Kanzi readiness, follow texture batch completion and scene activation separately. The three virtual targets above cannot be assigned exact concrete classes without resolving their runtime vtable pointers.
+
+Verifier: `tools/fpk1/research/gtf2/verify_waiting_batch_semantics.py`. Tested locally on stock GTF2 ELF: 10 literal strings, 3 virtual call sequences, 5 logging calls, and startup-to-consumer edge passed.

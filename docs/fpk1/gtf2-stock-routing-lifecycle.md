@@ -165,3 +165,30 @@ Representative raw instructions:
 ```
 
 **Next investigation target:** identify constructor-installed vtable pointers for the 63 wrapper classes, then track call sites operating on objects of those classes. A generic slot-number scan alone cannot establish binder callers or lifecycle timing.
+
+## Constructor-time descriptor dispatch: distinct from receiver attachment
+
+Further stock ARM tracing identifies a separate virtual method used immediately after constructing the scene-property wrapper:
+
+```asm
+; ESP property construction, owner in r4
+294618  bl 0x6343d8       ; set full scene node path
+294648  bl 0x6343f0       ; set exact property name "ESP"
+29465c  str r0,[r4,r1]    ; owner field +0x453b8 = wrapper
+294660  ldr r1,[pc,...]   ; r1 = 0x874100 (static binary descriptor)
+294664  bl 0x62fc60      ; invoke virtual method +0x3c on wrapper
+```
+
+```asm
+62fc60  cmp r1,#0
+62fc68  popeq {r4,pc}
+62fc6c  ldr r3,[r0]       ; wrapper vtable
+62fc70  ldr r3,[r3,#0x3c] ; per-class descriptor initialization method
+62fc74  blx r3            ; objdump shows <unknown>
+```
+
+In the **63 vtables** with common receiver attachment slot `+0x30 → 0x6218b8`, slot `+0x3c` instead points to **62 distinct implementations** (all executable code addresses). For example, `0x881bb8+0x3c → 0x65d8d0`; this implementation reads typed fields from `r1` and conditionally invokes class-specific setters depending on flags in the object. This is concrete evidence for a **per-class constructor-time initialization/descriptor pass**.
+
+The static argument `0x874100` is a data block containing zero values and other constants, not the scene node path string and not a proven resolved Kanzi node pointer. Therefore, do **not** interpret the `0x62fc60` call as the receiver binding operation: the latter is a separate method at slot `+0x30`, and its caller/timing remain unresolved.
+
+The demonstrated order for ESP is: **create wrapper → set scene path → set property name → store wrapper in owner → apply static descriptor via slot +0x3c**. Runtime receiver binding and IPC event delivery happen through other methods. Whether descriptor values represent defaults, constraints, or initial runtime state depends on the specific wrapper class; avoid assigning a universal semantic to the block without tracing its fields.

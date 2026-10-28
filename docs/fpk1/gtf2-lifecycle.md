@@ -2255,3 +2255,61 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69cbf0 --stop 0x69ccc8
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d0cc --stop 0x69d168
 ```
+
+## The previously missing link is inside BaseViewManager's event loop (verified)
+
+Tracing **upward** from `0x69d19c` found **four** direct callsites, all inside three GTF2-owned queue-processing functions:
+
+| Caller | Callsite(s) | Queue behavior |
+| --- | --- | --- |
+| `0x69d2d0` | **`0x69d3a8`** | Traverses the 32-byte linked record chain, gathers IDs satisfying `0x69d7e4` (bit-2 flag), calls per-record virtual callback `+0x0c` through `0x6a5d40`, and drains the event queue |
+| `0x69d42c` | **`0x69d4a8`** | Repeatedly takes queue entries while manager phase is not 1 |
+| `0x69d4c8` | **`0x69d50c`** | Performs queue drain, direct event classification, another drain, and optionally resets queue cursors |
+| `0x69d5dc` | **`0x69d668`** | For manager phase 1, invokes reset wrapper and drains queue before leaving phase |
+
+**The key connection is at `0x6a9894`:** `BaseViewManager` event callback **`0x6a96d0`** calls **`0x69d4c8(manager+4,event,aux)`** when the current view has been notified and a queued-state gate is satisfied. This directly connects the event manager to the record classifier **`0x6ac3f8`** and conditional view-ID writes, without hypothesizing an external callback.
+
+Additional manager-owned routes:
+
+- **`0x6a9380`** calls queue-drainer `0x69d42c` when `0x69c574(manager+4)` reports pending data.
+- **`0x6a9048`** calls phase-1 queue-drainer `0x69d5dc`.
+- **`0x6a8ee4`** calls `0x69d3d4`, a phase-gated wrapper around `0x69d2d0`.
+
+### Queue layout and semantics
+
+The queue resides in a container pointed to by **`[manager+4]`**. The helper **`0x6ac07c`** tests whether the queue is nonempty by comparing `queue+0x20`, `+0x24`, `+0x28`. The pop helper **`0x6ac0a8`** reads from an array pointer at **`queue+0x18`**, using index **`queue+0x20`**, then advances/wraps the cursor relative to **`queue+0x1c`** and resets it on reaching the producer cursor. The entry is a **32-bit pointer/value**; the exact ownership of the pointed-to event record remains to be established.
+
+The queue-draining functions create stack-local event/auxiliary records before calling `0x69d19c`. Therefore **the classifier does not always receive the raw external event unmodified**; some calls receive synthetic or normalized records. In particular, the literal **9** placed in a stack local by the drainer is **not sufficient to assert a startup view ID of 9**.
+
+### Full statically established dependency path
+
+```text
+derived manager event callback +0x2c (0x11a8bc)
+    -> base event callback 0x6a96d0
+       -> virtual +0x50 derived handleViewSwitch (pre-event)
+       -> current view virtual +0x4c (event notification)
+       -> queue drain 0x69d4c8 (call at 0x6a9894)
+           -> 0x69d42c / 0x69d19c
+              -> 0x6ac3f8 classifier (iterates 32-byte linked records)
+              -> 0x69cbf0 (unless classifier returns 2)
+                 -> 0x69c68c record-chain sync
+                    -> 0x69d810 conditional record+0x14 ID setter
+                 -> 0x69c64c current-record pointer update
+       -> virtual +0x50 derived handleViewSwitch (post-event)
+          -> +0x58 selector (0x11871c / base 0x6a8d5c)
+             -> 0x69d820 read selected ID from record+0x14
+             -> provider 0x6a9e9c / 0x25a940
+          -> switch handshake, fade/transition and slot flush
+```
+
+**This closes the missing *static control-flow and data-flow path* from event reception through record updates to screen selection.** It is **not** proof that every event follows every branch, nor does it establish the **runtime startup order** of IDs **174/176/177/178**. Those IDs have been verified in the resource batches and view registry, but not as values of the runtime queue records. A concrete startup timeline requires a runtime trace of event payloads, queue entries and `record+0x14` updates (or equivalent initialization data).
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a984c --stop 0x6a98b0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d2d0 --stop 0x69d3d4
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d42c --stop 0x69d590
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d5dc --stop 0x69d680
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6ac07c --stop 0x6ac100
+```

@@ -55,15 +55,24 @@ def main():
      owners[w(slot)].append((path,prop,pc,prop_call,store))
      break
  rows=[];seen=set()
- for site in range(0x570000,0x590000,4):
-  slot=lit(site)
-  if not slot or not BASE<=slot<BASE+len(b)-4:continue
-  offset=w(slot)
-  if offset not in owners:continue
-  if w(site+4)!=0xe7940003 or not bl(site+8,0x6218cc):continue
-  for path,prop,pc,nc,store in owners[offset]:
-   row=(f'0x{site:x}',f'0x{offset:x}',path.split('.')[0],path,prop,f'0x{pc:x}',f'0x{nc:x}',f'0x{store:x}')
-   if row not in seen:rows.append(row);seen.add(row)
+ for call in range(0x570000,0x590000,4):
+  if not bl(call,0x6218cc):continue
+  for load in range(call-24,call,4):
+   ins=w(load)
+   # LDR r0,[rBase,rIndex] for either r0 or r4 base.
+   if ins&0x0ff00ff0!=0x07900000:continue
+   base=(ins>>16)&15;reg=ins&15;dest=(ins>>12)&15
+   if dest!=0 or base not in (0,4):continue
+   for x in range(load-20,load,4):
+    if (w(x)>>12)&15!=reg:continue
+    slot=lit(x)
+    if not slot or not BASE<=slot<BASE+len(b)-4:continue
+    offset=w(slot)
+    if offset not in owners:continue
+    for path,prop,pc,nc,store in owners[offset]:
+     row=(f'0x{load:x}',f'0x{offset:x}',path.split('.')[0],path,prop,f'0x{pc:x}',f'0x{nc:x}',f'0x{store:x}')
+     if row not in seen:rows.append(row);seen.add(row)
+    break
  if a.csv:
   wr=csv.writer(sys.stdout);wr.writerow(('hmi_use_va','owner_offset','scene','node_path','property','path_setter_call','property_setter_call','owner_store_va'));wr.writerows(rows)
  else:

@@ -4674,3 +4674,14 @@ Compare `dp_ids` in this output to the 12 `unknown` rows in `docs/fpk1/gtf2-ipc-
 ## Evidence status
 
 This change was reviewed against the existing repository scripts and CSV. **The new triage tool has not been run on the stock GTF2 ELF in this change.** Consequently, it reports no new recovered callback names or additional confirmed DP mappings yet.
+
+
+## Первый проход по внешнему IPC и наличию библиотек (2026-10-28)
+
+**Проверен исходный пользовательский update ZIP**, а не только извлечённый `gtf2`. В архиве 66 записей; прошивка поставляется как HSP-обёрнутые образы `stage1_ifs.img`, `stage2_ifs.img`, `stage3.img`, `app.img` и др. **Отдельных `libcomm.so` или `libasi*.so` в ZIP нет.** Поэтому следующий этап — извлечение реального ELF библиотеки из imagefs, а не поиск файла в корне ZIP.
+
+В оригинальном `stage2_ifs.img` (23,056,578 байт) последовательность `libcomm.so` найдена по файловым смещениям `0x946a82` и `0x99b17d`, обе рядом с импортированными C++-символами `comm` внутри ELF-данных. **Это строки DT_NEEDED/символов потребителя, не доказательство наличия самостоятельного ELF `libcomm.so` по этим смещениям.** Строка `IHmiKss` также найдена в другом участке `stage2_ifs.img` по смещению `0x1fee6a`. Нельзя принимать простое совпадение строк за библиотеку-диспетчер.
+
+**Независимый признак направления RPC в самом `gtf2`:** стоковые строки `IHmiKssProxy::HMI_ZPM_Audio_SDSstate()`, `IHmiKssProxy::Kombi_HUD_01()`, `IHmiKssProxy::HMI_Ready`, `IHmiKssProxy::HMI_ZPM_Ready`, `calling IHmiKssProxy::HMI_ZPM_BcmeLivetips(%d)` и `sendKssPopUpShown ... calling IHmiKssProxy::HMI_PopUpShown` описывают исходящие обращения к KSS proxy. Отдельные строки `HmiCommKssReplyImpl rteNoInit %d`, `rteTimeout %d` и `lost server connection, reactivating...` описывают reply/lifecycle-обработчик. Это **сильное основание разделить исходящий IHmiKssProxy и входящий IHmiKssReply**, но направление каждого метода следует доказать call graph и интерфейсными дескрипторами. В частности, не назначать слот 136 входящему wire method только по его наличию в vtable.
+
+**Следующая техническая задача:** использовать уже имеющиеся QNX imagefs/ZV-LZF извлекатели из `tools/fpk1` и `tools/mhi2`, построить манифест `libcomm.so`/ASI/IPC ELF и только затем исследовать их экспортированный dispatch и wire формат. Это блокирует прежнюю стратегию бесконечного анализа адресов одного `gtf2`.

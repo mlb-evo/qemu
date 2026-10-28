@@ -668,3 +668,72 @@ event 500 -> executeSkinChange() -> +0xdfd=1, +0xdf4=0, +0xe00=N
 ```
 
 **Limits:** The exact cause of `r5` being nonzero requires full register-flow analysis of the preceding checks. A zero countdown permits the scene-graph switch, but the success log and actual visual result depend on later code and runtime conditions.
+
+## DP event fanout: 180 per-instance ordered maps, not direct widget updates
+
+**New direct disassembly result.** Tracing the kind-2 dispatcher call `0x123c00 -> 0x11c8ec` reveals that the callee is a **map lookup / insertion helper**, not a renderer or a direct data-property update function. This corrects any earlier wording implying that the loop directly updates 180 display elements.
+
+### Instance allocation and layout
+
+In the GTF2 object's initializer (code around `0x122920`):
+
+- `0x122974–0x1229a4`: loop clears four 32-bit words per iteration from **`this+0x200` through `this+0xd3f`**. The end pointer is `this+0xd40`, so this clears **2880 bytes = 180 × 16-byte slots**.
+- `0x122a64–0x122a7c`: a separate loop clears exactly **180 flag bytes** at `this+0xd40..+0xdf3`. The 180 slot descriptors and 180 enable flags are contiguous, separately initialized regions.
+- `0x1229b0–0x122a00`: the existing KZB/skin flags `+0xdf4..+0xdfd` and countdown `+0xe00` immediately follow these arrays. The earlier object layout was incomplete without the 180-slot region.
+
+```text
+GTF2 instance (relative to this)
+  +0x0200 .. +0x0d3f   180 × 16-byte ordered-map descriptors
+  +0x0d40 .. +0x0df3   180 × 1-byte enabled/active flags
+  +0x0df4 .. +0x0dfd   loader, render, popup, skin-switch state
+  +0x0dfe .. +0x0dff   selected skin ID (16-bit)
+  +0x0e00 .. +0x0e03   skin-switch countdown
+```
+
+The exact descriptor C++ template type is not yet established; the observed callee treats each descriptor as a tree root with an element count at offset `+0xc`.
+
+### Actual behavior of helper `0x11c8ec`
+
+In the kind-2 event branch, the GTF2 dispatcher calls the helper once for each enabled slot:
+
+```text
+r0 = &temporary_result
+r1 = this + 0x200 + (slot_index * 16)
+r2 = &event_data_id  // copied from [event+4]
+BL 0x11c8ec
+```
+
+Disassembly of `0x11c8ec–0x11ca04`:
+
+1. Initializes a small output/result structure at `r0` (`0x11c8f8–0x11c908`).
+2. Starts from the tree root `[r1]`, compares the incoming **32-bit event data ID** `[r2]` with each node's key at `[node+4]` and traverses children at `[node+0xc]` / `[node+0x10]` (`0x11c90c–0x11c94c`).
+3. If the key already exists, returns a found result without allocating (`0x11c950–0x11c978`, `0x11c9fc`).
+4. If absent, allocates **20 bytes** (`mov r0,#20; BL 0x10e7ec` at `0x11c980–0x11c984`), initializes a tree node with the event ID at offset `+4` and calls the internal insertion helper `0x116edc` at `0x11c9d4`.
+5. Increments the descriptor's count at `[r1+0xc]` (`0x11c9e8–0x11c9f0`) and returns the inserted result.
+
+The allocator and insertion routine are *called by* GTF2; their external/library internals are **not** part of this investigation. The helper itself resides in GTF2's executable segment.
+
+**Interpretation:** an event-kind-2 message propagates its ID to all **enabled per-slot sets/maps**. This is a fanout/registration bookkeeping step. It does **not** prove that 180 widgets are rendered, that every slot is active, or that `0x11c8ec` writes a visible display property. The code after the loop separately dispatches certain data IDs to internal display-manager handlers (`0x123c18–0x123cf8`).
+
+### Concrete DP-ID routing after fanout
+
+Literal pool values read from the original executable:
+
+| Dispatcher instruction | Data ID | Internal call |
+| --- | --- | --- |
+| `0x123c1c–0x123c34` | `0x02000110` or `0x02000111` (range compare) | `0x68beec(this+0x30)` |
+| `0x123c38–0x123c4c` | `0x02000114` | `0x68bd84(this+0x30)` |
+| `0x123c50–0x123c64` | `0x020000be` | `0x68bc30(this+0x30)` |
+| `0x123c68–0x123c78` | `0x020003f0` | `0x68badc(this+0x30)` |
+
+A further set of DP-ID ranges is routed to the popup-related helper `0x121548` at `0x123cf8`. The numeric IDs are original ELF constants, not inferred human-readable names.
+
+### Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x122974 --stop 0x122a80
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x123bc4 --stop 0x123d00
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11c8ec --stop 0x11ca08
+```
+
+**Next GTF2-only question:** locate the writes that enable `this+0xd40[index]`, and the consumers of the per-slot map contents. That will reveal whether these maps track dirty properties, subscriptions, or another form of DP state. Until then, “DP-ID registration/collection” is the narrowest supported description.

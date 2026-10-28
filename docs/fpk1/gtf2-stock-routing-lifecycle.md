@@ -294,3 +294,31 @@ python3 tools/fpk1/research/gtf2/verify_startup_event_loop_order.py /path/to/gtf
 ```
 
 The verifier checks all eight direct `BL` edges, the main-loop branch instructions, and the order of initialization and loop entry against the original ELF. Tested successfully on the stock binary.
+
+## Startup event hook: TriggerContextChange
+
+Within the startup initialization function `0x114650`, after the HMI singleton has been constructed via `0x1146b8 → 0x222070 → 0x2bae28`, the executable installs a named context-change callback. This is a **separate event hook**, not yet proven to be part of `IHmiKss` IPC or Kanzi scene binding.
+
+```asm
+114c00  bl 0x11453c          ; further object setup
+114c08  bl 0x1140b0          ; further object setup
+114c0c  ldr r3,[r6]         ; access global object
+114c18  ldr r3,[r3,#0x10]   ; virtual slot +0x10
+114c1c  blx r3               ; obtain/check registration target
+114c20  cmp r0,#0
+114c24  beq 0x114c74        ; skip if unavailable
+114c3c  blx r3               ; get registration target
+114c44  ldr r1,[pc,#0xbc]   ; string "TriggerContextChange" at 0x7bdf37
+114c54  ldr r7,[r3,#0x10]   ; virtual method +0x10
+114c58  bl 0x10e7bc         ; construct temporary name/string object
+114c60  mov r1,r4           ; name object
+114c64  ldr r2,[pc,#0xa0]   ; callback pointer 0x1152b4
+114c68  blx r7               ; invoke virtual registration-like method
+114c70  bl 0x10f074         ; destroy temporary string
+```
+
+The callback `0x1152b4` calls `0x11511c` and then tail-branches to `0x114074`. The stock ELF verifies the name bytes, pointer literal, indirect call opcode and callback's direct call. This is a concrete **startup-time event-hook setup** after owner construction, and the code gracefully skips it if the target is unavailable.
+
+**Caution:** the virtual method at `+0x10` has not been identified by class/vtable; its exact API semantics (subscribe/register vs another operation) remain to be verified. In particular, do not label this as `IHmiKss` IPC registration or as Kanzi scene activation. The remaining question is to trace `IHmiKss` callback object construction/registration and scene resource loading independently.
+
+Reproduce with `tools/fpk1/research/gtf2/verify_startup_context_hook.py /path/to/gtf2`. Verified on stock GTF2 ELF.

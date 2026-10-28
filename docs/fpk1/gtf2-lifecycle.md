@@ -1431,3 +1431,71 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6b087c --stop 0x6b09a4
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x145198 --stop 0x145220
 ```
+
+## Breakthrough: view-provider dispatch connected to a 179-key lazy object factory
+
+**Verified by direct ARM disassembly and ELF data**, this section closes the previously missing link between `0x6a9e9c` (view lookup), global provider initialization, and a concrete keyed object factory.
+
+### Provider registration chain
+
+1. The GTF2-owned initialization function **`0x222070`** calls **`0x25a8f4`** at **`0x22207c`**. It passes the return pointer directly into **`0x6a9ef4`** at **`0x222080`**.
+2. **`0x6a9ef4`** stores that pointer into the global provider slot **`0xdb1900`** (`STR r0,[r3]` at `0x6a9ef8`). This is the **only direct BL callsite** to `0x6a9ef4` in the scanned executable PT_LOAD.
+3. **`0x25a8f4`** implements one-time initialization of a static provider object at **`0xd502b8`**, using a guard at **`0xabed10`** and installing the vptr **`0x82bdd8`** (`0x25a918–0x25a928`); it returns `0xd502b8` at `0x25a92c`.
+4. The provider vtable at **`0x82bdd8`** begins with the following verified entries:
+
+   | Slot | Function |
+   | --- | --- |
+   | `+0x00` | **`0x25a940`** (179-key object lookup/factory) |
+   | `+0x04` | `0x25df30` |
+   | `+0x08` | `0x239a7c` |
+
+5. The GTF2 view lookup wrapper **`0x6a9e9c`** loads global `[0xdb1900]` and calls its **virtual `+0x00`** with the requested numeric ID. Therefore, **after the provider registration above**, the lookup dispatches to **`0x25a940`**. This is the missing verified connection between the ViewManager's view lookup and the keyed factory.
+
+### Exact key handling in `0x25a940`
+
+The factory receives the requested ID in **`r1`**, with the provider pointer in `r0`:
+
+- `0x25a940–0x25a950`: **ID 0** clears the temporary result slot and returns null.
+- `0x25a954–0x25a964`: subtract 1, bounds-check **0..178** and dispatch through a **179-entry ARM PC-relative jump table** at **`0x25a968`**. Out-of-range values go to default **`0x25bd7c`**.
+- **92** IDs map to a distinct case handler; **87** IDs share the null-result handler **`0x25bd7c`**. Each supported handler checks a per-ID singleton holder's `+0x04` field; if null, calls a GTF2-owned initializer, then loads the resulting object pointer.
+- `0x25bd84–0x25bd8c`: returns the pointer from the common temporary result slot at **`0xd502b4`**. The slot is reused for each call; the caller receives the object pointer in `r0`.
+
+**The supported IDs (92):**
+
+```text
+1–8, 18–26, 60–72, 96–101, 111–122, 132–149,
+152, 154–159, 160–174, 176–179
+```
+
+The ranges above are a compact representation of the actual case table; verify any individual key using the script. The **87 other IDs** in 1..179 are **not mapped by this provider in this firmware build**. This does **not** mean those IDs cannot occur in events, other namespaces, or alternate firmware builds.
+
+**Concrete initial keys:**
+
+| View ID | Case | Singleton holder | Lazy initializer |
+| --- | --- | --- | --- |
+| 1 | `0x25b1b4` | `0xc79a40` | `0x341e30` |
+| 2 | `0x25b1e0` | `0xb402e0` | `0x383098` |
+| 3 | `0x25b238` | `0xc4f360` | `0x344a40` |
+| 4 | `0x25b188` | `0xaff770` | `0x373b88` |
+| 5 | `0x25b290` | `0xd50888` | `0x342530` |
+| 6 | `0x25b264` | `0xd16ec0` | `0x343398` |
+| 7 | `0x25b15c` | `0xb5ea24` | `0x342444` |
+| 8 | `0x25b20c` | `0xbfb2b0` | `0x3824f0` |
+
+**This is the first direct, code-proven numeric ViewManager lookup → ID → GTF2 object initializer map.** Symbolic names and concrete visual layouts of those 92 views remain to be determined, but the prior uncertainty about whether the factory was actually used by the ViewManager is now resolved.
+
+### Important correction to prior hypotheses
+
+The previously examined base table **`0x7bdad8`** has virtual slot `+0x00 -> 0x113e0c`, a constructor-like vptr initializer, and **is not** the active provider vtable after `0x222070`. The actual registered provider's vtable is **`0x82bdd8`**. The distinction is proven by the exact pointer stored in `0xdb1900` and the vptr written to `0xd502b8`.
+
+### Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_lazy_object_factory.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x222070 --stop 0x222090
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x25a8f4 --stop 0x25a940
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x25a940 --stop 0x25a968
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a9e9c --stop 0x6a9f04
+```
+
+**Next GTF2-only target:** follow representative initializer functions `0x341e30`, `0x383098`, `0x344a40` to identify actual object vptrs and diagnostic class/screen names; then systematically connect the 92 mapped IDs to their concrete view classes and DP subscription slots.

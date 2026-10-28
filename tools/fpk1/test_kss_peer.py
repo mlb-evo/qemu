@@ -119,7 +119,7 @@ class KssTests(unittest.TestCase):
         from unittest.mock import patch
         kss = kss_peer.Kss(lambda text: None)
         with patch.object(kss_peer.time, 'monotonic', return_value=100.0):
-            kss.handle(7, ipc.CID_GSS_STATUS, b'\\x01')
+            kss.handle(7, ipc.CID_GSS_STATUS, b'\x01')
             self.assertTrue(kss.run_pending)
             self.assertIsNone(kss.run_request_at)
             # A lost/NACKed SPI transfer must not advance the startup state.
@@ -141,11 +141,11 @@ class KssTests(unittest.TestCase):
             self.assertEqual(len(kss.outbox), 1)
             lun, cid, payload, last = ipc.parse_frame(kss.next_frame())[0]
             self.assertEqual((lun, cid, payload[:2], last),
-                             (7, ipc.CID_GSS_MODE_REQUEST, b'\\x01\\x02', True))
+                             (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x02', True))
 
     def test_ready_status_retransmission_does_not_duplicate_startup(self):
         kss = kss_peer.Kss(lambda text: None)
-        ready = ipc.build_frame([(7, ipc.CID_GSS_STATUS, b'\\x01', True)])
+        ready = ipc.build_frame([(7, ipc.CID_GSS_STATUS, b'\x01', True)])
         kss.receive(ready)
         before = list(kss.outbox)
         kss.receive(ready)

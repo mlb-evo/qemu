@@ -3238,3 +3238,17 @@ Reproduce:
 ```sh
 python3 tools/fpk1/research/gtf2/verify_laserlight_property.py /path/to/gtf2
 ```
+
+### Event-to-scene-property table with explicit scene root
+
+The scene column below is the **root segment of the exact scene node path**, not a claim about the currently active scene or renderer:
+
+| IPC event | DP ID | Scene root | Node path within scene | Property name |
+| --- | --- | --- | --- | --- |
+| `ActTest_CommonSoftLEDs` | `0x020001e6` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht` | `Fernlicht` |
+| `ActTest_CommonSoftLEDs` | `0x020001e6` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht_BIG` | `Fernlicht_BIG` |
+| `TelltaleHMI_Display` | `0x020002d2` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht` | `Fernlicht` |
+| `TelltaleHMI_Display` | `0x020002d2` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht_BIG` | `Fernlicht_BIG` |
+| `TelltaleHMI_Display` | `0x020002d3` | `MV_ClusterFull` | `StatusBar.Laserlight` | `Laserlight` |
+
+This presentation deliberately separates `scene_root`, `node_path`, and `property_name`. For future rows, if the node path or property has not been instruction-verified, use `unknown` rather than inferring a scene from callback names.

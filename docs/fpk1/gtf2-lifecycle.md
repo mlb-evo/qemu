@@ -2578,3 +2578,39 @@ python3 tools/fpk1/research/gtf2/name_rte_dp_callbacks.py /path/to/gtf2 --csv \
 ```
 
 This closes the callback-name attribution gap for **33 groups**, but not the ASI method-number/serialization gap. The latter requires vtable/registration analysis or runtime IPC traces.
+
+### Downstream cross-references: IPC-written DP IDs into GTF2 HMI code
+
+The next analysis follows all **176 unique DP IDs** written by the direct RTE callbacks, not just their input payload mapping. For each DP ID it locates matching 32-bit constants in the original ELF and verifies a **real ARM PC-relative LDR instruction** targeting that constant. It excludes the callback-writer instruction range `0x694000–0x697fff`.
+
+Local execution on the original ELF found **813 non-writer instruction references**:
+
+| Code region (heuristic only) | References |
+| --- | ---: |
+| `0x550000–0x62ffff` — view/HMI implementation region | **575** |
+| `0x210000–0x22ffff` — initialization/configuration region | **142** |
+| Other GTF2 code | **96** |
+| **Total** | **813** |
+
+The references are real instruction→literal edges, but **not necessarily DP value reads**: a use may register a callback, initialize a descriptor, compare an event's DP ID, or retrieve a value. Classifying those operations requires instruction-by-instruction tracing.
+
+Specific downstream reference points:
+
+| IPC source | DP ID | Non-writer ARM instruction references |
+| --- | --- | --- |
+| `TCH_HMI_EngineRPM` | `0x02000293` | `0x59ee80`, `0x59f370`, `0x5c9310` |
+| `TCH_HMI_EngineRPM` | `0x02000295` | `0x5753bc`, `0x59ee1c`, `0x59f2e0`, `0x5c6000` |
+| `Gear_Display` | `0x020001f7` | `0x569150` |
+| `Gear_Display` | `0x020001f9` | `0x219ba8`, `0x5fdbf8`, `0x5fdcb4`, `0x5fdd74` |
+
+**Concrete consumer behavior:** at `0x5fdbf4–0x5fdc20`, GTF2 reads an incoming record's **`+0x04` DP identifier**, compares it against literal **`0x020001f9`** loaded at `0x5fdbf8`, returns `1` for non-matches, and tail-branches to **`0x5fdb8c`** for matches. This is an actual **DP-ID-specific event filter/dispatch** for a `Gear_Display` field, not proof of a direct rendering call. Other references must be classified separately.
+
+Reproduce and export all links (no firmware bytes in repository):
+
+```sh
+python3 tools/fpk1/research/gtf2/trace_rte_dp_consumers.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/trace_rte_dp_consumers.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-ipc-dp-consumers.csv
+```
+
+The next necessary step is to distinguish **DP subscription/registration** from **DP event handling and DP value reads** at these references, then link event filters to the specific view object or coordinator function. The count **575** must not be presented as 575 screen changes or as a list of rendered fields.

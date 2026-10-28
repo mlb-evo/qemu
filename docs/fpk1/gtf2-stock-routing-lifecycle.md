@@ -322,3 +322,50 @@ The callback `0x1152b4` calls `0x11511c` and then tail-branches to `0x114074`. T
 **Caution:** the virtual method at `+0x10` has not been identified by class/vtable; its exact API semantics (subscribe/register vs another operation) remain to be verified. In particular, do not label this as `IHmiKss` IPC registration or as Kanzi scene activation. The remaining question is to trace `IHmiKss` callback object construction/registration and scene resource loading independently.
 
 Reproduce with `tools/fpk1/research/gtf2/verify_startup_context_hook.py /path/to/gtf2`. Verified on stock GTF2 ELF.
+
+## Startup investigation: concrete Kanzi resource name and IPC interface descriptor
+
+Two previously untraced inputs have now been tied to executed ARM code in the stock ELF.
+
+### DisplaySupervisor.kzb in the startup path
+
+The startup function `0x114650` references a real KZB filename, `DisplaySupervisor.kzb` (literal `0x7bdeb5`), **after** calling the HMI singleton constructor at `0x1146b8`.
+
+```asm
+114a00  ldr r1,[pc,#0x2e0]   ; literal at 0x114ce8 -> "DisplaySupervisor.kzb"
+114a04  bl 0x141fd8         ; wraps a C++ string, forwards to 0x141fbc
+...
+114a1c  cmp r0,#1
+114a20  bne 0x114a54        ; conditional resource-related branch
+114a44  bl 0x142cec         ; subsequent operation using prepared objects
+```
+
+The helper `0x141fd8` constructs a temporary C++ string and calls `0x141fbc`, so `0x114a04` **passes the KZB filename into an object**. It is not yet proven whether `0x141fbc` stores a resource name, schedules loading, or opens the KZB. Nor is `0x142cec` yet proven to activate the Kanzi scene. Therefore this establishes the resource-name handoff and startup order, **not the precise time of scene availability**.
+
+### IHmiKss interface descriptor in the large HMI owner constructor
+
+The stock binary contains a concrete two-name descriptor at `0xa7e838`:
+
+```
+[a7e838] = 0x88f55d -> "asi.gss.ipc.rte.hmi.IHmiKss"
+[a7e83c] = 0x88f579 -> "asi.gss.ipc.rte.hmi.IHmiKssReply"
+```
+
+A literal at `0x50fe8c` contains `0xa7e838`. In the large HMI owner constructor `0x25ef60`, the code at `0x5107f8` loads this descriptor and stores it in an owner field:
+
+```asm
+5107f8  ldr r2,[pc,#-0x974] ; literal 0x50fe8c -> 0xa7e838
+5107fc  str r2,[r4,r3]      ; store descriptor pointer into owner
+510804  mov r2,#1
+510808  str r2,[r4,r3]      ; set adjacent owner field
+```
+
+This proves the **IHmiKss/IHmiKssReply interface descriptor is wired during HMI owner construction**. It is **not** by itself evidence that the IPC transport is already connected or callbacks subscribed: the descriptor can be installed before transport initialization.
+
+Together, these traces give a stronger ordering:
+
+**startup** → **construct HMI singleton (including interface descriptor, scene-property wrappers and embedded receivers)** → **pass `DisplaySupervisor.kzb` to resource/configuration object** → **additional startup operations, including `TriggerContextChange` hook** → **primary event loop**.
+
+The remaining high-value proof points are: identify the call to the IPC transport's actual subscribe/connect method, and trace `0x141fbc`/`0x142cec` to the concrete KZB open and scene-activation APIs. An asynchronous IPC worker could still process messages before the main loop; the above order does not exclude that.
+
+Verifier: `tools/fpk1/research/gtf2/verify_ipc_descriptor_and_kzb_startup.py`, checked against original stock ELF.

@@ -2972,3 +2972,37 @@ python3 tools/fpk1/research/gtf2/catalog_rte_event_semantics.py /path/to/gtf2 --
 ```
 
 **Research priority:** trace the two shared receivers' `wrapper+0xb8` targets and concrete vtables, and search their property/scene bindings. Separately, recover the per-field value-to-enum/bit meaning from GTF2 consumers or firmware schema; **never equate a callback name with an exact display effect**. The table is limited to 24 strictly verified `0x57xxxx` dispatch edges; other RTE DP writes, including non-direct and separate-dispatch paths, remain to be cataloged.
+
+### Scene-level semantics: evidence-gated event matrix
+
+**Working hypothesis (not yet proven):** an RTE/IPC callback changes a DP or object property; the scene graph then reacts through a binding, observer, or dirty-flag processing. Direct object flags such as `+0xe3`, `+0xe4`, `+0xe6`, and `+0x06` are **not themselves proof of a particular visual effect**. Likewise a virtual event call is not automatically a scene transition.
+
+A new script, `tools/fpk1/research/gtf2/build_scene_event_matrix.py`, creates a **24-row evidence-gated catalog**. It checks each event's DP literal and conditional branch target in the supplied GTF2 ELF, and records these separate columns:
+
+- `dp_id`, `callback`, `payload_offset`, `family`, `handler_va`, `dispatch_proof`: **confirmed static facts**;
+- `property_id`, `scene_node`, `binding`, `visual_effect`: explicitly **unresolved**, pending scene asset / object metadata / vtable proof;
+- `scene_switch`: **not_proven** rather than assuming a scene change.
+
+The 24 dispatches contain **23 named callback provenances** and one still unidentified callback. Their coarse **functional families** are based only on callback names; do not interpret these as exact per-byte semantics. For example, `Config_View_Specifica` identifies a configuration-related callback, **not** proof that payload `+0x0a` switches a view. `TelltaleHMI_Blink` names a blink-related callback, **not** proof of which lamp or which animation is activated by payload `+0x02`.
+
+Notable families and current constraints:
+
+| Callback family | Examples of exact DP IDs | What is proven | Scene-level question still open |
+| --- | --- | --- | --- |
+| View/driver-assist configuration | `0x0200010b`, `0x020001c2` | IPC field written and matching HMI handler entered | Does it select a view, configure a property, or enable a scene feature? |
+| Gear data | `0x020001ef`, `0x020001ec`, `0x020001f6`, `0x020001fd` | Four different DP fields each have an event handler | Which field selects gear text/icon versus visibility or animation? |
+| Telltales and blink | `0x02000178`, `0x02000216`, `0x0200021d`, `0x0200021f`, `0x020002cd`, `0x020002d2`, `0x020002d3` | Multiple indicator event routes; one (`0x020002d2`) fans out to two receivers | Which lamp and blink property corresponds to each field? |
+| Indicator test | `0x020001e6`, `0x020001ea`, `0x02000200`, `0x02000201` | Test callbacks reach HMI; `0x020001e6` shares two receivers with `0x020002d2` | Are these shared indicator nodes in test/normal modes? |
+| Vehicle status | `0x02000295`, `0x02000297`, `0x020002c2`, `0x020002ad`, `0x02000230` | Engine RPM, ACC, odometer, car outline, hybrid callbacks and concrete HMI dispatches | Which scene properties consume the values? |
+
+This distinguishes **event purpose at callback level** from **specific field meaning**, **property mutation**, and **visual scene reaction**. Do not claim full semantic resolution of the 24 events.
+
+Reproduce:
+
+```sh
+mkdir -p build_fpk1/research-artifacts
+python3 tools/fpk1/research/gtf2/build_scene_event_matrix.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-scene-event-matrix.csv
+```
+
+**Next evidence threshold:** resolve the receiver wrapper `+0xb8` assignment and receiver vtables; identify property identifiers / scene node names in the GTF2-owned scene resources; match a specific DP-driven mutation to a scene binding or observer. Only then populate `property_id`, `scene_node`, `binding`, or `visual_effect` with concrete names.

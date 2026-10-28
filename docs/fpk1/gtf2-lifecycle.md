@@ -2335,3 +2335,72 @@ python3 tools/fpk1/research/gtf2/verify_event_to_view_path.py /path/to/gtf2
 | `0x11a250` / `0x119688` | requested ID, old/current ID, transition flags and actual commit of switch |
 
 Because this is **ARM32 QNX** with a firmware-specific process environment, static analysis alone cannot supply the missing runtime event payloads or prove a visible-frame timeline. Do not fabricate that timeline from KZB resource request order. The above capture points are deliberately **inside GTF2**, avoiding external-library reverse engineering.
+
+## GTF2 IPC surface: services, received signals and reactions
+
+This section distinguishes **KSS↔Tegra transport** from the **GTF2 application-facing IPC**. Evidence: literal service names, method diagnostics and RTE callback diagnostics in the original GTF2 ELF, together with the separately reconstructed `gss_ipc` SPI protocol and QEMU runs in `docs/fpk1-firmware-research.md`. These are *application-owned integration points*, not a claim to have reverse-engineered the underlying comm libraries.
+
+### Transport and activation boundary
+
+```text
+KSS MCU / vehicle CAN inputs
+  -> KSS-to-Tegra SLINK1 SPI, 128-byte gss_ipc frames
+  -> gss_ipc: RTE, mode/state management and service proxies
+  -> local ASI IPC endpoints used by GTF2
+       |-> asi.gss.manager.hmi.IGssMan2HMI (lifecycle)
+       |-> asi.gss.ipc.rte.hmi.IHmiKss (vehicle and input events)
+       |-> asi.gss.ipc.bap.IHmiBap (BAP)
+       |-> asi.gss.ipc.ddt.IDdt (DDT)
+  -> GTF2 DP/state and key-event handlers
+  -> ViewManager / current views
+```
+
+The KSS-side **`GSS_MODE_REQUEST`** (CID 3) is decoded in **`gss_ipc`**, *not in GTF2*. As previously verified in the base firmware research, KSS application-run requests `GSS_MODE_REQUEST(1,2)` cause `gss_ipc` to request HMI startup through the local **`IGssMan2HMI`** service; GTF2's `GssMan2HMIReplyImpl::activate()` is the application-facing endpoint. `GSS_MODE_RESPONSE` is generated on the KSS-facing side. Do not conflate the SPI CID with a QNX message type or an event ID in GTF2.
+
+### Confirmed application-facing services
+
+| Service / implementation | ELF string address | Incoming or outgoing role and observed reactions |
+| --- | --- | --- |
+| `asi.gss.manager.hmi.IGssMan2HMI` | `0x88e2c4` | GSS manager → GTF2: `GssMan2HMIReplyImpl::activate()` (`0x88e28b`), `deactivate()` (`0x88e24c`), `enterColdCrank()` (`0x88e1d8`), `leaveColdCrank()` (`0x88e0cc`), `persistentData()` (`0x88e1b2`). |
+| `asi.gss.manager.hmi.IGssMan2HMIReply` | `0x88e2e4` | Reply/proxy interface. Diagnostics show `coldCrankRep()`, `enterColdCrankRep()`, `leaveColdCrankRep()`, `persistentDataRep()`, plus `switchDisplayBacklight()` and `sendPersistentData()`; no assumption of uniform synchronous reply. |
+| `asi.gss.ipc.rte.hmi.IHmiKss` | `0x88f55d` | KSS/RTE → GTF2: vehicle signal callbacks in `HmiCommKssReplyImpl`. Diagnostics show DP writes under `batchLock()`, list updates, timeout and not-initialized handling. |
+| `asi.gss.ipc.rte.hmi.IHmiKssReply` | `0x88f579` | RTE service reply interface. Lost-server diagnostic `0x88f521`: `HmiCommKssReplyImpl lost server connection, reactivating...`. |
+| `asi.gss.ipc.bap.IHmiBap` / `IHmiBapReply` | `0x88d879` / `0x88d891` | BAP channel. `HmiCommBapReplyImpl lost server connection, reactivating...` at `0x88d83d`. |
+| `asi.gss.ipc.ddt.IDdt` | `0x88da1e` | DDT messaging: `DdtImpl::sendMessage(): message id=0x%04X` at `0x88d9c7`; reconnect diagnostic `0x88d990`. |
+| `asi.gss.ipc.rte.hmi.IHmiKss` keyboard conversion | `0x7d9959` / `0x7da247` | `GSS_APP_KeyEventConverter::handleKeyEventMfl` accepts **four parameters** (keycode1, eventcode1, keycode2, eventcode2), translates through an MFL mapping table into HMI event ID/ticks. |
+| `asi.diagnosis.gss2app.GSS2AppDtcTestService` / `Reply` | `0x88dd10` / `0x88dd3c` | Diagnosis: `activate`, `deactivate`, `alive`, `dead`, `performTest`, `performAllTests`, `setDtc`, `testStatus`. |
+| `asi.gss.manager.IAlive` / `IAliveReply` | `0x890156` / `0x89016d` | Local alive supervision interface. Distinct from the KSS-facing SPI `GSS_ALIVE_REQUEST` CID 11. |
+| `asi.gss.ipc.rte.hmi.IHmiKss` and capture/diagnostics | `0x88f853`, `0x88faf9` | `GSS_HMI_GTF2_CapturingReplyImpl` handles capture state/lock pin; `GSS_IPC_GSS2GTFDiagService` handles adaptation channels `0x518`, `0x523` (files `adaption/chan_0518.bin`, `adaption/chan_0523.bin`). |
+
+**Caution:** names ending `Reply` reflect the service/proxy nomenclature, not necessarily a distinct network connection or a proven wire response. Exact ASI method numbers, marshalled arguments, channel IDs and QNX transport primitive still require interface/registration-code inspection.
+
+### RTE signal callbacks present in GTF2
+
+The following strings are **concrete callback names in the GTF2 executable**, not guessed from generic automotive CAN naming. A callback name proves that GTF2 has a handler; it does **not** prove the signal is transmitted in every vehicle variant.
+
+| Category | Callback names in `HmiCommKssReplyImpl` | Application reaction visible in diagnostics |
+| --- | --- | --- |
+| Power / startup | `ClampS`, `Clamp15`, `Systeminfo01`, `Config_Coding`, `Config_Installation_Coding` | Clamp values logged (`0x88f46e`); config/status data updates via DP batches |
+| Engine / hybrid | `TCH_HMI_EngineRPM`, `BMS_10`, `Motor_Hybrid_03_MO_Powermeter`, `Motor_Hybrid_06`, `HMI_EngineID_MKB`, `HMI_Motor_26` | Batch DP updates, not direct calls to `ViewManager::doSwitch` |
+| Vehicle state | `Gear_Display`, `Gear_Display02`, `ODO_HMI_Distance`, `Tank_IndicationVolume`, `HVK_01`, `CarOutline_HMI` | Gear, odometer, fuel and door/outline model data |
+| Driver assistance | `ACC_02`, `ACC_12`, `ACC_14`, `ACC_HMI_Display`, `GSS_ACC_Display_Status`, `VZE_01`, `HMI_C_NightVision_Display`, `Config_Driverassist_Media` | HMI/DP updates; ACC callback logs dispatch to `Kombi_01` and discards when proxy is not alive (`0x88ee68`, `0x88ee90`) |
+| Warnings / telltales | `TelltaleAALA_Display`, `TelltaleHMI_Blink`, `TelltaleHMI_Display`, `KombiDef`, `ZPM_HMI_Info`, `ActTest_SoftLEDs`, `ActTest_CommonSoftLEDs` | Warning/telltale data written into DP; ZPM diagnostic logs warning ID and popup ID (`0x88f33c`) |
+| Other vehicle data | `NVEM_02`, `TSK_07`, `DS_VCM_DisplayArea`, `Config_Antrieb`, `Config_View_Specifica`, `FanControl`, `BC_HMI_E_CurrentConsRecu`, `ECT_HMI_Information` | Batch DP updates |
+| Input events | `MFL_Tasten_Kon_01` (upstream RTE signal), MMI CAN key, joystick and touchpad messages | `handleKeyEventMfl` / `handleKeyEventMmi`; conversion to event IDs, rotary ticks, HMI/telephone/warning/engineering menu routes |
+
+Most of these handlers have literal `batchLock() failed` diagnostics in **`0x88ef3e–0x88f4eb`**, which strongly supports a **signal → DP batch → HMI state/view update** pattern. The exact per-field DP IDs and values require disassembling each callback; do not infer that every incoming signal causes a view switch.
+
+### Key and event-specific reactions
+
+- **MFL steering wheel**: `handleKeyEventMfl(keycode1,eventcode1,keycode2,eventcode2)` at diagnostic `0x7d9959`. `detectMflKeyCombination` may consume the input first (`0x7d99b3`). Otherwise keycodes are looked up and logged as **`idx,is_but,ev_id,ticks`** (`0x7da247`); unknown keycodes and wheel event codes are discarded (`0x7da225`, `0x7da291`). Rotary wheel can inject a separate event (`0x7d9a17`).
+- **MMI CAN key/joystick/touchpad**: `handleKeyEventMmi` (`0x7d986e`); parsing diagnostics at `0x7d9d40–0x7da1fb` include protocol byte validation, keycode/event mapping, joystick IDs, rotary ticks and touchpad finger coordinates, with bounds clamping.
+- **TWS reset / version screen**: `handleKeyEventTws` (`0x7d957e`) checks HMI readiness and tube visibility (`0x7d960e`); diagnostics distinguish short/long reset, restore, and version-screen timers (`0x7d9655–0x7d9843`).
+- **Application event dispatcher**: kind **2** carries DP changes, kind **8** HMI/internal subtypes (including language, rendering gates, popup hidden), kind **9** application events (including frame 284, skin switch 500, needle-sweep gates 547/548). These are **post-IPC HMI event kinds**, not SPI CIDs.
+- **Cold crank**: `enterColdCrank()` logs “Entering critical undervoltage” (`0x88e1fe`); `leaveColdCrank()` logs “Leaving critical undervoltage” (`0x88e0f2`). Their downstream state changes should be traced before asserting exact display brightness or rendering side effects.
+- **RTE errors**: `HmiCommKssReplyImpl rteNoInit %d` (`0x88ec08`), `rteTimeout %d` (`0x88eed4`), lost server reconnect (`0x88f521`).
+
+### Verification and scope
+
+Run `python3 tools/fpk1/research/gtf2/inventory_ipc_handlers.py /path/to/gtf2` to print the exact ELF string addresses. The SPI framing, KSS mode request/response, MFL RTE bridge and working `kss_peer.py` are documented in `docs/fpk1-firmware-research.md` and should not be conflated with the local ASI IPC layer.
+
+**Remaining for a byte-exact IPC emulator:** trace the GTF2-owned ASI registration/vtable dispatch and per-method argument layout; recover the full MFL keycode mapping table and DP-ID mappings for individual `IHmiKss` callbacks; compare against runtime logs. The service and signal inventory above is concrete, but is not yet a byte-level reimplementation of every IPC interface.

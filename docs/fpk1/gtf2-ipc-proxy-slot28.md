@@ -52,3 +52,16 @@ At `0x439b0` the proxy loads an object from `[r5+0x18]`; `0x439c0–0x439c8` inv
 The proxy also logs a value `128` at `0x43b2c`, but it is passed as `r1` to an indirect logging-like call and **must not be identified as the IPC selector** without further proof. Similarly `122` at `0x43928` is not a verified selector.
 
 **Correction:** the allocation length instruction is at `0x439fc`, not `0x43a00`. The previous shorthand address was wrong; the actual ARM instruction at `0x43a00` is `ldr r1,[r4,r3]`.
+
+## Confirmed dispatch-table index 127 (2026-10-28)
+
+The entry to this callback branch has now been traced back to the proxy's 180-way ARM dispatch table in `0x40b80`:
+
+- `0x40b9c`: `r6 = [r2]`; `0x40bcc`: `r7 = r1` (incoming dispatch index).
+- `0x40c9c`: `cmp r7,#179`; `0x40ca0`: `addls pc,pc,r7,lsl #2`.
+- Table starts at `0x40ca8`, so entry 127 is `0x40ca8 + 127*4 = 0x40ea4`.
+- `0x40ea4`: `b 0x43968`; this branch eventually calls receiver virtual slot 28 at `0x43b5c` (`[vtable+0x70]`).
+
+Thus **dispatch index 127 → branch 0x43968 → callback slot 28** is statically proven. `r7` comes directly from the second argument of the proxy dispatch function (`r1` at entry). Whether this is the original on-wire IPC selector or a preprocessed ID remains to be established from the caller of `0x40b80`; label it *dispatch index*, not proven wire selector. This is unrelated to log/source constants 122 and 128 found inside the branch.
+
+`0x40720` is a generic shared helper called with multiple payload sizes (including 6 and 20 bytes at other sites), not an identified six-byte decoder. Its entry compares `r1` with `[r0+4]`; later `0x408d8` stores `{r0,r8}` into the receiver, consistent with buffer ownership/update. Avoid treating the six-byte zero-fill as a fixed wire payload layout.

@@ -571,3 +571,39 @@ The optional follow-up path `0x114a44 → 0x142cec` also builds internal data an
 **Correction:** the direct calls `0x141fd8` and `0x142cec` do **not** demonstrate opening `DisplaySupervisor.kzb` or activating a Kanzi scene. They configure a resource-bearing object and clear its state byte. A later consumer of the configured filename must be identified to prove actual resource loading. The precise semantic name of the state byte is not recovered.
 
 Verifier `tools/fpk1/research/gtf2/verify_kzb_config_not_load.py` was executed on original stock GTF2 ELF and checks eight call edges, seven instruction words, and the KZB literal. This leaves `IHmiKss` subscription timing independent and unresolved.
+
+## New branch: DP access gates optional DisplaySupervisor configuration
+
+Tracing the **startup caller** of the filename setter reveals a previously undocumented DP query immediately after the `DisplaySupervisor.kzb` string is installed. This is a distinct branch from the actual resource loading and from `IHmiKss` subscription:
+
+```asm
+1149f0  bl 0x1427cc       ; construct a ~0x108-byte configuration object on stack
+114a00  ldr r1,[pc,#0x2e0] ; literal 0x114ce8 -> "DisplaySupervisor.kzb"
+114a04  bl 0x141fd8       ; store filename in config object
+114a08  ldr r0,[pc,#0x2dc] ; literal 0x114cec = 0x064004d3 (DP identifier)
+114a0c  mov r1,r6         ; output buffer on stack
+114a10  mov r2,#64        ; output size/limit argument
+114a14  mov r3,#0
+114a18  bl 0x69ed40       ; DP read/access wrapper
+114a1c  cmp r0,#1
+114a20  bne 0x114a54      ; failure/other status: skip optional configuration
+114a24  ...              ; construct temporary string from DP output
+114a38  mov r0,r5         ; configuration object
+114a3c  mov r1,#0
+114a40  mov r2,r7         ; temporary string
+114a44  bl 0x142cec       ; configure additional object data (+0x54)
+114a50  b 0x114a70
+114a54  ...              ; diagnostic logging path
+114a70  ...              ; common path
+114a84  bl 0x14250c       ; prepare graphics batch argument
+114a88  bl 0x13d098       ; obtain queue
+114a98  bl 0x141608       ; enqueue startup graphics batch
+```
+
+The `0x69ed40` routine uses the DP helper family `0x6a0a9c`, `0x6a187c`, `0x6a1b80`, `0x6a1750` and contains a diagnostic literal `DP ERROR` at `0x69ede8`. Its **return status**, not the DP value itself, is compared to `1` by `0x114a1c`. The retrieved DP payload appears to be converted into a string and passed to `0x142cec` on the success path. The exact field name/type of DP `0x064004d3` has not been recovered.
+
+The `0x1427cc` constructor initializes many fields of the temporary configuration object, including its string member at `+0x04` and additional data at `+0x54`. The `0x141fbc` setter only copies the filename into `+0x04` and clears the state byte. The `0x142cec` method likewise modifies the configuration object, rather than directly opening the KZB.
+
+**Consequences:** the startup graphics-batch enqueue at `0x114a98` is reached from both outcomes of the DP query. This gives a concrete DP-dependent configuration step between naming `DisplaySupervisor.kzb` and queue processing. It does **not** identify the later reader of the stored KZB filename, prove that a scene has been activated, or establish that `IHmiKss` has subscribed. Do not interpret the DP helper's status code `1` as a DP payload value.
+
+Verifier: `tools/fpk1/research/gtf2/verify_kzb_dp_gate.py` (direct branches, literal ID, string and selected instruction words).

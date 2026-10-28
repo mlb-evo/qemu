@@ -1156,3 +1156,48 @@ python3 tools/fpk1/research/gtf2/inspect_vtable.py /path/to/gtf2 --vtable 0x7bfa
 ```
 
 **Next GTF2-only work:** decode `0x119100..0x1195b4` (animation launch paths), `+0x60 -> 0x119688` (derived completion/cancellation), and the helper `0x1189a0` (center selection). This should connect the fade-out callbacks to the already proven `+0x70/+0x71` delayed-switch handshake.
+
+### Animation launch and derived completion hook `+0x60`
+
+The remaining half of `handleViewSwitchCenter` and the entry of the derived virtual **`+0x60 -> 0x119688`** were inspected directly.
+
+**Animation launch paths in `handleViewSwitchCenter`:**
+
+- `0x1193a8–0x1193e0`: constructs three temporary animation/state descriptors with immediate **2**, **8** and **4**, using GTF2-owned helper **`0x118750`**.
+- `0x1193e4–0x119438`: depending on a temporary flag at `[sp+0xa4]`, logs **`instant view change active, no animation!`** and calls **`0x11f414`** with argument `4`. The branch uses an internal GTF2 scheduling/animation entry point; its runtime effect is not proven solely by the log.
+- `0x11943c–0x119478`: the other branch logs **`starting fade out animation 2`** and calls **`0x11f794`** with argument `4`.
+- `0x119480–0x1194f4`: in a popup-specific branch (`this+0x26` and temporary flag set), logs **`instant view change active, no animation!`** and calls **`0x11f414`** with argument `6`.
+- `0x119500–0x119540`: alternate branch logs **`starting fade out animation 3`** and calls **`0x11f930`** with argument `6`.
+- `0x119544–0x119574`: if the old view exists, invokes its **virtual `+0x2c`** with a four-byte temporary array whose bytes are all **1**. Then chooses `0x117e58` versus `0x117dcc` based on **`this+0x26`** (`0x119578–0x1195a8`). This links animation launch to a subsequent view-lifecycle notification.
+- `0x1195ac`: common post-transition helper **`0x118b78`**.
+
+**Derived virtual `+0x60` at `0x119688`:**
+
+- Entry diagnostic strings are located in the literal pool `0x119a38..0x119a44`; this is a **separate** manager virtual hook, not a continuation of the center coordinator.
+- `0x1196d4–0x119724`: when **`this+0x26`** and **`this+0x49`** are set, and cached target **`this+0x3c != 181`**, explicitly **overwrites `this+0x3c = 181`**. Thus **181 is an active transition target sentinel**, not merely a one-off invalid input value.
+- `0x119728–0x119784`: if **`this+0x54`** is set and the target differs from cached **`this+0x58`**, update `+0x58` and a floating-point timing field at `+0x60`, then branch to common tail `0x11a240`. This links the derived completion/continuation hook to the delay-timer fields used by `handleViewSwitch`.
+- `0x11978c–0x1197d0`: a further special branch requires **`+0x40 != 0`**, **`+0x26 != 0`**, **`+0x18 != NULL`**, **`+0x78 == +0x7c == 0`**, and **`+0x49 != 0`**. It then inspects the current view via **`0x146320`**. These are concrete, multi-field gating conditions; naming this branch “completed” without further analysis would be premature.
+
+**Important architecture conclusion:** the derived ViewManager splits switching into at least three GTF2-owned layers:
+
+```text
+virtual +0x50  ViewManager::handleViewSwitch [0x11a250]
+  ├─ normal/base transition -> BaseViewManager::handleViewSwitch
+  ├─ delayed callback handshake (+0x70 -> +0x71)
+  └─ virtual +0x5c  handleViewSwitchCenter [0x118c74]
+       ├─ center/popup target selection and sentinel 181
+       ├─ animation launch (0x11f414 / 0x11f794 / 0x11f930)
+       └─ virtual +0x60 [0x119688]
+            ├─ special target override to 181
+            ├─ delayed-target/timer state updates
+            └─ additional view-specific gated transitions
+```
+
+The code distinguishes **“instant/no-animation”**, **fade-out animation 2/3**, and **popup-dependent transitions**. It does not yet establish which screen IDs correspond to named dashboard screens, or whether a particular animation completes under QEMU.
+
+Reproduction:
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1193a8 --stop 0x1195b8
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119688 --stop 0x119800
+```

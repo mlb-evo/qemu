@@ -4872,3 +4872,16 @@ Static disassembly of stock `gtf2` `0x18a6c0..0x18ac90` confirms the event recor
 **Type 2** checks `0x18cc5c(owner+0x54)` and may update via `0x18cefc(owner+0x54, signed(record[9]))`. Otherwise it uses `0x188eb8`, requires `record[8]==2`, checks `0x1891a8(owner)`, and conditionally zeroes `record[10]` and `record[12]` before `0x18a560(record)`. **Type 3** is gated by `[owner+0x67]`; it may use `0x188eb8`, or `0x18a480(record)` with special handling for `record[15]==2` and state flag `[owner+0x5e]`. This shows type 2 and type 3 have stateful record-specific paths, not the simple type-1 event-ID fanout.
 
 The MFL table's event IDs are **not yet named as user-facing actions**: the slot-6 interface implementations and the ID-to-action handlers must be resolved before assigning button labels. The analysis is static only; no emulator.
+
+
+### MFL dispatch: concrete subobject receivers and event 446/447 gate (2026-10-28)
+
+Stock ELF SHA256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`; direct ARM disassembly `0x18a81c..0x18a970`, `0x14eb68..0x14ecb4`, `0x18fc50..0x18fcc8`, `0x190fe8..0x191060`.
+
+The type-1 record dispatcher obtains a common aggregate via `0x151558`, then four distinct subobjects from accessors. `0x14eb68` returns `aggregate+0x46c` (1120+12), `0x14eba8` returns `aggregate+0x23b0` (9088+48), `0x14eca8` returns `aggregate+0x14e4` (5312+36), and `0x14eb98` returns `aggregate+0x1438` (5120+56). The first three are invoked by indirect call through `[vptr+0x18]` with `record.event_id` as `r1`, and a nonzero return causes a diagnostic/early exit. The fourth passes `event_id` into `0x18fc50` instead. These offsets are subobject offsets relative to the pointer loaded from `[aggregate+4]`, not independent global IPC endpoints.
+
+`0x18fc50` first converts the event ID using `0x152d20`; if conversion equals 17, it calls `0x153438`, normalizes a byte to boolean, and updates `[subobject+0xc]` via `0x190a50`. It then forwards the original ID to `0x1910fc(subobject+0xc,event_id)`. A separate wrapper `0x18fc50`? Note `0x18fc50` is the direct wrapper; its first two instructions are `add r0,r0,#12; b 0x190fe8`, while the **longer handler starts at `0x18fc58`**. Therefore the actual dispatcher call at `0x18a968` to `0x18fc50` invokes `0x190fe8(subobject+0xc,event_id)`, NOT the longer handler at `0x18fc58`. This distinction is essential: do not conflate the adjacent entry points.
+
+`0x190fe8` recognizes only event IDs 446 and 447 (`event_id-444-2 <=1`, unsigned) and requires nonzero byte `[subobject+0xc+4]`; on acceptance it calls `0x190d30(subobject+0xc)` and returns 1, otherwise returns 0. Thus IDs 446/447 have a specific short-circuit handler at the fourth receiver. The handler at `0x18fc58` is a different entry point with separate callers; its `0x1910fc` forwarding does not occur through the type-1 dispatcher call shown above.
+
+This resolves the interface accessor identities and a specific ID filter, but does not yet name all virtual slot-6 implementations or establish final HMI scene actions. Static only, no emulator.

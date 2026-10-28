@@ -1902,3 +1902,81 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11871c --stop 0x118750
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a250 --stop 0x11a324
 ```
+
+## Derived event-state helpers resolved: popup state machine, not direct startup view IDs
+
+Disassembly of the three GTF2-owned callees used by derived `ViewManager` event preprocessing establishes that they update **a separate popup/transition state object**, rather than directly selecting cluster view IDs 174/176/177/178.
+
+### Common state object and initializer
+
+**`0x12a77c`** is a lazy singleton accessor: it returns **`0xab5d3c`** (`0x12a7c0–0x12a7c4`), using guard **`0xab5cf4`**. Its initialization path invokes **`0x12a18c`** (`0x12a7a0–0x12a7a4`).
+
+The initializer **`0x12a18c`** writes a concrete default layout:
+
+| State field | Initialized value |
+| --- | --- |
+| `+0x00` | 0 |
+| `+0x18` | 0 |
+| `+0x1c` | 2 |
+| `+0x20` | 2 |
+| `+0x24` | 0 |
+| `+0x2c` | 2 |
+| `+0x28` | 7 |
+| `+0x34` | 3 |
+| `+0x38` | 1 |
+| `+0x39` | 0 |
+| `+0x3a` | 0 |
+| `+0x3b` | 1 |
+| `+0x40` | 1 |
+| `+0x41` | 0 |
+
+These offsets belong to **the popup state singleton**, **not** the ViewManager object whose `+0x25/+0x26/+0x88` fields were discussed earlier.
+
+### `0x12a0e0`: toggle a state byte, not an ID lookup
+
+The function accepts `r0=state`, `r1=boolean/mode`; it compares **`state+0x3b`** with `r1` (`0x12a10c–0x12a114`). On change it writes **`state+0x3b=r1`** at `0x12a144` and tail-calls GTF2 function **`0x12a02c`**. There is no provider lookup and no literal startup view ID in this routine.
+
+### `0x12b0d8`: guarded request, status return, state fields and action dispatch
+
+This function accepts `r0=state`, `r1=requested mode`, `r2=auxiliary argument`:
+
+1. It checks **`state+0x31`** at `0x12b10c–0x12b114`. If zero, it returns **0**.
+2. Calls GTF2 **`0x12997c`** and admits status values **1 or 2**, or **5 with requested mode 0** (`0x12b118–0x12b140`). Rejected requests return **0**.
+3. On acceptance, stores **`state+0x34=0`** and **`state+0x2c=requested mode`** at `0x12b168–0x12b170`.
+4. Calls **`0x12a92c(state,requested_mode,aux)`** at `0x12b190–0x12b19c`, then returns **1**.
+
+The requested mode is **not proven to be a view ID**. It is a state-machine request. This explains why derived event IDs 40/41 can call this function with arguments 1/0 without requesting screen IDs 1/0.
+
+### `0x12a92c`: queued mode transition and an internal event 149/150
+
+The callee first checks `state+0x31`; when unavailable, it sets **`state+0x34=3`** and returns (`0x12a964–0x12a970`, `0x12ab58`). If the requested mode differs from **`state+0x1c`**, it writes the requested mode into **`state+0x20`** (`0x12a974–0x12a988`). It has additional guards on `+0x38`, `+0x00`, `+0x39`, and `+0x32` that can defer the operation.
+
+On the active path it writes **`state+0x1c=requested mode`** (`0x12aa18–0x12aa1c`), calls GTF2 animation/action function **`0x11f930`** (`0x12aa70–0x12aa94`), then constructs an event-like record and invokes an indirect callback at **`0x12aad0`**. The record carries **ID 149 if requested mode is nonzero, or 150 if zero** (`0x12aa98–0x12aad0`), with kind **9** written at `0x12aab4–0x12aabc`. These are **internal event IDs**, not provider view IDs: their numerical overlap with factory IDs is coincidental unless a consumer proves otherwise.
+
+The same routine sets **`state+0x34=3`** on completion (`0x12aad4–0x12aae4`). This is a concrete state-transition path that can subsequently affect the ViewManager's view-switch timing.
+
+### `0x12b2f8`: subtype-16 reset and three-way state dispatch
+
+For the previously identified **event kind 8, subtype 16**, derived ViewManager calls `0x12b2f8`. This function:
+
+- Gets the state singleton through **`0x12a77c`**.
+- Clears **`state+0x39=0`** and sets **`state+0x32=1`** (`0x12b324–0x12b338`).
+- If **`state+0x00==0`**, returns immediately (`0x12b340–0x12b348`).
+- Otherwise branches on **`state+0x34`**:
+  - **0**: calls **`0x12b0d8`** using the cached `state+0x2c` and an auxiliary pointer derived from the GTF2 manager (`0x12b36c–0x12b390`).
+  - **1**: calls **`0x12ab84`** (`0x12b398–0x12b3b0`).
+  - **2**: calls **`0x12acf0`** (`0x12b3b8–0x12b3d0`).
+- For every non-early-return branch, sets **`state+0x34=3`** (`0x12b3d4–0x12b3dc`).
+
+**Implication for emulation:** an event can change **pending transition state and internal event emission** without directly supplying a screen ID. Preserve the two layers: **ViewManager state** and this **GTF2 popup/action singleton**. A startup screen timeline still requires tracing which upstream event or DP value selects **174/176/177/178**; these helpers do **not** provide that selection.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12a0e0 --stop 0x12a168
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12a18c --stop 0x12a23c
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12a77c --stop 0x12a7d8
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12a92c --stop 0x12ab84
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12b0d8 --stop 0x12b1c0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12b2f8 --stop 0x12b3e4
+```

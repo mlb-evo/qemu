@@ -467,3 +467,35 @@ Thus the queue has an independently verified producer `0x13ce08` and consumer `0
 The startup wait is more precisely described as **actively processing RTE-related queued work until the queue is empty**. It is *not* a readiness-bit wait, and an empty queue alone does not prove that `IHmiKss` callbacks are subscribed or that the Kanzi scene is ready.
 
 Verified against original stock ELF using `tools/fpk1/research/gtf2/verify_rte_queue_consumer.py` (all direct branches and dequeue opcodes checked).
+
+## RTE queue work-item layout and producer families
+
+Tracing the **contents of the startup-enqueued work item** rather than only its queue counter establishes the following ARM sequence:
+
+```asm
+114a7c  mov r1,#8           ; input parameter for 0x14250c
+114a84  bl 0x14250c        ; prepare a collection/argument
+114a88  bl 0x13d098        ; RTE queue singleton
+114a8c  mov r2,r5          ; pointer to startup-side object
+114a90  mov r1,r6          ; prepared collection/argument
+114a94  mov r3,#0          ; fourth argument = 0
+114a98  bl 0x141608        ; enqueue/build work item
+
+141640  mov r2,#52
+141644  mov r0,r6          ; stack work-item address
+141648  mov r1,#0
+14164c  bl 0x10e678       ; clear 52-byte work item
+141650  mov r1,r6
+141654  mov r0,r4          ; queue
+14165c  bl 0x13ce08       ; enqueue/copy record
+141660  mov r0,r6
+141664  bl 0x13a378       ; destroy temporary record
+...
+14168c  str r9,[r7,#0x30] ; store fourth argument in queued record +0x30
+```
+
+`0x141608` has exactly **two direct ARM BL callers** in the stock ELF: startup `0x114a98` (fourth argument zero) and `0x123474` (fourth argument loaded from a literal at `0x123504`). The lower-level queue producer `0x13ce08` has exactly **three direct ARM BL callers**: `0x1414e0`, `0x14165c`, `0x1417b8`. An additional higher-level work-item path `0x121d2c → 0x141870 → 0x141744 → 0x13ce08` is also present. These counts cover direct ARM `BL` instructions only, not possible indirect calls.
+
+The queue consumer `0x14199c` examines several state bytes (`+0x14`, `+0x54`, `+0x64`) and processes nested collections and virtual calls before removing the 52-byte head item at `0x141f08–0x141f30`. The work item is therefore **not just a boolean notification**. However, the *semantic type* of the startup item and its relationship to actual `IHmiKss` transport subscription are **still unknown**. In particular, `r3=0` is a verified input value, not a recovered event enum name.
+
+Reproduce: `python3 tools/fpk1/research/gtf2/verify_rte_queue_record_sources.py /path/to/gtf2`. Tested against the original stock ELF: all 12 call edges, 16 instruction words and direct-call counts matched.

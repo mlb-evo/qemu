@@ -372,7 +372,7 @@ Verifier: `tools/fpk1/research/gtf2/verify_ipc_descriptor_and_kzb_startup.py`, c
 
 ## Resolved: startup explicitly waits on an RTE object
 
-Within the same startup routine `0x114650`, after constructing the HMI owner and before later context/design setup, the original ARM code enters an explicit wait loop:
+Within the same startup routine `0x114650`, after constructing the HMI owner and before later context/design setup, the original ARM code enters an explicit wait loop. **Correction: this loop checks the occupancy count of an RTE-related queue, not a generic readiness flag:**
 
 ```asm
 114ab0  bl 0x13d098         ; obtain service/global object
@@ -388,7 +388,7 @@ Within the same startup routine `0x114650`, after constructing the HMI owner and
 114ad8  bne 0x114ab0      ; repeat while not ready
 ```
 
-The test is particularly simple:
+The occupancy test is particularly simple:
 
 ```asm
 13a63c  ldr r0,[r4,#0xc]  ; read object field +0x0c
@@ -403,6 +403,20 @@ This sharpens the startup chain:
 
 **construct HMI owner/receiver objects** → **perform resource/configuration setup** → **wait for RTE state to clear** → **query active design/variant and set context hooks** → **main event loop**.
 
-**Important boundary:** `RTE object+0x0c == 0` is the precise exit condition, but its semantic name is not recovered. The diagnostic calls it RTE waiting, yet it does **not** prove that all `IHmiKss` subscriptions are registered, that incoming events cannot arrive asynchronously, or that Kanzi scene nodes have been activated. The `DisplaySupervisor.kzb` reference nearby is passed through a temporary string/configuration path and should not be treated as proof of actual KZB loading.
+**Important boundary (corrected after tracing writers):** `RTE queue+0x0c == 0` is the exit condition, and `+0x0c` is a queue occupancy count (see below), not a generic ready flag. The diagnostic calls it RTE waiting, but this does **not** prove that all `IHmiKss` subscriptions are registered, that incoming events cannot arrive asynchronously, or that Kanzi scene nodes have been activated. The `DisplaySupervisor.kzb` reference nearby is passed through a temporary string/configuration path and should not be treated as proof of actual KZB loading.
 
 Reproducible verifier: `tools/fpk1/research/gtf2/verify_rte_startup_wait.py`; executed successfully against the original stock GTF2 ELF.
+
+## Correction and proof: RTE wait observes a queue count
+
+Following **writers**, not just the reader `0x13a614`, resolves the semantics of the field at `+0x0c`.
+
+- `0x13d098` is a lazily allocated singleton object stored through global pointer `0xab6114`. Its allocator requests 272 bytes and calls `0x13cf58`.
+- Constructor `0x13cf58` invokes `0x13ce74` to initialize a dynamic ring-buffer-like collection with four header words and a capacity field at `+0x10`. `0x13ce74` initializes `+0x0c` to zero and copies it from a source collection when appropriate.
+- **Producer `0x13ce08`** checks the count at `+0x0c` against `capacity-1` (`0x13ce18–0x13ce2c`), grows the allocation through `0x13ccac` if needed, writes an entry through `0x13c9c4`, advances the ring index at `+0x08` (wrapping to zero at capacity), and **increments `+0x0c` at `0x13ce60–0x13ce64`**.
+- Startup passes the singleton into `0x141608` at `0x114a98`; `0x141608` invokes the producer `0x13ce08` at `0x14165c`. Thus the startup path itself can populate this queue before waiting.
+- The wait loop `0x114acc → 0x13d098 → 0x13a614` checks this queue's `+0x0c` and repeats while the count is nonzero.
+
+**Conclusion:** `%dms waited on RTE` describes waiting for **queued RTE-related work to drain**, not waiting for a readiness bit to be cleared. The producer and count interpretation are directly established by ARM instructions. The **specific consumer/decrement operation and its thread/IPC ownership remain untraced**; therefore do not infer that every IPC subscription is ready or that Kanzi has loaded its scene when the count reaches zero.
+
+This supersedes the earlier wording in this document that described `+0x0c` as an unnamed readiness state. Reproduce with `tools/fpk1/research/gtf2/verify_rte_queue_count.py /path/to/gtf2`; tested against the stock GTF2 ELF.

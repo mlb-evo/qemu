@@ -4885,3 +4885,12 @@ The type-1 record dispatcher obtains a common aggregate via `0x151558`, then fou
 `0x190fe8` recognizes only event IDs 446 and 447 (`event_id-444-2 <=1`, unsigned) and requires nonzero byte `[subobject+0xc+4]`; on acceptance it calls `0x190d30(subobject+0xc)` and returns 1, otherwise returns 0. Thus IDs 446/447 have a specific short-circuit handler at the fourth receiver. The handler at `0x18fc58` is a different entry point with separate callers; its `0x1910fc` forwarding does not occur through the type-1 dispatcher call shown above.
 
 This resolves the interface accessor identities and a specific ID filter, but does not yet name all virtual slot-6 implementations or establish final HMI scene actions. Static only, no emulator.
+
+
+### MFL pre-fourth-receiver state gate and synthetic event (2026-10-28)
+
+Static ARM disassembly of stock `gtf2` at `0x1891e4..0x189308` resolves a previously unnamed predicate in the type-1 dispatcher `0x18a8dc`. Function `0x1891e4(owner,record)` returns true only if `[owner+0x65]!=0`, `record.type==1`, and `record.event_id` belongs to the exact set `{439,444,447,450,451,452,453,454,455,456,465,473,483,486}`. The comparisons are immediate constants and a chained arithmetic sequence beginning with 439; no table is involved. If true, the caller skips the fourth subobject and invokes `0x18930c(owner,0)` before exiting this dispatch path (`0x18a8f0..0x18a91c`).
+
+The zero argument to `0x18930c` is not the original event ID. `0x18930c` creates a temporary record with `0x1554dc`, sets record type 5 and a byte argument using `0x152da8(temp,1,0)` (`0x152da8` writes `[record+4]=5`, `[record+0x14]=1`, `[record+0x18]=0`), and passes it through `0x14ea10(owner,temp)`. `0x14ea10` invokes `0x152d14` then forwards the record via vtable slot 0 of an object obtained through `0x14ea04 -> 0x151558`. This is an **internal synthetic typed record**, not a direct call to the scene, and should not be labeled a key release without further proof.
+
+If the predicate is false, the dispatcher checks ID 450 separately and otherwise invokes the fourth subobject accessor `0x14eb98` and its `0x18fc50 -> 0x190fe8` special filter for IDs 446/447. This establishes a state-dependent interception before that receiver. No QEMU runtime was used.

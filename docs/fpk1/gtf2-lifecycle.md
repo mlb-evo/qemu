@@ -4797,3 +4797,29 @@ Upstream, `0x1d796c` only calls this sender when its serialized state differs fr
 Re-disassembled stock `gtf2` at `0x1d796c..0x1d7bb4` and `0x692d08..0x692e00`. Two important conditions were missing from the prior event graph. First, `0x1d7998` calls `0x68dae8` and `0x1d799c..0x1d79a0` **returns without serializing or sending** when it returns zero. Second, after serializing the state beginning at `this+0x54` through `0x1d90b4` and `0x1d940c`, `0x1d7a18` reads flag `[this+0x9d]`; when nonzero, loop `0x1d7a2c..0x1d7a40` overwrites **every byte** of the serialized output with zero before comparing it against the previous payload. Therefore the change detector compares the *possibly masked* serialized bytes, not necessarily raw state. The comparison first checks the serialized length against the cached length (`0x1d7a48..0x1d7a54`), then calls `0x10e888` to compare bytes (`0x1d7a58..0x1d7a68`); equality bypasses the send. If different, it updates the cache and calls `0x692d08`.
 
 The named sender `0x692d08` checks its service pointer `[this+0xc]` (`0x692d38..0x692d40`), allocates a 12-byte **message wrapper object** at `0x692d4c..0x692d50`, then uses the serialized byte-vector length `[r6]` and data pointer `[r6+4]` (`0x692d98..0x692da8`) to fill its payload. The 12-byte allocation is **not evidence of a fixed 12-byte persistent-data payload**. The outgoing call at `0x692dcc` is virtual slot 2 of the resolved reply interface. A follow-up status/diagnostic call to `0x692784` occurs at `0x692e00`. Remaining unknowns: exact field order/size emitted by `0x1d940c`, the semantic meaning of the mask flag `[this+0x9d]`, and the zero-return condition of `0x68dae8`. No runtime or emulator assumptions.
+
+
+### Persistent-data byte layout recovered from serializer (2026-10-28)
+
+Static disassembly of stock GTF2 `0x1d940c..0x1d961c` reveals the outgoing serialization of the state object passed by `0x1d796c` as `this+0x54`. The serializer first calls `0x10ebc4` with a 16-byte initialized temporary and output vector; its allocation/length behavior still needs verification. It then explicitly writes output offsets **0 through 10 and 13**. Thus these are proven *offsets*, not yet proof that the vector is exactly 14 bytes or that offsets 11/12 have particular values.
+
+Let `S` be the state record pointer stored in the serializer's input wrapper (`[r5]`) and `B` the output byte buffer (`[r4+4]`). The following assignments are directly visible:
+
+| Output | Formula / source | ARM evidence |
+|---|---|---|
+| `B[0]` | constant `0x02` | `0x1d946c` |
+| `B[1]` bits 0..2 | booleans `S[0]`, `S[1]`, `S[2]` | `0x1d9474..0x1d94d8` |
+| `B[1]` bit 3 | set when `S[3]==0` (inverted polarity) | `0x1d94e0..0x1d94fc` |
+| `B[1]` bit 7 | derived from `S[4]!=0`; remaining bits are preserved from initialized buffer | `0x1d9500..0x1d9528` |
+| `B[2]` | low 8 bits of 32-bit `*(S+8)` | `0x1d952c..0x1d953c` |
+| `B[3]` | `(*(S+0xc) << 4) | (*(uint32_t*)(S+0x10) & 0xf)` | `0x1d9540..0x1d9558` |
+| `B[4]` | low byte of `*(uint32_t*)(S+0x14)` | `0x1d955c..0x1d9568` |
+| `B[5]` | low byte of `*(uint32_t*)(S+0x18)` | `0x1d956c..0x1d9578` |
+| `B[6]` | `(S[0x24] << 4) | (*(uint32_t*)(S+0x20) & 0xf)` | `0x1d957c..0x1d9594` |
+| `B[7]` | low byte of `*(uint32_t*)(S+0x1c)` | `0x1d9598..0x1d95a4` |
+| `B[8]` | `(S[0x34] << 4) | (*(uint32_t*)(S+0x28) & 0xf)` | `0x1d95a8..0x1d95c0` |
+| `B[9]` | `(*(uint16_t*)(S+0x2c) >> 3) & 0xff` | `0x1d95c4..0x1d95d4` |
+| `B[10]` | `(*(uint16_t*)(S+0x30) >> 3) & 0xff` | `0x1d95d8..0x1d95e8` |
+| `B[13]` | output of bit-packing helper `0x1d90bc` from `S[0x38]`, `S[0x3c]`, `S[0x40]`, `S[5]` | `0x1d95ec..0x1d9614` |
+
+**Caveat:** the first three boolean bits are set on nonzero; bit 3 is set on zero. For `B[1]` bit 7, `0x1d9520..0x1d9528` uses an unusual conditional pair of MVN shifts; confirm its exact mask algebra before relying on the single-bit interpretation. No assignments to `B[11]` or `B[12]` occur in this function's inspected straight-line region. The packed helper `0x1d90bc` enforces total field width <= 8 and assembles masked bit fields; individual widths should be derived separately. The outer caller's flag `[this+0x9d]` can still zero the entire vector before comparison and transmission. All observations are static; no emulator.

@@ -2509,3 +2509,19 @@ The **176** figure counts instruction-level field-to-DP write sites, **not** 176
 The scan exposed and corrected a previous documentation omission: **`Gear_Display` writes 12 bytes**, including the last `payload+0x0b` → `0x020001f9` mapping at `0x695450–0x695458`. A 12-item batch is therefore consistent with 12 actual direct writes. This is verified from the ARM disassembly, not inferred from the batch count.
 
 **Interpretation boundary:** this identifies how GTF2 maps payload fields into DP state. It does not by itself establish the corresponding SPI LUN/record layout or whether the values are subsequently used to switch views. The next stage is associating each callback entry with its `IHmiKss` service method and tracing its downstream DP consumers.
+
+### Grouping field writes by GTF2-owned callback function
+
+The 176 field-to-DP write sites are now grouped by their nearest preceding ARM `push {...,lr}` function prologue. This yields **45 candidate callback functions** in the `0x694000–0x697fff` code region. Each group retains the exact call address, payload offset, width and DP ID, and is exportable as a CSV for later association with the corresponding `IHmiKss` method/vtable.
+
+```sh
+python3 tools/fpk1/research/gtf2/group_rte_dp_callbacks.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/group_rte_dp_callbacks.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-ipc-dp-by-callback.csv
+```
+
+For example, the scanner groups the **12 Gear_Display** direct writes under function prologue **`0x695348`** and the **2 TCH_HMI_EngineRPM** direct writes under **`0x697264`**. This is a grouping of **instruction-level sites**, not a claim that GTF2 has only 45 IPC callbacks: other callbacks can update DP via transformed values, wrappers or different call patterns.
+
+**Validation:** executed the direct ARM scan against the original 10,180,269-byte GTF2 ELF locally and reproduced **176** matches, **176 distinct DP-ID values**, distributed across **45** candidate functions. Function grouping uses a heuristic prologue scan and must be cross-checked against service vtables before treating every candidate boundary as a named interface method.
+
+The follow-on task is the `IHmiKss` service method index → callback address mapping; the existing callback diagnostics are not sufficient to assign all 45 names with certainty.

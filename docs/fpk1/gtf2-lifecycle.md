@@ -639,3 +639,32 @@ This follows directly from the `0x123be0–0x123c0c` ARM loop: `r6` starts at ze
 After this loop, event-kind 2 compares the event payload word against several 32-bit IDs (including `0x02000114`, `0x020000be`, `0x020003f0`) and conditionally calls internal view/display routines. It may also route the payload to the popup handler `0x121548` through `0x123cf0`. These values are **not** the same namespace as kind-9 IDs 500/284; do not merge their enum labels.
 
 This reveals **three independent event categories inside one GTF2 dispatcher**: kind 9 (application/event-ID dispatch and frame gate), kind 8 (control events), and kind 2 (DP map propagation). The event-kind labels are descriptive and must be validated against original type information.
+
+### Exact skin-switch validation outcome: success and fallback converge
+
+Re-examination of the `0x122d64–0x122ddc` block resolves a potentially misleading description of `switchToNewSceneGraph`. **Both** the validation-success and validation-failure paths can call it; it is not exclusively an abort handler.
+
+1. `0x122d64–0x122d74`: read `this+0xdfe`, compare it with the skin ID returned by `0x12d208`. If different, branch into the diagnostic `Skin switching aborted. MMI did not switch skin.`.
+2. If IDs match, `0x122d98` checks `r5` (set by earlier validation). If nonzero, take fallback at `0x122dbc`.
+3. If `r5==0`, `0x122da0–0x122db4` tests `this+0xe00`. If **nonzero**, it returns from the loader at `0x123490` **without switching**. If **zero**, it sets `this+0xdf4=1` and falls through to `switchToNewSceneGraph` at `0x122dd8`.
+4. Fallback `0x122dbc–0x122dd4` sets `this+0xdf4=1`, fetches skin ID from `0x69e144(6)` and stores it to `this+0xdfe`, then calls the **same** `switchToNewSceneGraph` at `0x122dd8`.
+
+This proves the **minimum-countdown gate is enforced on the normal scene-graph transition**; invalid view/popup/skin checks can take a separate fallback that resets the selected ID before switching. The downstream `switchToNewSceneGraph` still has its own checks, including the `this+0xe04` polling path and the KSS-response diagnostic.
+
+The code-supported transaction can now be summarized as:
+
+```text
+event 500 -> executeSkinChange() -> +0xdfd=1, +0xdf4=0, +0xe00=N
+     |
+     +-- frame 284 -> --(+0xe00) while positive
+     |                -> handleLoadingKZBs()
+     |                    +-- view/popup/skin mismatch -> restore selected skin
+     |                    |                              +0xdf4=1
+     |                    |                              switchToNewSceneGraph()
+     |                    +-- valid, countdown > 0 ----> return / wait next frame
+     |                    +-- valid, countdown = 0 ----> +0xdf4=1
+     |                                                   switchToNewSceneGraph()
+     +-- subsequent GTF2 application events continue through same dispatcher
+```
+
+**Limits:** The exact cause of `r5` being nonzero requires full register-flow analysis of the preceding checks. A zero countdown permits the scene-graph switch, but the success log and actual visual result depend on later code and runtime conditions.

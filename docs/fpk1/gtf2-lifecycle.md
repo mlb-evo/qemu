@@ -2890,3 +2890,22 @@ python3 tools/fpk1/research/gtf2/verify_hmi_dirty_vs_fanout.py /path/to/gtf2
 ```
 
 The verifier checks **23** literal/instruction words including both event branch sites, the object offset, the bytewise flag update, and both virtual event calls.
+
+### Two more verified multi-receiver HMI event fan-outs
+
+A follow-up to the 24-route dispatch table confirms **two more** events that fan out to two distinct receiver objects. These are already present in the dispatch inventory; this section adds **receiver-level effects**, not two new unique DP IDs.
+
+| Incoming DP | Comparison / BEQ | Handler | First receiver owner slot | Second receiver owner slot |
+| --- | --- | --- | --- | --- |
+| `0x02000225` (`HMI_EngineID_MKB`) | `0x574020 / 0x574024` | `0x584710` | `+0x4b02c` (literal `0x583928`) | `+0x51310` (literal `0x58392c`) |
+| `0x020001e6` (writer at `0x694b5c`) | `0x574bbc / 0x574bc0` | `0x5812a8` | `+0x1f5d0` (literal `0x581b84`) | `+0x1fb00` (literal `0x581b88`) |
+
+Both routes obtain receiver objects via `0x6218cc`, load the receiver vtable and invoke its **first virtual method** with event kind `2`. For `0x02000225`, the two indirect calls are at `0x584750` and `0x584794` (register `r11`); for `0x020001e6`, at `0x5812d8` and `0x581304` (register `r12`). The caller also constructs separate event/context pointers for each receiver, rather than forwarding a single object pointer unchanged.
+
+The static analysis has been reproduced against the original **SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`** GTF2 binary:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_rte_event_fanout.py /path/to/gtf2
+```
+
+This verifier checks both event DP literals, both `CMP`/conditional branch edges, **four receiver slot literals**, **four indirect calls**, and the **four event-kind assignments**. The two concrete receiver classes and visual elements are still unknown. Importantly, a fan-out is not a screen transition; it only proves multiple object-level event deliveries.

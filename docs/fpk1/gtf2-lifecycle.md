@@ -1201,3 +1201,55 @@ Reproduction:
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1193a8 --stop 0x1195b8
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119688 --stop 0x119800
 ```
+
+## Names resolved: virtual +0x60 is `ViewManager::doSwitch`; `0x1189a0` selects display contexts
+
+A new direct inspection of the original GTF2 ELF resolves the previously anonymous derived virtual slot **`+0x60 -> 0x119688`**. Its own literal pool at `0x119a38–0x119a4c` points to these exact diagnostic strings:
+
+| Literal VA | String VA | Diagnostic |
+| --- | --- | --- |
+| `0x119a38` | `0x7bf343` | `doSwitch(popup=%d), changing view to %s` |
+| `0x119a3c` | `0x7bf36b` | `doSwitch, we have faded out and were about to fade in, but we got the request to fade out again. Attempted to fade in %s` |
+| `0x119a40` | `0x7bf3e4` | `doSwitch, setting delay timer for %s (delayCenterStage %d)` |
+| `0x119a48` | `0x7bf437` | `doSwitch(), switching off current view %s before delay for context fade in for popup` |
+| `0x119a4c` | `0x7bf48c` | `doSwitch(), waiting before fading in context` |
+
+Thus the slot is specifically **`ViewManager::doSwitch`** (diagnostic attribution), rather than a generic “completion” hook. Its already-established branches for `this+0x49`, `this+0x54`, cached target `this+0x3c`, and sentinel **181** must be interpreted in the context of **starting/redirecting an animated switch**, not merely completing one.
+
+### `contextIdFromView` helper at `0x1189a0`
+
+This helper is called during the center/popup transition and is identifiable from its diagnostic pool:
+
+- `0x118b64 -> 0x7beec3`: **`contextIdFromView()`**
+- `0x118b6c -> 0x7beed7`: **`Failed to find display context where context->isVisible() evaluates to true`**
+- `0x118b70 -> 0x7bef23`: **`Sending context id of first usable display context`**
+- `0x118b74 -> 0x7bef56`: further failure diagnostic (see original ELF).
+
+Verified disassembly behavior:
+
+1. `0x1189d8–0x1189e8`: initialize two 16-bit output context IDs to **-1** and a separate output flag to **0**.
+2. `0x1189f0–0x118a14`: invoke input view object's **virtual `+0x54`** to obtain a collection of display contexts. This `+0x54` belongs to the **view object**, not to the manager's vtable.
+3. `0x118a1c–0x118a94`: iterate context pointers. Each non-null context is queried via its own **virtual `+0x00`**; a non-null result is tested by GTF2 function `0x1355f8`.
+4. `0x118a50–0x118a84`: for the selected visible context, use its **virtual `+0x70`** followed by GTF2-owned `0x63b32c` and `0x63b2bc` to obtain **two 16-bit identifiers**; set output flag **1**.
+5. `0x118a8c–0x118b2c`: if no visible context was selected, retain the first usable candidate and derive identifiers from it. Diagnostics distinguish this fallback from the visible-context case.
+6. `0x118b48–0x118b58`: clean up the temporary context collection.
+
+**Architecture implication:** a “view” can expose **multiple display contexts**, and GTF2 selects an active/visible one or falls back to the first usable context. Therefore mapping a numeric view ID to a single flat screen is insufficient to fully describe center/popup rendering. The two returned 16-bit IDs and output flag should be traced into `handleViewSwitchCenter` and `doSwitch`.
+
+**Scope limitation:** the helper's visible-context predicate is established by the diagnostic and its branch; the semantics of `0x1355f8`, `0x63b32c` and `0x63b2bc` are not yet fully reconstructed. Do not assign names to the two output IDs without checking those callsites.
+
+### Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1189a0 --stop 0x118b78
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119688 --stop 0x119a50
+```
+
+**Updated GTF2-owned call hierarchy:**
+
+```text
+ViewManager::handleViewSwitch   [0x11a250; virtual +0x50]
+  -> ViewManager::handleViewSwitchCenter [0x118c74; virtual +0x5c]
+      -> ViewManager::doSwitch [0x119688; virtual +0x60]
+      -> contextIdFromView [0x1189a0] (display-context selection)
+```

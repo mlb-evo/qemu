@@ -2694,3 +2694,28 @@ python3 tools/fpk1/research/gtf2/verify_gear_dp_owner.py /path/to/gtf2
 ```
 
 **Unresolved:** the semantic class name for the embedded adapter and the rendered property on the Kanzi scene graph. The vtable/owner linkage is certain; a gear glyph, warning icon or specific screen cannot yet be assigned solely from these instructions. The distinction between **adapter object** and **final visual receiver** is important: the callback passes a receiver pointer as an argument, so the adapter's vtable does not identify that receiver's concrete type.
+
+### Gear DP 0x020001f9: exact state gate and receiver update truth table
+
+Instruction-level follow-up to the adapter/owner analysis establishes **why some Gear_Display updates do not change the UI**:
+
+- At `0x219b78`, GTF2 executes three prerequisite checks (`0x2183cc`, `0x218478`, `0x21839c`), then reads the **signed 16-bit** value for `0x020001f9` via `0x69ec38` into stack `sp+6`.
+- The result is **zero** when **all three prerequisite checks return zero**, irrespective of the DP value. Otherwise, the result is **one iff the signed 16-bit DP value is nonzero**. This means the UI-facing state is gated by three other GTF2-owned conditions; their business semantics remain to be recovered.
+- `0x5fdb8c` uses that boolean, invokes the receiver virtual method at `vtable+0x70`, and calls `0x6528f0` with the boolean as the second argument.
+- `0x6528f0` has **three**, not two, distinct outcomes:
+
+| Receiver state | Observable code effect |
+| --- | --- |
+| `receiver[0x1b8] & 1 == 0` | Write boolean to `receiver[0xf8]`; set dirty bit `0x10` in `receiver[0xe3]` **only if old and new differ** |
+| `receiver[0x1b8] & 1 != 0` and `receiver+0xfc != NULL` | Call `0x63669c`, notify via `0x14cb48`, and set dirty bit `0x10` |
+| `receiver[0x1b8] & 1 != 0` and `receiver+0xfc == NULL` | **Return without updating the cached byte or dirty bit** |
+
+The third case corrects an oversimplification in the earlier description of the state helper: **a missing external receiver in active mode suppresses the update**. Also, `0x219b78` does not simply forward the IPC payload; it applies three gating conditions.
+
+The committed verifier checks **24 exact ARM words** for these branch conditions, DP read, virtual slot and notification behavior:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_gear_dp_state_gates.py /path/to/gtf2
+```
+
+This establishes precise **state-change/no-change conditions** for the DP-driven event. The final receiver's concrete class, the meaning of the three gates and the actual Kanzi property remain unproven; a pixel-level interpretation still needs further evidence.

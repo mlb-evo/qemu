@@ -1116,3 +1116,43 @@ Reproduce:
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x117fd4 --stop 0x118044
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x118c74 --stop 0x118d70
 ```
+
+## Derived virtual +0x5c is `ViewManager::handleViewSwitchCenter`
+
+The previously unnamed extended-manager virtual slot **`+0x5c -> 0x118c74`** has a definitive diagnostic name in the original GTF2 ELF: **`ViewManager::handleViewSwitchCenter`**, at string VA `0x7befeb` (literal pool `0x1195c0`). The function occupies **`0x118c74..0x1195b4`**, substantially larger than the initial entry block. This is the **center/popup-aware transition coordinator** invoked from the derived `handleViewSwitch` at `0x11a634`.
+
+### Concrete code evidence
+
+- `0x118c74`: saves nine ARM registers and reserves **212 bytes** of stack, consistent with a substantial transition routine rather than a simple view lookup.
+- `0x118cc4–0x118d44`: when **`this+0x40`** is set, and **`this+0x25`** is nonzero, compare requested target `[r5]` against cached target **`this+0x3c`**. A different nonzero target updates `+0x3c`; the function then invokes **derived virtual `+0x60`** (table `0x7bfaf0` → `0x119688`). Diagnostic: **`target changed while we were fading out from %s to %s`**.
+- `0x118d48–0x118e10`: consume pending **`this+0x48`** by clearing it. If a current view exists and `this+0x44 == this+0x1c`, send **virtual `+0x28`** to the current view with a four-byte all-ones temporary flag array; update **`this+0x44 = 181`**, then branch to either `0x117e58` or `0x117dcc` based on **`this+0x26`**. Diagnostic: **`faded in`**. This is a separate **fade-in completion** branch.
+- `0x118e24–0x118e60`: **`this+0x49`** can force requested view ID **181**; otherwise the code validates a candidate against an upper bound **179** and a provider result from `0x6a9e9c`. This proves the transition coordinator uses **special IDs beyond the 180 DP slot indices**; view IDs and DP slot indices must not be assumed interchangeable in every branch.
+- `0x118e88–0x118f44`: when cached target `this+0x3c` is nonzero and differs from requested target, log **`changing target view`**, update the cached target, and inspect a 64-bit timestamp **`this+0x60/+0x64`**. A nonexpired deadline logs **`reset delay timer`** and updates `this+0x58`.
+- `0x118f6c–0x1190fc`: on a new target, log **`starting view change from %s to %s (center %d, popup %d)`**, call `0x11de04`, inspect view object properties via GTF2 functions `0x146320` and `0x146200`, and use helper **`0x1189a0`** to compare center-related state. It selects a transition code **25**, **2**, or **8** at `0x1190e4–0x1190fc`, depending on these comparisons and `this+0x26`. These are *internal transition codes*, not verified UI event IDs.
+
+### Diagnostic names for the rest of this routine
+
+The original ELF also includes these exact `handleViewSwitchCenter` diagnostics, referenced in the `0x1195bc..0x119610` literal pool:
+
+- `instant view change active, no animation!`
+- `starting fade out animation 1`
+- `no fade out necessary`
+- `partial popup waiting for fade out of popup glass plate`
+- `switching from popup to popup`
+- `starting fade out animation 2`
+- `starting fade out animation 3`
+
+These establish that **normal view changes, popup-to-popup transitions, partial-popup transitions, and instant/no-animation paths are handled in one GTF2-owned coordinator**. The precise animation event/callback completion paths must be resolved from the remaining `0x119100..0x1195b4` branches before assigning exact timing or completion guarantees.
+
+### Corrected view-ID distinction
+
+The earlier DP-slot enable/disable APIs bound their indices to **0..179**. The center coordinator explicitly uses **181** as a special requested/transition view ID (`0x118db0`, `0x118e2c`), and compares other values against 179. Therefore the 180 DP slots are **not a complete enumeration of every view-related state**. A special ID can represent a transitional state or sentinel; its exact symbolic meaning remains unknown.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x118c74 --stop 0x1195b8
+python3 tools/fpk1/research/gtf2/inspect_vtable.py /path/to/gtf2 --vtable 0x7bfaf0 --entries 25
+```
+
+**Next GTF2-only work:** decode `0x119100..0x1195b4` (animation launch paths), `+0x60 -> 0x119688` (derived completion/cancellation), and the helper `0x1189a0` (center selection). This should connect the fade-out callbacks to the already proven `+0x70/+0x71` delayed-switch handshake.

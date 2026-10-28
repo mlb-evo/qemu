@@ -2313,3 +2313,25 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d5dc --stop 0x69d680
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6ac07c --stop 0x6ac100
 ```
+
+## Verification and remaining dynamic boundary
+
+The committed **`verify_event_to_view_path.py`** checks **nine exact ARM BL edges** and **five vtable targets** directly against the original GTF2 ELF bytes. It fails nonzero if any expected edge is absent or differs. The verified vtable targets are `0x7bfb1c -> 0x11a8bc`, `0x7bfb40 -> 0x11a250`, `0x7bfb48 -> 0x11871c`, `0x891984 -> 0x6a96d0`, `0x8919a8 -> 0x6a91a8`.
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_event_to_view_path.py /path/to/gtf2
+```
+
+**Static path completion criteria are met:** event callback, queue drain, record classification, chain synchronization, conditional ID setter, selector, factory, and virtual switch target are connected by exact instructions or vtable pointers. The resulting reconstruction is **conditional control flow**, not a guarantee that all stages run for every event.
+
+**Dynamic startup chronology is a separate unresolved question.** To establish which of **174, 176, 177, 178** actually becomes visible and in what order, capture at least these five application-owned points in a running GTF2/QEMU session:
+
+| Trace point | Capture |
+| --- | --- |
+| `0x6a96d0` / `0x11a8bc` | event kind `[r1]`, event ID `[r1+4]` where valid, current manager state |
+| `0x69d19c` | record-manager pointer, event/aux arguments, classifier result at `0x69d230` |
+| `0x69d810` | state pointer `r0`, proposed ID `r1`, `[r0+0x10]` mask, resulting `[r0+0x14]` |
+| `0x11871c` / `0x6a8d5c` | selected ID, `+0x25/+0x26` gates and active record pointer |
+| `0x11a250` / `0x119688` | requested ID, old/current ID, transition flags and actual commit of switch |
+
+Because this is **ARM32 QNX** with a firmware-specific process environment, static analysis alone cannot supply the missing runtime event payloads or prove a visible-frame timeline. Do not fabricate that timeline from KZB resource request order. The above capture points are deliberately **inside GTF2**, avoiding external-library reverse engineering.

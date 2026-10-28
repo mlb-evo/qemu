@@ -1373,3 +1373,61 @@ python3 tools/fpk1/research/gtf2/scan_view_vtables.py /path/to/gtf2 \
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 \
   --start 0x145198 --stop 0x1451c0
 ```
+
+## Five candidate view tables confirmed by constructor vptr writes; +0x74 is an object link
+
+The preceding 94-table scan was heuristic. A follow-up checked **literal references and ARM constructor instructions** for five representative candidates. All five have actual GTF2-owned routines that **write the candidate vtable address to the beginning of an object**. This upgrades these five from “pointer-array candidates” to **confirmed object vtables**, without yet proving their screen names.
+
+| Vtable | Exact pointer literals in GTF2 code | Example confirmed `STR` of vptr |
+| --- | --- | --- |
+| `0x7c5518` | `0x135fd0`, `0x135ff0`, `0x136028` | `0x135fb8: str r3,[r0]`; `0x136014: str r2,[r4]` |
+| `0x892df0` | `0x6aec40`, `0x6aec60`, `0x6aec80` | `0x6aec28: str r3,[r0]`; `0x6aec78: str r3,[r4]` |
+| `0x893098` | `0x6af3d0`, `0x6af3f0`, `0x6af410` | `0x6af3b8: str r3,[r0]`; `0x6af408: str r3,[r4]` |
+| `0x893450` | `0x6b08bc`, `0x6b08fc`, `0x6b099c` | `0x6b0888: str r3,[r0],#392`; `0x6b093c: str r3,[r4]` |
+| `0x895458` | `0x6bad84`, `0x6badc8`, `0x6badf8` | `0x6bad98: str r3,[r0],#320`; `0x6badec: str r2,[r4]` |
+
+**Important offset nuance:** the post-index stores in the `0x893450` and `0x895458` constructors write the vptr at the **original** `r0` address, then advance `r0`. They do **not** place the vptr at `this+392` or `this+320`.
+
+### Exact slot implementations for all five
+
+| Table | `+0x4c` | `+0x70` | `+0x74` |
+| --- | --- | --- | --- |
+| `0x7c5518` | `0x145198` | `0x1355e8` | `0x1355f0` |
+| `0x892df0` | `0x145198` | `0x6aead8` | `0x6aeae0` |
+| `0x893098` | `0x145198` | `0x6af2e4` | `0x6af2ec` |
+| `0x893450` | `0x145198` | `0x6afab4` | `0x6afabc` |
+| `0x895458` | `0x145198` | `0x6baa98` | `0x6baaa0` |
+
+**All ten `+0x70` and `+0x74` functions are identical two-instruction getters** in these five concrete vtables:
+
+```arm
+    ldr r0, [r0, #4]
+    bx  lr
+```
+
+This is a major refinement of the previous discussion of “view properties.” For these classes, the virtual `+0x74` **does not itself classify the view**. It returns an object pointer from **`this+0x04`**, which GTF2 then passes to `0x63677c` (via `0x146320`) or `0x63693c` (via `0x146200`). The classification is downstream of this pointer. Likewise, `+0x70` returns the same `this+0x04` pointer, which is passed to GTF2 helper `0x6218cc` in the common **`+0x4c -> 0x145198`** notification adapter.
+
+**Architecture consequence:** the five confirmed view-like classes share a common **object-link/adapter pattern**:
+
+```text
+view object (vptr = one of five confirmed tables)
+  +0x04 -> linked inner object
+  virtual +0x70 / +0x74 -> return linked inner object
+  virtual +0x4c -> 0x145198
+       -> linked inner object -> 0x6218cc -> further notification dispatch
+  0x146320(view)
+       -> linked inner object -> 0x63677c -> numeric property
+  0x146200(view)
+       -> linked inner object -> 0x63693c -> another property
+```
+
+This **does not prove** that all five are top-level screens, that they are registered in the `0x6a9e9c` view provider, or that every concrete GTF2 view uses this pattern. Constructor-to-provider registration is the next necessary link.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/trace_view_constructors.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6aec1c --stop 0x6aec84
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6b087c --stop 0x6b09a4
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x145198 --stop 0x145220
+```

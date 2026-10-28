@@ -2200,3 +2200,58 @@ The **precise upstream writer of the source object's `+0x08`** and the initial c
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69cc48 --stop 0x69ccd0
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69cfdc --stop 0x69d08c
 ```
+
+## Upstream dispatcher found: record-chain synchronization is event-driven
+
+Disassembly of the direct callers above `0x69cbf0` establishes another full application-owned layer above the indexed record graph. **`0x69d19c`** is an event-processing entry; it calls GTF2 classifier **`0x6ac3f8`** and conditionally forwards to the record synchronization machinery.
+
+### `0x69d19c`: event classification and conditional record update
+
+- **`0x69d1ec–0x69d1f4`** reads **`[event+0x00]`** and explicitly compares it to **9**. Thus the handler consumes a record with the same event-kind convention as the manager event pipeline. This does **not** prove every event kind 9 reaches this handler.
+- At **`0x69d214–0x69d22c`**, it calls **`0x6ac3f8(container, auxiliary, event, &local, extra)`**.
+- At **`0x69d230–0x69d238`**, a classifier result of **2** takes a special path; otherwise **`0x69d288–0x69d298`** forwards to **`0x69cbf0`**, which contains the two previously mapped calls to **`0x69c68c`**.
+- The wrapper checks the result of `0x69cbf0` at **`0x69d29c–0x69d2a4`** and returns the resulting status code. Therefore a single incoming event may be classified as a special case, rejected, or passed through to record-chain synchronization.
+
+### `0x69cbf0`: source record and status-dependent behavior
+
+The wrapper accepts **`r0=record_manager`**, **`r1=source`**, **`r2=event/context`**, **`r3=extra`**. Its first path:
+
+1. Calls GTF2 `0x754bd8` to validate the manager/container (`0x69cc08–0x69cc20`).
+2. Checks **bit 9 (`0x200`) of `[source+0x00]`** (`0x69cc24–0x69cc38`). On that path it clears a byte at **`manager+0x08`** and exits with status **1**; otherwise it continues.
+3. Reads **`source+0x08`** and calls indexed-record lookup **`0x6ac100`** (`0x69cc74–0x69cc80`).
+4. Passes the resulting record and original source to **`0x69c68c`** (`0x69cc84–0x69cca8`), then invokes `0x69c64c` to update the manager's cached selection pointer (`0x69ccac–0x69ccc8`).
+
+**Important correction:** **`0x69c64c` writes `manager+0x04` as a pointer to a validated record**; it does **not** write a view ID directly. The **ID write** remains the separate `0x69d810` setter into the selected 32-byte record's **`+0x14`** field.
+
+### `0x69d0cc` and `0x69d12c`: wrapper and state gate
+
+The compact wrapper **`0x69d0cc`** creates zeroed stack-local temporary records (16 bytes and 64 bytes), copies the incoming request into a local field, and invokes **`0x69cbf0`** at **`0x69d120`**. Its caller **`0x69d12c`** checks **`manager+0x0c`**: values **0 or 2** permit this wrapper path, then it writes **`manager+0x0c=1`** and tail-calls **`0x6ac3a8`**. Other values take a diagnostic/error path. This establishes an explicit **manager phase gate** around the record update.
+
+### Updated verified pipeline
+
+```text
+GTF2 event record (kind 9 among possible kinds)
+  -> 0x69d19c
+  -> 0x6ac3f8 classification
+       -> result == 2: special path
+       -> other: 0x69cbf0 record event wrapper
+           -> source+0x08 record ID
+           -> 0x6ac100 validates 32-byte indexed record
+           -> 0x69c68c synchronizes linked record IDs
+           -> 0x69d810 conditionally writes record+0x14
+           -> 0x69c64c caches validated current record pointer
+  -> BaseViewManager +0x58 reads selected ID via 0x69d820
+  -> provider getView(id)
+  -> virtual +0x50 switch handler
+```
+
+**Do not assume this is a single synchronous call stack from event to rendered frame.** The event/record pipeline and manager's view-switch evaluation are separately invoked; the chain shows the verified **data dependency**. The event-to-record connection is now proven, but the exact **startup event payloads** selecting **174, 176, 177, 178** are still unknown.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/trace_record_event_routes.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d19c --stop 0x69d2d0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69cbf0 --stop 0x69ccc8
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d0cc --stop 0x69d168
+```

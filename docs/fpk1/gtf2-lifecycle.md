@@ -3096,3 +3096,40 @@ python3 tools/fpk1/research/gtf2/verify_scene_path_setter.py /path/to/gtf2
 ```
 
 **Remaining critical join:** identify the object whose `+0x8c` string receives the path, find its consumer that resolves the scene node, and show a concrete DP-driven property mutation on that same object. Until then, named scene-path initialization and the 24 RTE event routes remain two independently proven chains.
+
+### Scene wrapper structure: path metadata and bound receiver are separate fields
+
+The previously recovered scene-path setter and the two-receiver IPC fan-out can now be connected at the **common wrapper data-layout level** (not yet at a concrete scene-node identity).
+
+| Wrapper field | Verified access | Exact effect |
+| --- | --- | --- |
+| `+0x8c` | `0x6343d8` setter, `0x6218b0` getter | Stores/returns the address of the path-string metadata object |
+| `+0xb8` | `0x6218b8` setter, `0x6218cc` getter | Stores/returns the pointer to the runtime receiver object |
+| `+0x06`, bit `0x02` | `0x6343e0–0x6343e8` | Set when the path-string field is assigned |
+| `+0x06`, bit `0x40` | `0x6218b8–0x6218c4` | Set when the receiver pointer is assigned |
+
+Exact ARM accessor bodies:
+
+```asm
+6218b0  add  r0,r0,#0x8c
+6218b4  bx   lr
+6218b8  ldrb r3,[r0,#6]
+6218bc  str  r1,[r0,#0xb8]
+6218c0  orr  r3,r3,#0x40
+6218c4  strb r3,[r0,#6]
+6218c8  bx   lr
+6218cc  ldr  r0,[r0,#0xb8]
+6218d0  bx   lr
+```
+
+The `+0x8c` getter is called by GTF2 diagnostic/logging code, for example at `0x6adbd8` and `0x11e65c`, where the returned object is subsequently accessed as a string (`[r0,#8]`). This supports interpreting the field as path-string metadata, rather than a direct scene node pointer.
+
+**Implication:** the previously proven event fan-out paths (`0x020001e6`, `0x020002d2`) invoke virtual methods through **wrapper+0xb8**, whereas named GearIndicator/CarOutline initialization sites set **wrapper+0x8c**. These are complementary parts of a plausible scene binding lifecycle. However, no evidence yet proves that the specific wrapper at owner offset `0x1f5d0` or `0x1fb00` has any of the named GearIndicator or CarOutline paths. A per-object link requires finding the exact owner-relative initialization site and matching it to the event handler's wrapper offset.
+
+A new verifier, `verify_scene_wrapper_fields.py`, checks **14 exact ARM words** from the original ELF, including both accessors and two path-getter call sites. It was checked locally against the original binary.
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_scene_wrapper_fields.py /path/to/gtf2
+```
+
+**Next priority:** cross-reference wrapper offsets `0x1f5d0`, `0x1fb00`, and the GearIndicator/CarOutline owner offsets in their constructors; prove their path strings, then trace assignments to `+0xb8` to recover the concrete receiver class and property semantics.

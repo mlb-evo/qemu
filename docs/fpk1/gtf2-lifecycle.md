@@ -3319,3 +3319,21 @@ python3 tools/fpk1/research/gtf2/scan_computed_hmi_dispatch.py /path/to/gtf2 \
 ```
 
 **Verification boundary:** this scanner checks literal values, immediate arithmetic and target branches. It does not do complete ARM control-flow analysis across conditionally skipped instructions; rows should be treated as static dispatch candidates until their local branch preconditions are checked. No scene-property identity should be inferred from a DP's IPC callback name alone.
+
+### Resolved property: TelltaleHMI_Display DP 0x020002cd → ESP
+
+The direct DP handler `0x586bf0` uses owner offset `0x453b8` via literal slot `0x587544`. The same owner offset is stored by the scene wrapper constructor at `0x294658–0x29465c` via literal slot `0x293ef4`. The constructor sets:
+
+- Node path literal slot `0x293ee8` → **`MV_ClusterFull.StatusBar.line1_auchEarlyWelcome.ESP`**, string setter call `0x29461c → 0x6343d8`.
+- Property literal slot `0x293ef0` → **`ESP`**, property setter call `0x294648 → 0x6343f0`.
+- Handler receiver getter call `0x586bfc → 0x6218cc`.
+
+| IPC event | DP ID | Scene | Node path within scene | Property |
+| --- | --- | --- | --- | --- |
+| `TelltaleHMI_Display` | `0x020002cd` | `MV_ClusterFull` | `StatusBar.line1_auchEarlyWelcome.ESP` | **`ESP`** |
+
+**Reproduced successfully against the original GTF2 ELF** with `verify_esp_scene_property.py`, which checks the exact ARM instruction words, string literal values, PC-relative LDR references, and setter/getter branch destinations. As elsewhere, scene root comes from the path, not from a runtime active-scene observation.
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_esp_scene_property.py /path/to/gtf2
+```

@@ -1253,3 +1253,82 @@ ViewManager::handleViewSwitch   [0x11a250; virtual +0x50]
       -> ViewManager::doSwitch [0x119688; virtual +0x60]
       -> contextIdFromView [0x1189a0] (display-context selection)
 ```
+
+## Display context IDs traced into transition selection: 16-bit IDs, low-byte classification, code 25
+
+**Original GTF2 ELF disassembly** establishes the complete local use of the two outputs from `contextIdFromView` in `ViewManager::handleViewSwitchCenter`. This is a useful refinement of the previous “two IDs” finding: the caller does **not** directly pass the 16-bit values to the animation launcher. It uses their **low bytes** to classify old/new display contexts and select an internal transition code.
+
+### Exact call and stack layout
+
+At **`0x119010–0x119060`**, the coordinator initializes:
+
+- **`[sp+0xcc]`**: signed 16-bit first output, initialized to **-1**;
+- **`[sp+0xca]`**: signed 16-bit second output, initialized to **-1**;
+- **`[sp+0xcf]`**: one-byte “visible context found” flag, initialized to **0**.
+
+When a current view exists and either the candidate or current view has view-type value **3** (from GTF2 helper `0x146320`), it calls:
+
+```text
+0x119048..0x119060:
+    r0 = this
+    r1 = this+0x18  (current view)
+    r2 = &stack[0xcc]  (first 16-bit ID)
+    r3 = &stack[0xca]  (second 16-bit ID)
+    stack[0] = &stack[0xcf]  (visibility flag)
+    BL 0x1189a0  (contextIdFromView)
+```
+
+The same helper is called for the **candidate/new view** at **`0x11909c–0x1190c8`**, with output addresses **`[sp+0xc8]`**, **`[sp+0xc6]`**, and flag **`[sp+0xce]`**.
+
+At **`0x1190cc–0x1190e8`** the coordinator reads **only the low byte** of the first output from each call:
+
+```text
+old_category = gtf2_function_0x132050(*(uint8_t *)&old_first_context_id)
+new_category = gtf2_function_0x132050(*(uint8_t *)&new_first_context_id)
+if old_category == new_category:
+    transition_code = 25
+else:
+    transition_code = (this+0x26 != 0) ? 8 : 2
+```
+
+**Important branch constraint:** the comparison/classification is reached only when the relevant view-type tests and non-null candidate conditions pass (`0x119088–0x11909c`). It is **not** a universal transition rule for every screen. The visibility flags and second 16-bit outputs are initialized and filled but are **not read** in this local classification block; other code may consume these values elsewhere.
+
+### Context-byte category function at `0x132050`
+
+This function is a GTF2-local, straight-line ARM classifier with return values in **0..15**. Representative **verified** byte cases:
+
+| Input byte | Return category | Evidence |
+| --- | --- | --- |
+| `0x00..0x0f` | **14** | `0x132050–0x132054`, default `0x132188` |
+| `0x10..0x1f` | **6** | `0x132058–0x132068` |
+| `0x20..0x2f` | **4** | `0x13206c–0x13207c` |
+| `0x30..0x3d`, `0x3f` | **5** | `0x132080–0x1320a4` |
+| `0x3e` | not 5 | explicit exception at `0x132094` |
+| `0x4a` / `0x4b` | **12** / **13** | `0x1320a8–0x1320bc` |
+| `0x40..0x4f` (other than exceptions) | **15** | `0x1320c0–0x1320d0` |
+| `0x50..0x7f` | **7** | `0x1320d4–0x1320e8` |
+| `0x80..0x8f` | **1** | `0x1320ec–0x1320f8` |
+| `0xae` / `0xaf` | **8** / **9** | `0x13210c–0x132120` |
+| `0xb8` | **3** | `0x132124–0x13212c` |
+| `0xb0..0xbf` (except `0xb8`) | **0** | `0x132130–0x132140` |
+| `0xc0..0xc1` | **10** | `0x132144–0x132154` |
+| `0xf0..0xf8` | **2** | `0x132168–0x132178` |
+| `0xff` | **11** | `0x13217c–0x132184` |
+
+The exception **`0x3e`** and the precise treatment of **`0x50..0x7f`** follow the order of tests in the machine code; this table is intentionally not a claim about symbolic meanings (e.g. left/right cluster display) of the categories.
+
+### Where the context IDs come from
+
+The first 16-bit ID is derived by calling the selected context's **virtual `+0x70`**, then GTF2 function **`0x63b32c`** (`0x118a50–0x118a70`). The second uses the same virtual getter followed by **`0x63b2bc`** (`0x118a64–0x118a84`). The helper `0x63b32c` reads the context-related object's **`+0xec`** field directly when bit **2** of `+0xfc` is clear, otherwise uses a dependent object at `+0xf0`; `0x63b2bc` similarly reads **`+0xf4`** when bit **4** is clear, otherwise uses `+0xf8`. These are **GTF2-internal data-access routines**; their full object types are not established.
+
+### Consequence for emulation
+
+The **first context identifier's low byte determines a coarse context category**. When both views are of the relevant type and old/new categories match, the transition coordinator selects **code 25**; otherwise it chooses **2** (center mode) or **8** (popup mode). Thus, a faithful QEMU reproduction of view switching may need **both view type and display-context category**, not only numeric view ID. Code 25 is an internal transition/animation selector; its human-readable name remains unverified.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119010 --stop 0x119110
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x132050 --stop 0x132190
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x63b2bc --stop 0x63b390
+```

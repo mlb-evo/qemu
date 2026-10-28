@@ -2664,3 +2664,33 @@ python3 tools/fpk1/research/gtf2/verify_gear_dp_reaction.py /path/to/gtf2
 ```
 
 The six direct BL targets and twelve ARM instruction words were independently checked against the extracted original ELF. This is a stronger result than counting DP-ID xrefs: it establishes **a specific callback and state-change consequence** while preserving the distinction between state updates and rendering.
+
+### Gear_Display DP event adapters: object owner and three registrations
+
+The DP `0x020001f9` handler can now be tied to a **specific GTF2-owned embedded object**, rather than only an anonymous callback. The global/owner object uses a fixed embedded offset **`+0x56e2c`**; during its construction, the instruction at **`0x267064`** calls constructor **`0x5ee2b0`** with `owner+0x56e2c`. The constructor invokes base constructor `0x6ade90` and installs vtable **`0x87f808`** into the embedded object's first word.
+
+The vtable `0x87f808` contains:
+
+| Slot | Function | Observed purpose |
+| --- | --- | --- |
+| `+0x00` | `0x5ed688` | destructor/base thunk (branches to `0x6adea0`) |
+| `+0x04` | `0x5fdc40` | direct dispatch into `0x5fdb8c` |
+| `+0x08` | `0x5fdc28` | checks event kind 2 and filters DP ID `0x020001f9` |
+
+Two **additional vtables** have event-filter functions for the **same DP ID**, but are separate objects/adapters, not three different DP signals:
+
+| Vtable | Direct dispatch | Kind-2 event filter | DP-ID literal |
+| --- | --- | --- | --- |
+| `0x87f808` | `0x5fdc40` | `0x5fdc28` | `0x5fdc24` |
+| `0x87fb38` | `0x5fdcfc` | `0x5fdce4` | `0x5fdce0` |
+| `0x87f910` | `0x5fddbc` | `0x5fdda4` | `0x5fdda0` |
+
+The state query **`0x219b78`** also reads exactly **DP `0x020001f9`** via the data-pool accessor **`0x69ec38`** (call at `0x219bac`). It combines this with three GTF2-owned queries `0x2183cc`, `0x218478`, `0x21839c`; their return values control whether the signed 16-bit DP result is used. Thus the event handler does **not** blindly copy the incoming byte to a display property: it computes a derived boolean/availability state and then calls the receiver's virtual `+0x70` and the state-change helper `0x6528f0`.
+
+Reproduce the exact embedded-object offset, three vtable triples and three identical DP literals:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_gear_dp_owner.py /path/to/gtf2
+```
+
+**Unresolved:** the semantic class name for the embedded adapter and the rendered property on the Kanzi scene graph. The vtable/owner linkage is certain; a gear glyph, warning icon or specific screen cannot yet be assigned solely from these instructions. The distinction between **adapter object** and **final visual receiver** is important: the callback passes a receiver pointer as an argument, so the adapter's vtable does not identify that receiver's concrete type.

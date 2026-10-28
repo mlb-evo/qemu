@@ -815,11 +815,11 @@ The caller at `0x6a92f0` then invokes a **different** receiver virtual entry at 
 
 ### Full direct-caller inventory for insertion helper
 
-The GTF2-local ordered-map insertion helper `0x11c8ec` has **11** direct ARM `BL` callsites:
+The GTF2-local ordered-map insertion helper `0x11c8ec` has **12** direct ARM `BL` callsites:
 
 `0x11d7a8`, `0x11db48`, `0x11efd4`, `0x121430`, `0x123c00`, `0x1ab00c`, `0x1ab040`, `0x6a4874`, `0x6a49b8`, `0x6a4b38`, `0x6a5080`, `0x6a5148`.
 
-**Correction:** there are **12**, not 11, entries in the list above. This is the direct-call inventory; other indirect callers are possible. The presence of insertion calls outside the event dispatcher and language-change handler means the ordered-map helper is reused in other GTF2-owned structures; not every call to `0x11c8ec` necessarily targets the 180-slot array. Its semantics are a generic map insertion, and the *caller-provided descriptor* determines the map.
+This is the direct-call inventory; other indirect callers are possible. The presence of insertion calls outside the event dispatcher and language-change handler means the ordered-map helper is reused in other GTF2-owned structures; not every call to `0x11c8ec` necessarily targets the 180-slot array. Its semantics are a generic map insertion, and the *caller-provided descriptor* determines the map.
 
 ### Reproduction
 

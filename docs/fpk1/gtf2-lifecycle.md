@@ -943,3 +943,67 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 \
 ```
 
 **Next GTF2-only analysis:** find vtables for the **view receiver** objects passed to `disableAndFlushSlot`, then map their `+0x4c` implementations and the manager's `+0x58` virtual view lookup. The latter is **not** an entry in this 21-entry base table, suggesting that a derived table or different manager object is involved. The code evidence above resolves the base table, not yet all derived classes.
+
+## Derived ViewManager vtable found: resolves missing virtual +0x58
+
+**Verified against original GTF2 ELF bytes in this pass.** The previously unresolved virtual slot `+0x58` is present in a **larger, related vtable at `0x7bfaf0`**, not in the 21-entry base table at `0x891958`. This resolves the major gap in the last section.
+
+The related table has **25 function entries**, ending at `+0x60`, followed by zero at `0x7bfb54`. The first 21 entries share many methods with the base table, while several are overridden. Crucially, its first entries include `0x117a88` and `0x117a34` (the constructor-like functions discussed above). **Literal pointers to `0x7bfaf0`** occur at `0x117a80`, `0x117acc` and `0x11ad6c`, adjacent to pointers to the base table at `0x117a84`, `0x117ad0`, `0x11ad68`. These exact pairings are strong evidence of **related base/derived object setup**. Precise source class names for the larger table are not yet proven.
+
+### Side-by-side virtual method slots
+
+| Offset | Base `0x891958` | Extended `0x7bfaf0` |
+| --- | --- | --- |
+| `+0x00` | `0x6a8d24` | `0x117a88` |
+| `+0x04` | `0x6a8d3c` | `0x117a34` |
+| `+0x08` | `0x6a8d34` | `0x1173dc` |
+| `+0x0c..+0x28` | same implementations | same implementations |
+| `+0x2c` | `0x6a96d0` | `0x11a8bc` |
+| `+0x30` | `0x6a9468` | `0x6a9468` |
+| `+0x34` | `0x6a93e0` | `0x6a93e0` |
+| `+0x38` | `0x6a94f4` | `0x11a880` |
+| `+0x3c` | `0x6a8dac` | `0x118544` |
+| `+0x40` | `0x6a9064` | `0x118354` |
+| `+0x44` | `0x1179dc` | `0x1179dc` |
+| `+0x48` | `0x6a9334` | `0x6a9334` |
+| `+0x4c` | `0x1173d4` | `0x1173d4` |
+| **`+0x50`** | **`0x6a91a8`** | **`0x11a250`** |
+| `+0x54` | absent | `0x11a864` |
+| **`+0x58`** | **absent** | **`0x11871c`** |
+| `+0x5c` | absent | `0x118c74` |
+| `+0x60` | absent | `0x119688` |
+
+**Key architectural correction:** `0x6a91a8` is the **base-class** implementation of `handleViewSwitch` (base slot `+0x50`), whereas the extended vtable **overrides the same slot with `0x11a250`**. The code at `0x11a250` has a substantial body and its own state-machine branches. Therefore tracing only `0x6a91a8` is insufficient to reconstruct the actual switching behavior of the extended manager. The previous subsection's old/new slot ordering remains valid **for the base implementation only**; it must not be generalized to the derived path.
+
+### Exact behavior of derived `+0x58 -> 0x11871c`
+
+Disassembly of `0x11871c–0x11874c` shows a compact decision:
+
+```text
+virtual +0x58(this, output_slot_id)
+  if this+0x25 != 0 OR this+0x26 != 0:
+      *output_slot_id = this+0x1c
+      return 0x6a9e9c(this+0x1c)
+  else:
+      return 0x6a8d5c(this, output_slot_id)
+```
+
+The branch to `0x6a9e9c` uses a **global provider object** loaded from `0xdb1900`, tests it for null, and then dispatches its virtual method at `+0x00` with the requested slot ID. The global provider's concrete type and the returned view object's class are not yet proven. The other branch `0x6a8d5c` is an inherited/base lookup path.
+
+**Consequence:** the virtual lookup invoked by `BaseViewManager::handleViewSwitch` at `0x6a91e8` is concretely implemented in the extended manager. It chooses between an active/current slot lookup and the inherited lookup according to **two instance flags** `+0x25` and `+0x26`. This establishes a meaningful part of the **view selection policy**, rather than merely identifying a vtable pointer.
+
+### Next investigation target
+
+1. Disassemble **`0x11a250–0x11a828`** as the **derived `handleViewSwitch` override**; trace flags `+0x25`, `+0x26`, `+0x54`, `+0x88` and virtual callbacks. This should supersede any assumption that the base handler is always active.
+2. Follow `0x6a8d5c` and the provider at `0xdb1900` to map numeric slot IDs to view objects.
+3. Identify concrete view receiver vtables (their `+0x4c` handlers) using constructor vptr stores.
+
+### Reproduce directly from original ELF
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_vtable.py /path/to/gtf2 --vtable 0x7bfaf0 --entries 25
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11871c --stop 0x118750
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11a250 --stop 0x11a828
+```
+
+These results use the GTF2 ELF itself; no shared libraries or proprietary firmware bytes are committed.

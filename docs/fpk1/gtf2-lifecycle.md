@@ -3285,3 +3285,37 @@ Verified locally against the original GTF2 ELF:
 ```sh
 python3 tools/fpk1/research/gtf2/verify_fernlicht_auto_property.py /path/to/gtf2
 ```
+
+### Arithmetic DP dispatch inventory: 25 additional RTE routes
+
+The original 24-entry RTE DP scanner recognized direct `LDR literal → CMP → BEQ` comparisons. ARM code in the same main HMI dispatcher also **adds/subtracts immediate values to the literal** before comparing to the incoming DP ID. A new scanner, `scan_computed_hmi_dispatch.py`, follows up to seven ARM instructions after a PC-relative load, interprets ARM rotated immediates, and records `CMP r8,r3` with `BEQ` or `BNE + B` targets.
+
+The scan produced **118 computed comparison routes** in the examined dispatcher window (`0x570000–0x577000`). Intersecting those candidates with the **176 independently recovered RTE callback DP IDs** gives **25 additional candidate RTE dispatch routes** absent from the direct-24 table. The intersection was run against the original ELF.
+
+| Computed DP | HMI handler | Computed DP | HMI handler |
+| --- | --- | --- | --- |
+| `0x0200016b` | `0x57c934` | `0x0200016c` | `0x57cb60` |
+| `0x0200016e` | `0x57d010` | `0x02000176` | `0x57d30c` |
+| `0x020001bc` | `0x5800e8` | `0x020001da` | `0x580fa4` |
+| `0x020001e4` | `0x581240` | `0x020001e8` | `0x58135c` |
+| `0x020001ed` | `0x5815c4` | `0x020001f7` | `0x581be8` |
+| `0x020001f9` | `0x581d1c` | `0x020001fb` | `0x581eec` |
+| `0x020001fe` | `0x5820b4` | `0x02000202` | `0x5822a4` |
+| `0x02000217` | `0x583228` | `0x0200021b` | `0x583b98` |
+| `0x02000220` | `0x5844d4` | `0x02000291` | `0x5862f0` |
+| `0x02000293` | `0x586378` | `0x02000296` | `0x5863fc` |
+| `0x0200029a` | `0x5864cc` | `0x020002a1` | `0x5865d4` |
+| `0x020002ae` | `0x586754` | `0x020002af` | `0x5867c0` |
+| `0x020002ce` | `0x586c40` | | |
+
+The `0x020002ce` route is already proven to lead to the `MV_ClusterFull` scene properties `Fernlicht`, `Fernlicht_AUTO`, `Fernlicht_BIG`; all **other newly enumerated computed routes still have `scene=unknown`, `node=unknown`, `property=unknown`** until the exact wrapper constructor and event handler are joined.
+
+**Reproduce:** generate a newline-separated list of the 176 DP IDs from the existing RTE write scanner, then run:
+
+```sh
+python3 tools/fpk1/research/gtf2/scan_computed_hmi_dispatch.py /path/to/gtf2 \
+  --dp-ids /path/to/rte-dp-ids.txt --csv \
+  > build_fpk1/research-artifacts/gtf2-computed-rte-dispatch.csv
+```
+
+**Verification boundary:** this scanner checks literal values, immediate arithmetic and target branches. It does not do complete ARM control-flow analysis across conditionally skipped instructions; rows should be treated as static dispatch candidates until their local branch preconditions are checked. No scene-property identity should be inferred from a DP's IPC callback name alone.

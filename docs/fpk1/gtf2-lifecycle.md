@@ -2614,3 +2614,53 @@ python3 tools/fpk1/research/gtf2/trace_rte_dp_consumers.py /path/to/gtf2 --csv \
 ```
 
 The next necessary step is to distinguish **DP subscription/registration** from **DP event handling and DP value reads** at these references, then link event filters to the specific view object or coordinator function. The count **575** must not be presented as 575 screen changes or as a list of rendered fields.
+
+### Gear_Display DP 0x020001f9: actual downstream state reaction
+
+The previously found event filter at `0x5fdbd8–0x5fdc20` is now followed through its **actual target**, `0x5fdb8c`. The original ARM ELF bytes establish this control flow:
+
+```text
+0x5fdc28: check incoming event kind == 2
+  -> 0x5fdbd8:
+       call 0x122498 to normalize/obtain the event record
+       read record+0x04 DP ID
+       compare against 0x020001f9
+       non-match -> return 1
+       match -> tail branch to 0x5fdb8c
+  -> 0x5fdb8c:
+       query GTF2 state via 0x219b78 (which reads DP through 0x69ec38)
+       invoke virtual slot +0x70 on the receiver object
+       call 0x6528f0(receiver, state != 0 ? 1 : 0)
+       return 1
+  -> 0x6528f0:
+       if receiver+0x1b8 bit0 set and receiver+0xfc is non-null:
+           call 0x63669c, then notify via 0x14cb48
+           set receiver+0xe3 bit4
+       otherwise:
+           update receiver+0xf8 with new boolean state
+           if changed, set receiver+0xe3 bit4
+```
+
+This **proves a concrete UI-object state reaction** to an IPC-fed `Gear_Display` field: the object is notified or has its cached boolean state updated and is marked dirty when the value changes. The exact semantic label of that boolean and the visible pixels affected remain unproven; **do not call it a gear-label repaint without additional evidence**. The branch on receiver+0x1b8 shows two distinct update modes.
+
+Machine-code evidence:
+
+| VA | Meaning |
+| --- | --- |
+| `0x5fdc24` | literal `0x020001f9` |
+| `0x5fdbf4–0x5fdbfc` | load incoming record+4 and compare DP ID |
+| `0x5fdc20` | tail branch to `0x5fdb8c` |
+| `0x5fdb98` | direct BL to state query `0x219b78` |
+| `0x5fdba8` / `0x5fdbbc` | load receiver virtual slot `+0x70` |
+| `0x5fdbcc` | direct BL to state helper `0x6528f0` |
+| `0x6528f4` | test receiver+0x1b8 |
+| `0x65294c–0x652960` | cached-state update at receiver+0xf8 and dirty bit4 at +0xe3 |
+| `0x652938` | notification call `0x14cb48` |
+
+The exact branch and call words are checked by the committed verifier:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_gear_dp_reaction.py /path/to/gtf2
+```
+
+The six direct BL targets and twelve ARM instruction words were independently checked against the extracted original ELF. This is a stronger result than counting DP-ID xrefs: it establishes **a specific callback and state-change consequence** while preserving the distinction between state updates and rendering.

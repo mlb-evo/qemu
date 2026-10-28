@@ -158,7 +158,13 @@ static void dump_frame(const char *path)
     size_t n = (size_t)win_w * win_h;
     unsigned char *rgba = malloc(n * 4);
     if (!rgba) return;
+    /* A window swap presents the default framebuffer even when the client
+     * leaves an offscreen render target bound after updating cached layers. */
+    GLint framebuffer;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+    if (framebuffer) glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glReadPixels(0, 0, win_w, win_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    if (framebuffer) glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     if (!strcmp(path,frame_path())) {
         display_rgba=realloc(display_rgba,n*4);
         if(display_rgba)memcpy(display_rgba,rgba,n*4);
@@ -574,7 +580,15 @@ static void serve(int cfd)
             unsigned char *pixels=calloc(1,size);if(!pixels)return;
             GLint alignment;glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
             glPixelStorei(GL_PACK_ALIGNMENT,1);
+            /* Op 131 publishes the window to CWM; op 120 is the client's
+             * explicit glReadPixels and must read its current render target. */
+            GLint framebuffer = 0;
+            if(op==131){
+                glGetIntegerv(GL_FRAMEBUFFER_BINDING,&framebuffer);
+                if(framebuffer)glBindFramebuffer(GL_FRAMEBUFFER,0);
+            }
             glReadPixels(i32(p,0),i32(p,4),i32(p,8),i32(p,12),GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+            if(framebuffer)glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
             glPixelStorei(GL_PACK_ALIGNMENT,alignment);
             size_t done=0;
             while(done<size){ssize_t n=write(STDOUT_FILENO,pixels+done,size-done);

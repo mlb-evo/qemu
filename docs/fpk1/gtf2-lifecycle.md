@@ -403,3 +403,79 @@ The shared decrement basic block operates on **the pointer currently held in `r3
 Literal pool also ties GTF2-owned code to precise strings: `0x1234a8` → `0x7c15c0` (please-wait abort), `0x1234ac` → `0x7c15f9` (popup abort), `0x1234b4` → `0x7c161f` (skin mismatch abort), `0x1234f0` → `0x7c1723` (ClusterFull wait completion), `0x123500` → `0x7c1760` (3D request). These are original **virtual addresses**, not file offsets.
 
 **Remaining GTF2-only questions:** find writes/initialization for `0xa65b04` and `0xa65b08`; find the callbacks that cause `this+0xdfd` or resource state to advance; trace the internal `0x121830` transition to understand how aborted skin switching returns to the UI. No dependency-library disassembly is required.
+
+## GTF2 frame-event dispatcher → KZB loader: reconstructed control path
+
+This extends and **corrects** the earlier KZB-state interpretation using direct ARM disassembly of the original GTF2 `PT_LOAD`. The single statically encoded `BL` to `handleLoadingKZBs()` at `0x122c54` is **`0x12376c`**. Its enclosing GTF2-owned dispatcher starts at **`0x123520`**. The entry point is identified by the function prologue; its C++ name is not yet proven.
+
+### Event dispatch, frame gating and render loop
+
+| Address | ARM evidence | Consequence |
+| --- | --- | --- |
+| `0x123564–0x123588` | Compare event word `[r5]` with **10** or **11**; call virtual method at vtable `+0xc` on object `this+0x30` | Separate forwarding path for event kinds 10/11; exact enum labels unknown |
+| `0x12358c–0x1235ac` | If event kind **9**, call `0x122498` to obtain event ID; compare with **284**; set `this+0x1ec = 1` | Explicit event-ID gate enables frame-update processing |
+| `0x12363c–0x123684` | If event kind **8** and `[event+0xc] == 15`, log `switching language to %d` using `[event+0x10]`; call internal `0x1213e0` | Language-change handler |
+| `0x123688–0x1236bc` | Kind **8**, subtype **6**: log `switching off render loop`, call `0x68a248` with `r1=1`, then store `this+0xdfa=1` | Render-loop disable control (semantic direction from log) |
+| `0x1236c0–0x1236f4` | Kind **8**, subtype **7**: log `switching on render loop`, call `0x68a248` with `r1=0`, then store `this+0xdfa=0` | Render-loop enable control |
+| `0x1236fc–0x123744` | Kind **8**, subtype **13**, `[event+0x14]` equals **0x222** or **0x221**: log `Popup was hidden`, call internal `0x121548` | Popup-hide event enters GTF2 handler |
+| `0x123748–0x12376c` | Check `this+0x1ec`; if zero branch away; otherwise decrement positive `this+0xe00` and **call `handleLoadingKZBs(this)`** | Loader is invoked from frame-processing path, with a per-object countdown |
+| `0x1237a0–0x1237a8` | Clear `this+0x1ec`, call internal `0x121e5c` | Frame-processing flag is reset after this path |
+| `0x1237c8–0x123848` | Compare elapsed time against **500** (units depend on the surrounding clock helper); log `Frame change took %d (smudge %d)`; update timing fields `+0x1f0..+0x1fc` and global frame count | Frame performance/accounting is coupled to the same dispatcher |
+
+The exact order in the frame branch is:
+
+```text
+GTF2 dispatcher 0x123520
+  ├─ event kind 9, event ID 284 -> this+0x1ec := 1
+  ├─ event kind 8, subtype 6/7 -> render loop off/on; this+0xdfa := 1/0
+  ├─ event kind 8, subtype 13 + 0x221/0x222 -> popup hidden handler
+  └─ if this+0x1ec != 0:
+       if this+0xe00 > 0: --this+0xe00
+       handleLoadingKZBs(this)                  [BL at 0x12376c]
+       ... frame update and timing bookkeeping
+       this+0x1ec := 0
+```
+
+**Why this matters:** the loader is not an independent, unconditionally running loop. It is reached from GTF2's own event dispatcher under a frame-processing flag, and it shares a per-object countdown with skin-switch validation.
+
+### KZB request groups: concrete IDs and stage ordering
+
+The KZB handler at `0x122c54` is a **single function with multiple sequential branches**, not three isolated callbacks. It uses an internal helper at `0x1217c8` with an integer resource ID in `r1`. Verified immediate values:
+
+| Stage | Callsite(s) | IDs / behavior |
+| --- | --- | --- |
+| `EarlyTubes` request | `0x122f70–0x122f88` | **174**, **177**; builds `Initial` request; sets `this+0xdf5=1` at `0x122fec` |
+| `ClusterFull` request | `0x123070–0x123248` | **178**, **99**, **155**, **156**, **158**, **160–166**, **168–171**, **157**, **167**, **159**, **147**, **154**; builds a request batch and conditionally adds IDs from a zero-terminated table, excluding selected IDs already handled; sets `this+0xdf7=1` at `0x12332c` |
+| 3D car request | `0x1233a8–0x123480` | Calls GTF2's `DisplayManager::getFilenameCar3D` data path, constructs a filename, submits resource request through `0x141608`, sets `this+0xdf9=1` |
+
+The `ClusterFull` batch also configures four integer options **0, 1, 6, 7** at `0x1230b4–0x1230e0`, and includes a second sequence of resource IDs from a table via `0x239a80` and the loop at `0x1232a4–0x123308`. Do not infer resource names or visual roles from numeric IDs alone.
+
+**Important correction to earlier notes:** the byte flags `+0xdf6` and `+0xdf8` are set by **this same handler** at `0x122e5c` and `0x122eb4`, following the logged “loaded” processing branch. The code in these branches does **not** itself inspect an explicit async completion status. Therefore these flags mean **“GTF2 has executed the stage's loaded/handled branch”**, not necessarily “the underlying KZB loader has signalled completion”. Similarly, when `+0xdf9` is set, the next eligible handler pass logs `3D Car Loaded` at `0x122ed0–0x122ef8` and sets `+0xdf4=1` at `0x122efc`. This is a *terminal state of the handler*, but GPU readiness and actual successful resource loading remain unproven.
+
+The only observed **direct** caller of `handleLoadingKZBs` is the frame dispatcher. Indirect calls cannot be excluded by a direct-BL scan.
+
+### Counters and state: limits of current evidence
+
+- `this+0xe00`: a **per-object** countdown decremented by the frame dispatcher at `0x123754–0x123768`, and inspected by the skin-switch validation path. It is not the same as either global KZB wait counter.
+- `0xa65b04` and `0xa65b08`: **two distinct globals** gating the `ClusterFull` and 3D requests respectively, decremented through the shared basic block `0x123380–0x123384`.
+- The executable text contains **one literal-pool pointer occurrence each** of `0xa65b04` (`0x1234e8`) and `0xa65b08` (`0x1234fc`). This strongly limits the directly visible access sites but does **not** prove how the globals were initialized; they could be static data or accessed indirectly.
+- `this+0xdf4` is checked at entry and set on either the skin-switch abort/finalization path or after the 3D-car handled branch; calling it simply “failure” is inaccurate.
+- `this+0xdfa` is distinct from KZB flags and follows the render-loop off/on events.
+
+### Reproducible ARM disassembly
+
+New repository script `tools/fpk1/research/gtf2/disassemble_ptload.py` builds a **temporary** ELF wrapper containing synthetic `.text` section headers pointing at the unchanged executable `PT_LOAD` bytes, invokes `llvm-objdump`, then removes the temporary copy. No firmware bytes are committed:
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py \
+  /path/to/extracted/STAGE2.1/bin/gtf2 \
+  --start 0x123520 --stop 0x123850
+
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py \
+  /path/to/extracted/STAGE2.1/bin/gtf2 \
+  --start 0x122c54 --stop 0x123490
+```
+
+This reproduces all the address-based claims above without requiring `capstone` or reverse-engineering external libraries.
+
+**Next investigation target (GTF2 only):** track the event-ID 284 producer and the `+0x1ec` frame gate, trace `0x121548` popup-hide handling and `0x121830` skin-switch transition, and find the initialization/reset of `+0xdf4..+0xdfd`. These questions connect the loader to the UI lifecycle more directly than any OSAL implementation.

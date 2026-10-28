@@ -2719,3 +2719,33 @@ python3 tools/fpk1/research/gtf2/verify_gear_dp_state_gates.py /path/to/gtf2
 ```
 
 This establishes precise **state-change/no-change conditions** for the DP-driven event. The final receiver's concrete class, the meaning of the three gates and the actual Kanzi property remain unproven; a pixel-level interpretation still needs further evidence.
+
+### Exact meaning of the three Gear_Display state gates: one selector DP
+
+Further disassembly resolves the previously opaque prerequisite functions. They are **three predicates over the same DP `0x06400dc6`**, not three independent boolean state variables:
+
+| Predicate VA | DP ID read by `0x69ec38` | Signed 16-bit values returning true |
+| --- | --- | --- |
+| `0x2183cc` | `0x06400dc6` (literal at `0x2183f8`) | **5, 10** |
+| `0x218478` | `0x06400dc6` (literal at `0x2184a4`) | **9, 15** |
+| `0x21839c` | `0x06400dc6` (literal at `0x2183c8`) | **2, 14** |
+
+At `0x219b78` the three predicates are called at `0x219b80`, `0x219b8c`, `0x219b98`; the same function then reads Gear_Display DP `0x020001f9` at `0x219bac`. The resulting boolean is exactly:
+
+```text
+gear_dp_state =
+    (selector_dp_0x06400dc6 in {2,5,9,10,14,15})
+    AND (signed16(DP_0x020001f9) != 0)
+```
+
+Both inputs are obtained through the GTF2 DP accessor `0x69ec38`, not directly from the IPC payload at this stage. The six selector values are confirmed from literal `CMP` instructions. The **human-readable meaning** of selector DP `0x06400dc6` (possibly a mode or configuration enum) is still unknown; do not assign semantic names to values 2/5/9/10/14/15 without further proof.
+
+This also establishes that the gate is **not three independent input signals**. The same selector DP is referenced by many other GTF2 routines, including `0x217bb0`, `0x218350`, `0x21837c`, `0x218408`, `0x218434`, and `0x218484`, which compare it against additional enum values. These references suggest a shared multi-valued application selector, but do not identify its label.
+
+The exact bytes and direct BL edges have been verified against the original extracted GTF2 ELF. Reproduce:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_gear_selector_dp.py /path/to/gtf2
+```
+
+**Consequence:** a nonzero incoming Gear_Display field does not trigger this receiver's true state outside those six selector values, and even inside the allowed set the receiver's active/no-target branch can suppress a state update (see preceding section).

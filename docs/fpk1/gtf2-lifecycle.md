@@ -3037,3 +3037,27 @@ python3 tools/fpk1/research/gtf2/inventory_scene_metadata.py /path/to/gtf2 --csv
 ```
 
 **Targeted next work:** find GTF2 code xrefs to specific metadata strings (e.g. `GearIndicator`, `CarOutline`, `CRUISE_active_bool_propertyName`), trace the node/property lookup and mutation, then join it to the already proven DP handlers. Until such a join is instruction-verified, the scene-event matrix keeps its node/binding columns unresolved.
+
+### Instruction-level scene-node string cross-references: gear indicators and car outline
+
+The GTF2 ELF contains **exact ARM PC-relative literal loads** of four named scene paths. Unlike a raw strings inventory, this establishes concrete GTF2 code sites that consume those names.
+
+| Named node path | String VA | Pointer literal slot(s) | ARM LDR use site(s) |
+| --- | --- | --- | --- |
+| `MV_ClusterFull.TubeContainer.CenterTube.GearIndicator` | `0x82369b` | `0x2b627c`, `0x5c8a0c` | **`0x2b6588`, `0x5c932c`** |
+| `MV_ClusterFull.TubeContainer.RevoTube.GearIndicatorPHEV` | `0x820661` | matching PC-relative literal slots | **`0x2a09d8`, `0x5c613c`** |
+| `PV_WarnPopup_CarOutline.GlassPlate.CarOutline` | `0x85cb30` | `0x557b84` | **`0x557a28`** |
+| `RV_ClusterFull_Additional.HubContentRevoTube.CarOutline` | `0x8206c6` | matching PC-relative literal slot | **`0x2a0c48`** |
+
+For the main GearIndicator at `0x5c932c`, the loaded string pointer is passed to `0x10e7bc` at `0x5c9330`, and a resulting string object is passed to `0x6343d8` at `0x5c933c`. At `0x2b6588`, the same scene path is likewise passed to `0x10e7bc` at `0x2b6598`, followed by `0x6343d8` at `0x2b65a4`. The CarOutline popup path at `0x557a28` is passed to `0x10e7bc` at `0x557a48`, then to `0x6343d8` at `0x557a54`.
+
+These are **string construction/storage sequences**. The exact semantic role of `0x6343d8` and subsequent object lookup/property setting must still be resolved. Do not label these as a proven `Gear_Display`→`GearIndicator` or `CarOutline_HMI`→`CarOutline` binding merely because the names match. However, the exact use sites provide a practical reverse-tracing anchor to join the previously verified DP handler call graphs to scene metadata.
+
+Reproduce the exact pointer slots and LDR sites with:
+
+```sh
+python3 tools/fpk1/research/gtf2/trace_scene_node_xrefs.py /path/to/gtf2 --csv \
+  > build_fpk1/research-artifacts/gtf2-scene-node-xrefs.csv
+```
+
+The script verifies that the named null-terminated string exists, that the literal slot holds its exact VA, and that an ARM PC-relative LDR references that slot. It reports **six exact ARM references across four node names**. This is **stronger than a text match but weaker than a property-binding proof**.

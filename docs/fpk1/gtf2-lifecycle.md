@@ -3849,3 +3849,828 @@ New known chain:
 ```
 
 Next: inspect the producers of both named completion messages and the side effects of the three RTEUpdateDone calls. Distinguish *ThreadMan completion* from actual ASI IPC subscription. No implementation specification or firmware bytes committed.
+
+
+## Архив остальных точных исследовательских заметок
+
+Сохранённые исходные материалы для воспроизведения и аудита выводов.
+
+
+### Перенесено из `gtf2-callback-guard-container-correction.md`
+
+# Reassessment of guarded callback initialization: 0x12ff70 is not a proven IPC configurator
+
+Source: stock extracted `gtf2` SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This corrects the tentative wording in `gtf2-callback-owner-guarded-init.md` after inspecting the callee, not just its arguments.
+
+## Actual function body
+
+```asm
+12ff70 ldr r0,[r0]
+12ff74 cmp r0,#0
+12ff78 bxeq lr
+12ff7c ldr r3,[r0,#4]
+12ff80 cmp r1,r3
+12ff84 bge 12ff98
+12ff88 ldr r0,[r0,#0x48]
+12ff8c cmp r0,#0
+12ff90 bne 12ff7c
+12ff94 bx lr
+12ff98 cmp r3,r1
+12ff9c bge 12ffb0
+12ffa0 ldr r0,[r0,#0x4c]
+12ffa4 cmp r0,#0
+12ffa8 bne 12ff7c
+12ffac bx lr
+12ffb0 cmp r0,#0
+12ffb4 bxeq lr
+12ffb8 cmp r2,#0
+12ffbc add r0,r0,#8
+12ffc0 bne 12ffc8
+12ffc4 b 12fec8
+12ffc8 mov r1,r2
+12ffcc b 12fc64
+```
+
+The routine traverses a structure using `+0x48`/`+0x4c` pointers according to a comparison with the integer key at `+0x04`, then tail-calls `0x12fec8` or `0x12fc64` on a field at node `+8`. This is a **keyed tree/container lookup/update pattern**, not a demonstrated wait or IPC configuration API. The precise effects of the two tail targets remain to be established.
+
+The preceding `0x12df20` passes keys `4,5,3` and values `0,0,0x530` respectively to this routine. Those are **container operations**, not established ASI method IDs or transport channels. In particular, `0x530` must not be promoted to an IPC channel identifier from this call alone.
+
+## Upstream linkage limitation
+
+A direct ARM BL scan of `0x110000..0x780000` finds **zero direct BL callers of `0x12dfb8`**. A literal 32-bit address search of the extracted ELF also finds no exact pointer to `0x12dfb8`. This is negative evidence limited to those two mechanisms; the function may be reached by a computed branch, a veneer, a register-indirect call, or other paths. No invocation count or initialization timing can be asserted.
+
+The existing chain from `0x12e014` through `0x68f594`, `0x68ee80`, `0x69780c`, and `0x6977a4` is still valid *conditional on execution of the `0x12dfb8` branch*. `0x10eb7c` is already resolved to `util::SharedPtrDefaultBase` constructor and is not the IPC subscription.
+
+## Integration with prior GTF2 findings
+
+The large `gtf2-lifecycle.md` already proves a separate 180-slot DP event accumulator and a ViewManager-owned event queue. The container traversed by `0x12ff70` is **not proven identical** to either subsystem. The HMI owner singleton and the 52-byte callback-vtable object are also separate observations pending a real dataflow join.
+
+Next inspect `0x12fec8` and `0x12fc64` to classify the container's value semantics; then trace the `0x12dfb8` entry via its actual calling convention. Avoid further 'IPC configuration' claims until ASI import or descriptor/registration code is directly linked.
+
+
+
+### Перенесено из `gtf2-callback-object-construction.md`
+
+# Stock ELF: callback table object construction and first caller
+
+Source: original `STAGE2.1/bin/gtf2` (SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`). This is an extension of `gtf2-callback-pointer-table.md`, based on decoding actual ARM instructions and direct BL references.
+
+## Exact construction chain
+
+`0x68eeb4 BL 0x69780c` in the function beginning `0x68ee80`. This is a direct call, not an inferred association from proximity.
+
+`0x69780c`:
+- `0x697814 MOV r0,#0x34`; `0x69781c BL 0x10dcac` allocates a 52-byte object (allocator behavior inferred from usage; direct call and allocation size are observed).
+- `0x697820 MOV r1,r6`; `0x697824 MOV r5,r0`; `0x697828 BL 0x6977a4` initializes the allocated object using the passed argument.
+- `0x69782c MOV r0,r4`; `0x697830 MOV r1,r5`; `0x697834 LDR r2,[pc,#0xc]` loads the literal `0x68dbe4` from `0x697848`; `0x697838 MOV r3,#0`; `0x69783c BL 0x10eb7c`. **Do not label this IPC registration yet**: the function might be an ownership/container assignment helper. The call and arguments are the evidence.
+
+`0x6977a4`:
+- Stores incoming `r1` at object `+0xc` and incoming `r2` at `+0x8` (instructions `0x6977b8` and `0x6977bc`).
+- `0x6977cc BL 0x6998f4` and `0x6977d4 BL 0x10edb0` initialize subobjects.
+- Loads `0x88e6b0` from literal `0x697800`; `0x6977e8 STR r2,[r4,#0x24]` writes a derived table pointer to object `+0x24`. `0x6977ec STR r3,[r4,#0x1c]` writes the other table pointer (derived from literal `0x88e360`) to `+0x1c`.
+- `0x6977f4 BL 0x10e1a4` is another helper, not yet classified.
+
+The earlier `0x693804` and `0x693884` functions likewise embed `0x88e6b0`, but they are **not proven to be invoked by the above construction path**. Direct BL scans find one caller of `0x6977a4` (`0x697828`), one caller of `0x69780c` (`0x68eeb4`), and no direct BL callers of `0x693804`/`0x693884` in the scanned executable range. This is consistent with other entry paths (including virtual calls), not proof of them.
+
+## Next proof gap
+
+At `0x68ee80` the code also calls `0x693294` at `0x68ee98` and `0x6921cc` at `0x68eea4` before constructing the object. Determine the semantic role of the caller and trace what happens to the object initialized at `0x6977a4`. A constructor storing a vtable pointer is not evidence of a live IPC subscription.
+
+No IAA design or protocol naming is inferred here.
+
+
+
+### Перенесено из `gtf2-callback-object-vptr-and-caller.md`
+
+# GTF2 callback object: verified constructor ownership and vptr correction
+
+**Source:** original `STAGE2.1/bin/gtf2` extracted again from the user-supplied Drive archive; SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. The extraction was reproduced using CIFS/IFSPTTBL, verified Adler-32 frames and system `liblzo2.so.2` decoder. ARM words below were independently read from this ELF.
+
+## Verified direct call chain (new)
+
+```
+0x68f594 (caller function)
+  0x68f59c: r0 = 4
+  0x68f5a0: BL 0x10e384
+  0x68f5a4: r4 = return value
+  0x68f5a8: BL 0x68ecf0
+  0x68f5ac: LDR r3, literal 0xdb0c9c
+  0x68f5b4: STR r4, [r3]       ; global storage
+  0x68f5b8: BL 0x68ee80
+  0x68f5bc: BL 0x12e294
+
+0x68ee80
+  0x68ee98: BL 0x693294
+  0x68eea4: BL 0x6921cc
+  0x68eeb4: BL 0x69780c
+
+0x69780c
+  0x697814: MOV r0, #0x34     ; 52-byte allocation request
+  0x69781c: BL 0x10dcac
+  0x697828: BL 0x6977a4     ; constructor
+  0x69783c: BL 0x10eb7c     ; PLT-style import trampoline, not locally implemented method
+```
+
+Direct BL scan over the ELF executable VA range found **one** caller of `0x68ee80` at `0x68f5b8`; one caller of `0x69780c` at `0x68eeb4`; one caller of `0x6977a4` at `0x697828`. The global address `0xdb0c9c` is stored immediately before the callback-object setup. This shows an initialization chain; it **does not establish live IPC registration**.
+
+## Correction: multiple vptrs and table segments
+
+The `0x6977a4` constructor loads the literal `0x88e6b0`, but writes **derived addresses** rather than blindly using that base as the object's vptr:
+
+- `0x6977b4`: `ADD r2,r3,#0x278` => `0x88e928`; `0x6977bc`: `STR r2,[r4,#8]`.
+- `0x6977c4`: `ADD r2,r3,#0x8` => `0x88e6b8`; `0x6977c8`: `ADD r3,r3,#0x260` => `0x88e910`; `0x6977c8`: `STM r4,{r2,r3}` => object `+0` receives `0x88e6b8`, object `+4` receives `0x88e910`.
+- `0x6977d8`: loads `0x88e360`; `0x6977e8`: stores `0x88e928` at object `+0x24`; `0x6977ec`: stores `0x88e360` at object `+0x1c`.
+
+The main 148-entry function-pointer array starts at `0x88e6b8`, and **that exact address is installed at object +0**. The adjacent secondary table starts at `0x88e910` (preceded by `0xfffffffc` and zero at `0x88e908` and `0x88e90c`). `0x88e928` is a further subtable pointer, not a synonym for `0x88e6b8`.
+
+The 12 unresolved DP writer pointers in `gtf2-unresolved-callback-pointer-slots.csv` remain directly verified in the first array. This correction supersedes the previous document's warning that the object's vptr might equal `0x88e6b0`: **it equals `0x88e6b8` at object +0 in this constructor**.
+
+## Imported helper, not a confirmed registration
+
+`0x10eb7c` is one of a series of PLT-style import trampolines (ARM PC-relative branch through a table). It has **525 direct BL call sites** in the scanned executable range. Its broad use is consistent with a generic library helper, not evidence of a dedicated `IHmiKss` registration API. The exact imported symbol must be resolved through dynamic relocation metadata before assigning semantics.
+
+The same constructor call sequence passes an object pointer as `r1`, a literal `0x68dbe4` as `r2`, and zero as `r3` into that imported helper. The return value is not used as proof of successful subscription.
+
+## Next missing proof
+
+1. Resolve the PLT/GOT imported symbol behind `0x10eb7c` from the stripped ELF's dynamic tables (QNX-specific layout may require program-header rather than section-header parsing).
+2. Track `0x68f594` from its callers and `0xdb0c9c` global consumers.
+3. Recover which dispatch path makes virtual calls through `[object + 0]` (`0x88e6b8`), and correlate with the `IHmiKss` descriptor.
+4. Do not treat slot indices as wire protocol method numbers until the registration/dispatch relationship is established.
+
+This is stock behavior research, not a design document for IAA.
+
+
+
+### Перенесено из `gtf2-callback-owner-guarded-init.md`
+
+# Callback-table owner: upstream guarded initialization path
+
+Source: original stock `STAGE2.1/bin/gtf2`, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This note extends `gtf2-callback-object-vptr-and-caller.md` and integrates the previously documented separate HMI-owner, DP-slot and ViewManager lifecycles. Direct ARM BL targets and condition branches were decoded from executable bytes, not guessed from names.
+
+## New direct caller
+
+The only direct ARM `BL` caller of `0x68f594` found in the scanned executable interval `0x110000..0x700000` is **`0x12e014`**, inside a function beginning at **`0x12dfb8`**.
+
+```asm
+12dff4  mov r1, #2
+12dff8  ldr r2, [pc, ...]
+12dffc  bl 0x10e120
+12e000  ldrb r3, [r5]
+12e004  cmp r3, #0
+12e008  bne 0x12e090         ; skip setup when flag already nonzero
+12e00c  mov r0, r4
+12e010  bl 0x12df20
+12e014  bl 0x68f594         ; callback-table setup chain
+12e018  mov r3, #1
+12e01c  strb r3, [r5]       ; set initialized flag
+12e020  b 0x12e090
+```
+
+Thus the previously documented `0x68f594 -> 0x68ee80 -> 0x69780c -> 0x6977a4` path is reached **conditionally** and followed by a byte flag set to one. The guard appears to prevent repeated setup *on this branch*. It does not by itself prove a process-wide singleton or a live IPC subscription. The enclosing routine has additional branches at `0x12e024` and `0x12e03c` that initialize a different subsystem when another flag is zero.
+
+## Additional preceding configuration
+
+The immediately preceding call `0x12df20` (at `0x12e010`) performs configuration before constructing the callback object:
+
+```asm
+12df50  bl 0x12dcd4
+12df54  mov r1,#4
+12df58  mov r2,#0
+12df60  bl 0x12ff70
+12df68  mov r1,#5
+12df6c  mov r2,#0
+12df70  bl 0x12ff70
+12df78  mov r1,#3
+12df7c  mov r2,#0x530
+12df80  bl 0x12ff70
+```
+
+These are three direct calls with arguments `(4,0)`, `(5,0)`, `(3,0x530)` and the same object-derived first argument. **Do not call them ASI subscription parameters** without resolving `0x12ff70`.
+
+## Updated architecture boundary
+
+The newly traced path is:
+```
+0x12dfb8 (conditional init, flag check)
+  -> 0x12df20 (pre-configuration)
+  -> 0x68f594 (global storage initialization)
+      -> 0x68ee80
+          -> 0x69780c
+              -> 0x6977a4 (52-byte object, vptr +0 = 0x88e6b8)
+              -> 0x10eb7c (imported util::SharedPtrDefaultBase ctor)
+  -> set initialized flag = 1
+```
+
+This is **separate from** HMI owner lazy singleton `0x2bae28/0x25ef60`, and separate from the GTF2-local 180-slot DP notification system `0x120e94/0x122338`. No edge between those mechanisms has been established yet.
+
+## Next proof target
+
+Identify callers of `0x12dfb8`, resolve the owner and address of its flag byte, and inspect what `0x12ff70` configures. Resolve ASI IPC registration via imports/callers rather than mistaking the shared-pointer constructor for registration. The 148 vtable entries are not confirmed wire-method indices.
+
+No proprietary ELF bytes or implementation design is committed.
+
+
+
+### Перенесено из `gtf2-callback-pointer-table.md`
+
+# New evidence: 12 unresolved DP writers appear in one stock ARM function-pointer table
+
+Source: extracted original `STAGE2.1/bin/gtf2` (10,180,269 bytes; SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`). This investigation is distinct from the earlier nearest-prologue/name recovery: it scans **literal 32-bit references to the candidate function entrypoints** in the binary.
+
+## Direct observations
+
+- At VA `0x88e6b0` and `0x88e6b4`, two 32-bit words are zero. Beginning at `0x88e6b8` is a contiguous array of **148 function-like 32-bit addresses** through `0x88e904` inclusive. The next word at `0x88e908` is `0xfffffffc`, followed by zero at `0x88e90c`, consistent with a new adjacent table or secondary layout. **The function-pointer array extent is a structural hypothesis** until the ABI layout is independently verified.
+- Each of the 12 previously unresolved DP write functions has an **exact pointer entry** in this array. No approximate address or string-name match is required. See `gtf2-unresolved-callback-pointer-slots.csv` for every pointer VA and index (zero-based relative to `0x88e6b8`).
+- The table **base pointer `0x88e6b0`** appears as a literal at code VAs `0x693864`, `0x6938dc`, and `0x697800`. For example, ARM `LDR r3, [pc, #0x54]` at `0x693808` loads the first literal at `0x693864`, whose value is `0x88e6b0`. The surrounding code at `0x693818` and `0x693824` writes derived pointers to an object rooted at `r4` (the incoming `r0`); this is **object initialization evidence** rather than merely a detached static address table.
+- The table contains many other callback-like functions, so these 12 are **not isolated unknown functions**. The slot index supplies a concrete path for the next phase: identify the interface object and its dispatch machinery.
+
+## Important limitations
+
+- This **does not yet prove** that the table is the primary `IHmiKss` virtual method table, nor that the slot order is the IPC wire method order. Do not name the slots or infer a protocol method number from the index.
+- The ARM function entrypoints are still identified using the earlier nearest-prologue heuristic; the new contribution is their **independent literal-pointer reference**.
+- The array has a pair of leading zero words, but the object's vptr is observed as `0x88e6b0`, not automatically as `0x88e6b8`. It is premature to impose an Itanium ABI `vptr + 8` convention.
+- This table alone does not establish where the IPC subscription occurs, how `gss_ipc` dispatches messages, or how the DP values reach Kanzi.
+- No firmware binaries or raw proprietary assets are committed.
+
+## Follow-up target
+
+Trace the object initialized at `0x693804` / `0x6977a4`, identify the code that receives or registers its pointer, and correlate the table with `asi.gss.ipc.rte.hmi.IHmiKss` and the `IHmiKssReply` descriptor. Only then can the slot index be interpreted as a confirmed callback mapping.
+
+
+
+### Перенесено из `gtf2-guarded-init-real-entry-and-caller.md`
+
+# Correction: real entry of guarded initialization is 0x12dfb0, called directly
+
+Source: original stock `STAGE2.1/bin/gtf2`, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`.
+
+## Corrected function boundary
+
+The previous `gtf2-callback-guard-container-correction.md` reported zero direct callers of `0x12dfb8`. That was an overly literal prologue-based scan. **The entry is `0x12dfb0`, with two instructions before the PUSH prologue**:
+
+```asm
+12dfb0  movw r12,#0x2af9
+12dfb4  cmp  r1,r12
+12dfb8  push {r4,r5,r6,lr}
+12dfbc  mov r4,r0
+12dfc0  sub sp,sp,#0x20
+12dfc4  mov r5,r2
+12dfc8  mov r6,r3
+12dfcc  beq 12dfe4
+12dfd0  movw r3,#0x2afa
+12dfd4  ldr r0,[pc,#0xbc]
+12dfd8  cmp r1,r3
+12dfdc  bne 12e078
+12dfe0  b 12e024
+```
+
+The direct caller is at **`0x12e0f8 BL 0x12dfb0`**, in function beginning `0x12e0a8`:
+
+```asm
+12e0cc bl 0x69b29c
+12e0d0 subs r1,r0,#0
+12e0d4 beq 12e104
+12e0d8 mov r0,sp
+12e0dc bl 0x14e58c
+12e0e0 mov r0,sp
+12e0e4 bl 0x14e59c
+12e0e8 mov r2,r6
+12e0ec mov r3,r5
+12e0f0 mov r1,r0
+12e0f4 mov r0,r7
+12e0f8 bl 0x12dfb0
+12e0fc mov r0,sp
+12e100 bl 0x14e914
+```
+
+The callee first compares the input `r1` to **`0x2af9`** and **`0x2afa`**, then branches to two distinct initialization paths. Therefore the callback object is created only on the relevant gated branch, not unconditionally for every invocation. `0x12e0a8` also loops around `0x69b29c` until its two stack-local status bytes become nonzero; the precise semantics of these helper functions are not yet established.
+
+**Correction to previous research:** lack of BL references to `0x12dfb8` does not mean the function is only indirectly invoked. Searching for a canonical ARM prologue alone can miss a real function entry with pre-prologue comparisons. The documented zero-caller observation is true only for the *interior address* `0x12dfb8`, not for the function.
+
+## 0x12ff70 container semantics
+
+The full body of `0x12ff70` was checked against original bytes. It follows keyed tree links `node+0x48` and `node+0x4c` comparing `node+4` to `r1`, then dispatches from `node+8` to `0x12fec8` when `r2=0`, or `0x12fc64` when `r2!=0`. These are not identified ASI IPC setup calls. The `0x12fec8` path includes `0x12fe04`, version/check comparisons, and a tail call to imported `0x10e264`; `0x12fc64` invokes `0x127f48`, imported `0x10eb10`/`0x10f1dc`, then `0x113f24`. Exact semantics of those imported routines require relocation lookup.
+
+## Confirmed joined path
+
+```
+0x12e0a8 (loop, obtain/transform input via 0x69b29c, 0x14e58c, 0x14e59c)
+  -> BL 0x12dfb0 (key selector 0x2af9 or 0x2afa)
+     -> conditional 0x12df20 (keyed container updates)
+     -> conditional 0x68f594
+        -> 0x68ee80 -> 0x69780c -> 0x6977a4
+           (52-byte callback object with vptr 0x88e6b8)
+        -> 0x10eb7c (imported util::SharedPtrDefaultBase constructor)
+```
+
+This is **not** proof that `0x2af9`/`0x2afa` are IPC method numbers. Their role is observed as selectors in the function, but transport provenance must be established by tracing `0x14e59c` and `0x69b29c`.
+
+This corrects the previous prologue boundary and caller-negative conclusion. Do not create an IAA implementation contract from this evidence.
+
+
+
+### Перенесено из `gtf2-ipc-callback-read-bounds.md`
+
+# IHmiKss callback payload read-bound audit
+
+Derived from `docs/fpk1/gtf2-ipc-to-dp.csv`, **not** from a fresh ELF run. The underlying table's ARM provenance is checked by `export_ipc_dp_table.py` when supplied the original GTF2 binary.
+
+## New observations
+
+- **176 distinct DP IDs** across **34 callback labels**: 33 named callbacks and one unresolved label `unknown` containing 12 DP rows.
+- All **33 named callback groups** have non-overlapping byte ranges among their exported reads. This does not prove that their payloads contain only those fields.
+- The `unknown` aggregate has **5 byte-overlap occurrences**. It is **not one verified IPC callback**, and its apparent 20-byte read extent **must not be used** as a message schema.
+- The largest observed named callback read extent is **22 bytes**, for `Config_Installation_Coding`. This is a *minimum readable extent*, not an asserted C struct size or wire length.
+- Field offsets refer to the callback payload pointer inferred by the existing exporter; packing, endianness of the IPC transport, nested structures, and omitted fields are not established by this audit.
+
+## Implementation consequence
+
+For an IAA replacement, dispatch on the **real callback identity**, not solely on DP ID or the placeholder `unknown`. Each named callback can be represented by an observed sparse set of offset/width reads, but the decoder must validate incoming payload length against the highest accessed end offset and must not assume that the computed lower bound equals the full IPC message size.
+
+The 12 unresolved rows need a **binary-backed recovery of callback function boundaries and their names** before implementing their transport decoding. Grouping them under one callback would produce ambiguous overlapping fields.
+
+## Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/audit_ipc_callback_layouts.py docs/fpk1/gtf2-ipc-to-dp.csv --expect-stock-count --output docs/fpk1/gtf2-ipc-callback-read-bounds.csv
+```
+
+The derived CSV is an **analysis artifact**, not a stock IPC ABI specification.
+
+
+
+### Перенесено из `gtf2-ipc-field-name-recovery.md`
+
+# Recovering original IHmiKss IPC field names
+
+## Status: original field identifiers are not established
+
+The stock GTF2 ARM ELF permits reconstruction of the following for each of **176** IPC-to-DP writes:
+
+- IPC callback name (33 named callback types, plus an unresolved callback grouping);
+- payload byte offset and load width (`u8`/`u16`);
+- 32-bit DP ID and write call site.
+
+See `docs/fpk1/gtf2-ipc-to-dp.csv` for the full evidence table. The `field_name` column is **intentionally unknown**: a load such as `ldrb r2,[rN,#4]` proves the field's position, not its C++/IDL identifier.
+
+### Names we *can* identify, but must not confuse with IPC field names
+
+| IPC callback | Payload offset | DP ID | Scene property | Confidence |
+| --- | --- | --- | --- | --- |
+| `TelltaleHMI_Display` | `+0x04` | `0x020002CD` | `ESP` | Verified handler/constructor/receiver chain |
+| `TelltaleAALA_Display` | `+0x01` | `0x02000217` | `Limiter`, `Limiter_shadow`, `Cruise_shadow` | Candidate static join; not original IPC names |
+| `TelltaleAALA_Display` | `+0x07` | `0x02000220` | `praediktivesACC`, `PEA_Foot`, `ACC_STA` | Candidate static join; not original IPC names |
+| `ActTest_SoftLEDs` | `+0x04` | `0x0200016B` | `Limiter`, `Limiter_shadow`, `Cruise_shadow` | Candidate static join; not original IPC names |
+
+The 176-entry source-write inventory and the scene join are different layers: one IPC field may affect multiple scene properties, and some DP IDs have no proven scene sink. Never rename an IPC field to a scene property without an IDL/schema or equivalent binary metadata tying that exact identifier to the payload offset.
+
+### Binary/firmware evidence checked
+
+- Stock GTF2 contains callback strings and numerous unrelated `DP_ID_...` logging strings, but no confirmed mapping from the above IPC field offsets to their original source identifiers.
+- The provided `AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip` includes `KSSApplication.bin` (599,924 bytes); literal searches of that file for `IHmiKss`, `TelltaleHMI_Display`, and `ESP` returned no hits. This is **not** proof the KSS firmware lacks an encoded schema.
+- The provided firmware archive does not list obvious `.h` or `.idl` source files.
+
+### Evidence required for exact names
+
+Locate the generated `asi.gss.ipc.rte.hmi.IHmiKss` C++ headers, the IPC/RTE IDL schema, or KSS signal specification for this firmware revision. For each callback, map schema member order/offset and width to the stock ELF load instructions. Only then replace `unknown` in the canonical CSV, with a citation to the schema. Until that source is found, **the actual IPC member names remain unresolved**.
+
+The current table does establish the exact numeric interface (callback, byte offset, type, DP ID), so replay or tracing can proceed without guessing symbolic member names.
+
+
+
+### Перенесено из `gtf2-rte-stage3-dp-guards.md`
+
+# Exact DataPool predicates and diagnostic outcomes in ThreadMan RTE completion Stage3 branch
+
+Source: stock `STAGE2.1/bin/gtf2`, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This extends the already-documented `0x130794 -> startEfsDriver()` path without duplicating the startup graph in `gtf2-lifecycle.md`.
+
+## Exact DP comparisons
+
+Both small GTF2 functions tail-branch to shared comparator `0x1305e4`:
+
+```asm
+13066c ldr r0,[pc,#4]     ; literal at 130678 = 0x020002bb
+130670 mov r1,#0xab       ; expected byte = 171
+130674 b   1305e4
+
+13067c ldr r0,[pc,#4]     ; literal at 130688 = 0x02000236
+130680 mov r1,#2         ; expected byte = 2
+130684 b   1305e4
+```
+
+At `0x1305e4`, the helper builds a temporary DP value holder, calls `0x131ed4` to retrieve the DP byte, releases the holder through `0x131be8`, and returns **1 only when the read succeeds and the returned byte equals the expected value** (`0x130628–0x130638`). On read failure it logs via literal string `0x7c3aec`: `Can't read the DataPool field: %u!` and returns false. The exact field width in the original DataPool definition is not independently established; this comparator checks the retrieved byte.
+
+## Full conditional path and original diagnostic strings
+
+```text
+eSIDThreadManRTEUpdateDone (0x2afa)
+  -> 0x13076c
+     -> read DP 0x02000236, compare byte 2
+        if true:
+          0x1307a8 -> 0x1306f0
+          diagnostic 0x7c3b0f: "Delay the HMI start by %u ms."
+          on timer failure 0x7c3b2d:
+            "Can't start the timer! Enabling HMI immediately."
+        if false:
+          -> read DP 0x020002bb, compare byte 171
+             if true:
+               -> 0x130794 -> 0x699594 startEfsDriver()
+                  on failure: 0x1307b0, diagnostic 0x7c3b5e:
+                    "Problem with executing Stage 3 files. Starting immediately."
+             if false:
+               -> 0x1307d8, diagnostic 0x7c3b9a:
+                 "Non-ECL Mode Enabled. Starting HMI immediately."
+```
+
+The diagnostics identify this as **delayed HMI startup versus immediate HMI startup / Stage3 execution selection**, not a generic ASI IPC readiness routine. The exact semantic names of DP IDs `0x02000236` and `0x020002bb` should be recovered from the existing `gtf2-ipc-to-dp.csv` and callback write provenance before assigning a source signal. The word “ECL” is a **literal stock diagnostic**, not an independently decoded enum.
+
+### Machine-code anchors
+
+- `0x130774 BL 0x13067c`; `0x130778 CMP r0,#0`; `0x130784 BNE 0x1307a8`.
+- `0x130788 BL 0x13066c`; `0x13078c CMP r0,#0`; `0x130790 BEQ 0x1307d8`.
+- `0x130794 BL 0x699594` (previously documented `startEfsDriver()`).
+- `0x130798 CMP r0,#0`; `0x13079c BNE 0x1307b0` (Stage3 error path).
+- `0x1307a8` tail-branches to `0x1306f0` (delay-timer path).
+- `0x1307d8` logs non-ECL immediate-HMI path.
+
+**Limits:** Static disassembly does not establish actual DP values or which branch ran on hardware. The two DP comparisons are not proof that RTE subscriptions are complete. This branch does not supersede the other Stage3 callsites `0x122eac` and `0x692f20`.
+
+Next: resolve the two DP-ID names against the existing 176-ID callback mapping and find the producers of `eSIDThreadManDPInitDone` / `eSIDThreadManRTEUpdateDone`.
+
+
+
+### Перенесено из `gtf2-shared-pointer-import-resolution.md`
+
+# Resolution of imported helper at 0x10eb7c: shared-pointer ownership, not IPC registration
+
+Original stock `STAGE2.1/bin/gtf2`, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. ELF is section-stripped but retains PT_DYNAMIC, DT_JMPREL, DT_SYMTAB and DT_STRTAB.
+
+## Reproducible resolution
+
+- `0x10eb7c` contains ARM PLT stub words `e28fc609 e28cca56 e5bcfbd4`.
+- Decode the rotated ARM immediates and PC-relative address calculation: `0x10eb7c + 8 + 0x900000 + 0x56000 - 0xbd4 = 0xa65758` (GOT slot).
+- `DT_JMPREL=0x10c52c`, `DT_PLTRELSZ=4680`, `DT_PLTREL=REL`. The GOT slot is matched by relocation **index 425** (zero-based), whose symbol index is **560**.
+- `DT_SYMTAB=0x10150c`, `DT_STRTAB=0x1044ec`, `DT_SYMENT=16`. Symbol 560 has name `_ZN4util20SharedPtrDefaultBaseC2EPvPFvS1_S1_ES1_`.
+- Demangled: `util::SharedPtrDefaultBase::SharedPtrDefaultBase(void*, void (*)(void*, void*), void*)`. This is a constructor for shared-pointer ownership/control metadata, **not a dedicated IHmiKss registration API**.
+
+## What the call actually receives
+
+At `0x69782c–0x69783c`:
+```asm
+69782c  mov r0, r4            ; destination/control object (incoming to 0x69780c)
+697830  mov r1, r5            ; freshly allocated/initialized 52-byte object
+697834  ldr r2, [pc, #0xc]   ; literal 0x68dbe4 (deletion function candidate)
+697838  mov r3, #0
+69783c  bl  0x10eb7c         ; SharedPtrDefaultBase constructor
+```
+This explains why the object pointer and a function pointer are passed together. The function pointer at `0x68dbe4` is a **deleter candidate** according to the imported constructor's signature; its behavior still needs direct verification. The 52-byte object's own `vptr=0x88e6b8` remains independently established by `0x6977a4`.
+
+## Integration with previous documentation
+
+- The previous `gtf2-callback-object-construction.md` and `gtf2-callback-object-vptr-and-caller.md` explicitly left `0x10eb7c` unclassified. This finding **resolves that question** and rules out treating this call as the IPC subscription.
+- `gtf2-lifecycle.md` already documents the separate 180-slot DP accumulation/flush and view-manager transition lifecycle. Do not confuse that GTF2-local DP subscription mechanism with ASI `IHmiKss` IPC subscription.
+- `gtf2-stock-routing-lifecycle.md` already verifies HMI owner singleton creation and wrapper receiver binding during owner construction. The 52-byte object here is a distinct observed allocation; **no relation to the HMI owner is yet established**.
+- The missing step is now to trace **where the shared-pointer control object is stored and passed** and which ASI library method registers or activates the callback implementation. Do not infer a wire method number from the 148-entry vtable.
+
+## Minimal verification
+
+Given a local extracted ELF `gtf2`, parse the two PT_LOAD mappings and PT_DYNAMIC tags. Decode the three ARM PLT instructions at VA `0x10eb7c`, match the resulting GOT VA `0xa65758` against 8-byte REL entries in `DT_JMPREL`, and read symbol 560 via `DT_SYMTAB` and `DT_STRTAB`. No proprietary binary is committed.
+
+
+
+### Перенесено из `gtf2-threadman-channel-index-proof.md`
+
+# ThreadMan RTEUpdateDone producer and consumer select the same internal channel index 3
+
+Binary: stock `gtf2`, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This resolves the channel-index ambiguity left in `gtf2-threadman-message-send-receive.md`. It does **not** resolve the unrelated external `IHmiKss` method number.
+
+## End-to-end register/field proof
+
+The RTE callback at vtable slot 136, `0x693ff0`, sets `r1=3` and `r2=0x2afa` before `0x12ca9c`:
+
+```asm
+693ff4 movw r2,#0x2afa
+693ff8 mov  r1,#3
+693ffc mov  r0,sp
+694000 bl   0x12ca9c
+```
+
+`0x12ca9c` forwards the channel index in `r0` and selector in `r1` to `0x69b6b8` (`0x12caa8..0x12cab8`). In `0x69b6b8`, `r6` holds that channel index and `r5` holds the selector. The message initializer `0x6abce8` is called with `r3=r6` and fifth stack argument `r5`. Its instructions **`0x6abcfc STR r3,[r0]`** and **`0x6abd00 MOV r1,lr`** establish the channel index in message field `+0` and selector in the message construction path. It also stores payload pointer at `+4`, capacity at `+8`, length at `+0xa`, and active flag at `+0xd`.
+
+Sender `0x69b4ac`:
+```asm
+69b4b8 bl 0x68d7f8      ; initialize shared channel array if needed
+69b4bc ldr r1,[r4]      ; r1 = message.channel_index = 3
+69b4c0 bl 0x68d570      ; descriptor = table[r1]
+69b4c4 ldrh r2,[r4,#10] ; message length
+69b4c8 ldr r1,[r4,#4]   ; message payload
+69b4d0 bl 0x68d060      ; send-side transport helper
+```
+
+The shared accessor `0x68d570` is exactly `LDR r0,[r0,r1,LSL #2]; BX lr`. The singleton accessor `0x68d7f8` returns a pointer to the shared array at `0xdb0bf4` (literal `0x68d848`), initializing it through `0x68d5b0` once.
+
+Receiver `0x12e0a8`:
+```asm
+12e108 mov r0,#3
+12e110 beq 0x12e0cc
+12e11c beq 0x12e0cc
+12e0cc bl 0x69b29c
+```
+At `0x69b29c`, `r4=r0` saves **3**; it calls the **same** `0x68d7f8` and passes `r1=r4` to the **same** `0x68d570` at `0x69b2ac..0x69b2b0`. Thus both sides select **table[3]**, with the same singleton array and accessor, before send/receive helper calls. The receiver subsequently uses `0x68cf00` with a 64-byte destination buffer.
+
+This proves **same internal channel-table index and shared descriptor slot**, stronger than the earlier observation of shared helper names. It does not prove that an individual message was successfully delivered at runtime, or whether send/receive use the same underlying OS descriptor integer rather than distinct endpoints within that slot; inspect `0x68d5b0` and the channel descriptors for that detail.
+
+## Scope / nonclaims
+
+- Index **3** is an **internal message-channel selector**, not the external `IHmiKss` method ID and not callback slot 136.
+- `0x2afa` is the **ThreadMan message selector**, not a channel number.
+- Callback table slot **136** identifies the local implementation `0x693ff0`, not a wire protocol method ID.
+- No runtime delivery or external ASI registration sequence is inferred from static code.
+
+## Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x693ff0 --stop 0x69401c
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69b6b8 --stop 0x69b6f0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6abce8 --stop 0x6abd24
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69b4ac --stop 0x69b4d8
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69b29c --stop 0x69b2c0
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x68d7f8 --stop 0x68d850
+```
+
+
+
+### Перенесено из `gtf2-threadman-message-send-receive.md`
+
+# ThreadMan completion message transport: concrete send/receive bridge
+
+Stock GTF2 ELF SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. Extends `gtf2-rte-completion-callback-slot.md`; avoids repeating the already-established callback object, DP routing and Stage3 paths.
+
+## Sender-side verified ARM calls
+
+`0x693ff0` is callback table entry 136 at `0x88e8d8`, not an external IPC method number. It constructs selector `0x2afa` and invokes `0x12c994`. The exact implementation:
+
+- `0x12c994`: reads message wrapper's active byte at `+4`; only when set, loads its pointer at `+0` and calls `0x69b4ac` (`0x12c9a8..0x12c9ac`). If send returns zero, executes error reporting via `0x10e714`; updates wrapper active byte based on result (`0x12c9d4..0x12c9e4`).
+- `0x69b4ac`: checks message pointer nonnull; `0x69b4b8 BL 0x68d7f8`, `0x69b4c0 BL 0x68d570`; reads **message+0x0a as a 16-bit unsigned field** and message+4 as a pointer; passes them to `0x68d060` (`0x69b4c4..0x69b4d0`). Tests result against -1 and returns boolean success/failure (`0x69b4d4..0x69b534`).
+- `0x12c9fc`: calls `0x69b280` on the wrapper's owned message pointer, then clears the pointer and active byte.
+
+These are concrete send-side edges; exact wire layout remains unproven until `0x68d060` and the underlying QNX messaging import are resolved.
+
+## Receiver-side verified ARM calls
+
+`ThreadMan::run` `0x12e380` invokes the processing loop `0x12e0a8`, whose `0x12e0cc` calls `0x69b29c`. In `0x69b29c`:
+
+- `0x69b2a8 BL 0x68d7f8`, `0x69b2b0 BL 0x68d570`: same pair as sender.
+- `0x69b2bc BL 0x6abf20`: acquire message object; return null is a distinct error path.
+- `0x69b2f8 BL 0x68cd70`, `0x69b348 BL 0x68ce1c`: receive/prepare operations, with error checking against -1.
+- `0x69b35c BL 0x68cf00`: reads into the **message object +0x10** buffer with **r2=64** and r3=0. This establishes a fixed 64-byte receive-buffer bound for this call, not the length of every possible message.
+- Successful loop then obtains selector from the returned object via `0x14e58c` / `0x14e59c` and invokes `0x12dfb0`.
+
+This establishes a common application-owned messaging helper family on both sides. It does **not** yet prove the two calls refer to the same concrete endpoint/connection ID, or that the message is carried via ASI external IPC rather than an internal QNX message channel. The consumer is the internal ThreadMan selector dispatcher, not the external RTE callback table.
+
+## Important semantic distinction
+
+```
+External RTE callback dispatch (method number still unknown)
+    -> callback vtable slot 136 / 0x693ff0
+    -> 0x12c994 -> 0x69b4ac -> 0x68d060 [send-side helper]
+    ... transport/channel identity not yet resolved ...
+ThreadMan run / 0x12e0a8
+    -> 0x69b29c -> 0x68cf00 [64-byte receive buffer]
+    -> 0x12dfb0 / 0x2afa
+    -> delayed/Stage3/immediate HMI startup choice
+```
+
+A slot number in a C++ vtable is not an IPC method ID. No interface descriptor → slot 136 method-name correspondence is established yet. Further work should resolve the channel or connection IDs and callback descriptor rather than infer a method name from neighboring entries.
+
+## Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x12c994 --stop 0x12ca20
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69b29c --stop 0x69b438
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69b4ac --stop 0x69b550
+```
+
+
+
+### Перенесено из `gtf2-threadman-named-message-box.md`
+
+# ThreadMan message channel resolved to named /eMsgBoxIDThreadManager
+
+Stock GTF2 SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. This consolidates the message transport reconstruction across `gtf2-threadman-channel-index-proof.md`, `gtf2-threadman-message-send-receive.md`, and `gtf2-rte-completion-callback-slot.md`. **New evidence:** names, descriptor initialization, index-to-name mapping, and implementation characteristics of the message-box mechanism.
+
+## Four named message boxes, initialized in exact index order
+
+The singleton initializer `0x68d7f8` calls `0x68d5b0` with the four-word array at `0xdb0bf4`. In `0x68d5b0`, four sequential calls to `0x68d308` store returned descriptors at `[r4+0]`, `[r4+4]`, `[r4+8]`, `[r4+12]`. Their name pointers are literal loads immediately before the calls.
+
+| Index | Descriptor store | Name pointer literal | String VA | Exact stock name | Creation call |
+|---|---|---|---|---|---|
+| 0 | `0x68d5f0 STR r0,[r4]` | `0x68d7c4` | `0x88cdbd` | `/eMsgBoxIDGui` | `0x68d5e8 BL 0x68d308` |
+| 1 | `0x68d670 STR r0,[r4,#4]` | `0x68d7e0` | `0x88ce6a` | `/eMsgBoxIDDatapool` | `0x68d668 BL 0x68d308` |
+| 2 | `0x68d6f0 STR r0,[r4,#8]` | `0x68d7e8` | `0x88cea6` | `/eMsgBoxIDApplication` | `0x68d6e8 BL 0x68d308` |
+| 3 | `0x68d770 STR r0,[r4,#12]` | `0x68d7f0` | `0x88ceee` | **`/eMsgBoxIDThreadManager`** | `0x68d768 BL 0x68d308` |
+
+All four calls use `r1=0x102` and `r2=0x1ff` (ARM MOVW opcodes), with a temporary attribute block setting max message count 64 and message size 64 for index 0, and message count 16 / size 64 for indices 1–3. These values are initializer arguments, not observed runtime queue depth.
+
+Each failure branch logs an explicit stock string, respectively `Failure in creating message queue for HMI`, `... for DP`, `... for Application`, `... for Thread Manager`.
+
+## Transport proof: same *named* channel, not merely similar helpers
+
+```text
+IHmiKss callback table slot 136 -> 0x693ff0
+  -> message constructor (channel_index = 3, selector = 0x2afa)
+  -> 0x12c994 -> 0x69b4ac
+  -> 0x68d7f8 (singleton) -> 0x68d570(table,3)
+  -> table[3] == descriptor created for /eMsgBoxIDThreadManager
+  -> 0x68d060 (send helper)
+
+ThreadMan run 0x12e380 -> 0x12e0a8 (r0=3)
+  -> 0x69b29c
+  -> 0x68d7f8 (same singleton) -> 0x68d570(table,3)
+  -> table[3] == descriptor created for /eMsgBoxIDThreadManager
+  -> 0x68cf00 (receive helper, 64-byte buffer)
+  -> selector 0x2afa -> 0x12dfb0
+  -> 0x13076c -> DP guards -> conditional Stage3/HMI startup
+```
+
+This is a **complete static join at the same named message-box descriptor**. The actual runtime scheduling, success/failure, and external `IHmiKss` wire method remain unproven.
+
+## Implementation detail and caution about POSIX interpretation
+
+The name strings have a POSIX-like leading slash, and stock error text uses “message queue” and references `mq_overview`. But `0x68d308` is a substantial application-level helper: it checks `strlen`, loops over eight named slots using `strcmp`, allocates and initializes internal state, and calls `pthread_cond_init` via PLT `0x10dad8`. `0x68d060` likewise contains custom allocation and shared-state checks. **Do not assert these are OS `mq_open` descriptors solely from the names**. Resolve the underlying helper implementation and imports before assigning an OS transport type.
+
+The fourth channel is unequivocally named `/eMsgBoxIDThreadManager`; the three others are separate internal message boxes and must not be conflated with ASI `IHmiKss` interface names.
+
+## Reproduction on original ELF
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x68d5b0 --stop 0x68d7f8
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x68d7f8 --stop 0x68d850
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x68d308 --stop 0x68d4c4
+```
+
+Extract literal values from original executable PT_LOAD with `struct.unpack_from('<I', blob, va - 0x100000)`; decode strings at the four virtual addresses above. The executable image contains original program bytes and no synthetic instructions.
+
+## Remaining external boundary
+
+The internal completion-event path is statically closed up to named channel and event dispatcher. Next high-value task is the **external `IHmiKss` descriptor/method mapping for vtable slot 136**. The vtable index, ThreadMan selector `0x2afa`, and message-box index 3 are three different number spaces; none is an ASI method number.
+
+
+
+### Перенесено из `gtf2-threadman-producers-and-startup-dp-writers.md`
+
+# Proven producers of ThreadMan completion events and two missing startup DataPool writers
+
+Original stock GTF2 SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`. Reconciled with `gtf2-lifecycle.md` and `gtf2-ipc-to-dp.csv`: neither `0x02000236` nor `0x020002bb` appears in the 176-row CSV, which is a **restricted direct-writer inventory**, not a complete DataPool inventory.
+
+## Completion message construction sites
+
+A whole-executable scan for ARM MOVW immediates `0x2af9` and `0x2afa` found exactly these instruction addresses:
+
+| Selector | MOVW instruction VA | Role |
+|---|---|---|
+| `0x2af9` | `0x114808` | Producer of `eSIDThreadManDPInitDone` |
+| `0x2af9` | `0x12dfb0` | Consumer comparison |
+| `0x2afa` | `0x693ff4` | Producer of `eSIDThreadManRTEUpdateDone` |
+| `0x2afa` | `0x12dfd0` | Consumer comparison |
+
+At `0x1147f8–0x114818`, the initialization routine invokes `0x69e2d4`, constructs the `0x2af9` message using `0x12ca9c`, then calls `0x12c994`. At `0x693ff0–0x694018`, a separate function constructs `0x2afa` through `0x12ca9c`, invokes `0x12c994`, then calls `0x12c9fc` for local cleanup. The latter helper calls `0x69b280` on the message's owned object. Both producers use the same message helper family; the consumer is `0x12dfb0` through `0x12e0a8`.
+
+Do not equate `0x12c994` with confirmed queue insertion without following its callee `0x69b4ac` and the queue storage. Do not assume that `0x693ff0` has a direct BL caller: direct-BL census found **zero**. The function can be invoked via a vtable or callback pointer; that upstream edge remains to be resolved.
+
+## Previously missed startup DP writer #1: 0x02000236
+
+The original ELF contains two literal occurrences of `0x02000236`: `0x130688` (reader/guard) and `0x69436c` (writer). The latter is referenced by the function beginning at `0x694358`:
+
+```asm
+694358 ldr r3,[r1,#4]
+69435c add r0,r0,#0x10
+694360 ldr r1,[pc,#4]   ; [0x69436c] = 0x02000236
+694364 ldrb r2,[r3,#3]  ; payload byte +3
+694368 b 0x131390      ; DP setter, tail branch
+```
+
+The prior 176-DP inventory deliberately recognizes direct BL-to-setter patterns. This writer uses a **tail branch** and was therefore not represented in the CSV. The callback's source-level name is **not yet proven**; do not invent it from neighboring vtable entries.
+
+## Previously missed startup DP writer #2: 0x020002bb
+
+The original ELF contains two literal occurrences of `0x020002bb`: `0x130678` (reader/guard) and `0x693fec` (writer). Function `0x693fdc` writes a **fixed byte value** through a different DP helper:
+
+```asm
+693fdc add r0,r0,#0x10
+693fe0 ldr r1,[pc,#4]  ; [0x693fec] = 0x020002bb
+693fe4 mov r2,#171
+693fe8 b 0x13143c
+```
+
+The fact that this DP is written to the value the Stage3 guard expects does **not** prove it has that value at the time of the guard read. Establish invocation order, conditional execution, and potential other writers before claiming that the Stage3 branch is always selected.
+
+## Reconciled control-flow picture
+
+```text
+GTF2 initialization routine
+  -> 0x114808 MOVW 0x2af9 -> 0x12ca9c -> 0x12c994
+  -> ThreadMan processing loop 0x12e0a8
+    -> 0x12dfb0 DPInitDone
+      -> keyed-container operations and callback object setup
+
+Separate GTF2 function 0x693ff0
+  -> 0x693ff4 MOVW 0x2afa -> 0x12ca9c -> 0x12c994
+  -> ThreadMan processing loop 0x12e0a8
+    -> 0x12dfb0 RTEUpdateDone
+      -> 0x13076c
+        if DP 0x02000236 == 2: delayed HMI start
+        else if DP 0x020002bb == 171: startEfsDriver()
+        else: immediate HMI start
+```
+
+The source-level name of `0x693ff0`, its indirect callback/vtable registration, the transport between the producers and the queue consumer, and the real-time order of both messages are not yet established. This note records **binary-verified producer sites and DP writers**, not a complete IPC transport reconstruction.
+
+## Reproduction
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1147f8 --stop 0x11482c
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x693fdc --stop 0x69401c
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x694340 --stop 0x694370
+```
+
+Next: identify indirect pointer slot(s) to `0x693ff0` and `0x694358`; trace `0x69b4ac` and `0x69b29c` as the producer/consumer message bridge; then resolve callback names with direct vtable provenance.
+
+
+
+### Перенесено из `gtf2-unresolved-callback-elf-findings.md`
+
+# Binary-backed triage of the 12 unresolved IHmiKss source rows
+
+**Source:** `AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip` from the supplied Drive file; extracted `STAGE2.1/bin/gtf2`, 10,180,269 bytes, SHA-256 `6c540be428ef8853d77088f9224a0ca0d0ef8373fe6c7425ccefeccdabfc6fb1`.
+
+## New ELF run
+
+The archive was decoded using the existing repository's documented CIFS/IFSPTTBL + Adler-32-checked LZO Stage2 reconstruction profile (the extracted ELF hash matches prior research). The 12 DP write addresses previously labeled `unknown` in `gtf2-ipc-to-dp.csv` were individually located in the **actual ELF**, and assigned candidate function starts by nearest preceding ARM `STMDB sp!,{...,lr}` prologue, with the next such prologue used as an upper bound.
+
+**Result:** 12 DP writes have **12 distinct candidate function starts**. Therefore the 12 rows are **not one verified callback structure**. This is a candidate function-level split, not yet proof of 12 independent registered IPC methods; thunks and inlining require further examination.
+
+New evidence from PC-relative literal references within the candidate function ranges:
+
+- DP `0x0200016a`, write `0x694308`, candidate start `0x6942f0`: diagnostic `AAG_Blinker_H_aktiv (s_AB): %d` referenced at `0x694324` (string VA `0x88eef6`).
+- DP `0x02000222`, write `0x694460`, candidate start `0x694448`: diagnostic `rightHandDrive: %d` referenced at `0x69447c` (string VA `0x88ef15`).
+- No other printable diagnostic strings were found by this literal-pointer scan inside the ten remaining candidate function ranges. **Absence of such a string does not mean the callback has no symbolic identity.**
+
+The complete 12-row ledger is `docs/fpk1/gtf2-unresolved-callback-functions.csv`. These diagnostic phrases are **behavioral clues**, not confirmed IPC method names or field names.
+
+## Non-duplication check
+
+Earlier `group_rte_dp_callbacks.py` and `name_rte_dp_callbacks.py` already grouped direct DP writes and searched `batchLock()` diagnostic names. The incremental result here is a **fresh execution against the user-supplied original ELF**, the exact 12 unresolved DP site split, and the two diagnostic-string xrefs. The canonical 176-row table is unchanged pending proof of actual callback identity.
+
+## Next evidence needed
+
+Resolve the 12 candidate callback entrypoints to their **registered virtual interface/vtable slots** or IPC interface descriptors; independently verify that the DP write is reached from that entrypoint. Search for call-site-to-method correspondence, not merely nearby printable strings. Then trace subscription and dispatch to distinguish an IPC callback from a helper or forwarding thunk.
+
+
+
+### Перенесено из `gtf2-unresolved-callback-triage.md`
+
+# Unresolved IHmiKss callback identities: non-duplicate investigation plan
+
+## Prior work checked before adding this tool
+
+| Existing work | Already established | Not repeated here |
+| --- | --- | --- |
+| `scan_rte_dp_writes.py` | Direct `BL 0x131390`, literal DP and payload load scanner | No new DP discovery claim |
+| `group_rte_dp_callbacks.py` | Nearest preceding ARM `STMDB sp!,{...,lr}` candidate function grouping | No claim to discover grouping |
+| `name_rte_dp_callbacks.py` | `batchLock() failed` callback name search in a restricted diagnostic address range | No claim that diagnostic naming is new |
+| `export_ipc_dp_table.py` | 176-row canonical source CSV, including 12 `unknown` entries | Canonical CSV unchanged |
+| `audit_ipc_callback_layouts.py` | Offset overlap and minimum read extent by callback label | Not a callback identity resolver |
+
+## Incremental contribution
+
+`triage_unresolved_callback_functions.py` is a **function-level evidence ledger**:
+
+1. Groups scanner write sites by candidate ARM function start and emits **start/end VAs** and every DP write VA per group.
+2. Searches PC-relative literal pointers for printable NUL-terminated diagnostics **across the available image**, rather than requiring the pointer to lie in `0x88e000–0x88f800`.
+3. Preserves the diagnostic source instruction VA, target string VA and string text for review.
+4. Reports `unique-diagnostic`, `conflicting-diagnostics`, or `no-name-diagnostic` instead of silently choosing one name.
+5. Never edits `gtf2-ipc-to-dp.csv` or claims an original IPC field identifier.
+
+### Reproduce on original stock ELF
+
+```sh
+python3 tools/fpk1/research/gtf2/triage_unresolved_callback_functions.py \
+  /path/to/STAGE2.1/bin/gtf2 --expect-stock-count \
+  --output /tmp/gtf2-callback-function-evidence.csv
+```
+
+Compare `dp_ids` in this output to the 12 `unknown` rows in `docs/fpk1/gtf2-ipc-to-dp.csv`. The expected result is a **review queue**, not an automatically trusted rename. A `unique-diagnostic` label still needs confirmation that the string is from the actual callback function and not a nested helper or unrelated literal.
+
+### Open issues and false-positive controls
+
+- The nearest-prologue grouping remains **heuristic**. Nonstandard prologues, inlined code and compiler-generated thunks may cause incorrect boundaries.
+- A string pointer inside a function is evidence of a reference, not proof the diagnostic executes along the DP write path.
+- Printable diagnostic strings may include unrelated code messages; only the exact `Name(): batchLock() failed` signature becomes a candidate callback name.
+- The tool's candidate end bound is the next matching prologue or 0x800 bytes, whichever comes first; it is **not** a verified function size.
+- Payload layout and actual wire message length remain unknown.
+
+## Evidence status
+
+This change was reviewed against the existing repository scripts and CSV. **The new triage tool has not been run on the stock GTF2 ELF in this change.** Consequently, it reports no new recovered callback names or additional confirmed DP mappings yet.

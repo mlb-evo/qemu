@@ -1658,3 +1658,64 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x5
 ```
 
 **Coverage statement:** 62 supported IDs have `SV_*` names via the shallow initializer scan, and the other 30 have `CHMI*ViewData::construct` diagnostics. Hence **92/92 factory-supported IDs have a firmware-derived identifier**, but **not** 92 confirmed `SV_*` names, 92 proven visual screen layouts, or 92 mapped DP event handlers.
+
+## Complete 179-name view registry: provider virtual +0x04 is a canonical ID-to-name resolver
+
+A direct disassembly of the registered provider's **second virtual method**, **`+0x04 -> 0x25df30`**, reveals a second **179-entry jump table** at **`0x25df48`**, parallel to the previously decoded object factory `+0x00 -> 0x25a940`.
+
+This is a **major correction and improvement** over the previous heuristic `SV_*` and `CHMI*ViewData::construct` scans. The firmware itself implements a direct **ID -> canonical view name** function, covering **all 179 IDs**, including the 87 IDs that do not have a local lazy object initializer.
+
+### Exact implementation
+
+- `0x25df30–0x25df44`: subtract 1 from input `r1`, compare against 178, dispatch through **179-entry** table `0x25df48`.
+- Each in-range case is two instructions, a PC-relative **`LDR r0,[pc,#offset]`** and **`POP {r4,pc}`**. The loaded pointer addresses a NUL-terminated canonical view-name string in the GTF2 ELF.
+- For example, **ID 1** jumps to `0x25e21c`, whose literal at `0x25e7c8` points to `0x816c2c` = **`SV_AudioFPK_HinweisTexte`**. **ID 2** jumps to `0x25e214`, literal `0x25e7c4` points to `0x816c45` = **`SV_AudioFPK_MediaBrowser`**.
+- **`0x6a9ec8`** calls provider virtual `+0x04`; it has **28 direct GTF2 BL callsites** in the executable. This is the view-name lookup already used in `ViewManager` diagnostics, including `0x118b9c`, `0x118ca8`, `0x1196b8`, `0x11a284`, and `0x11a69c`.
+- The registered provider vtable `0x82bdd8` therefore exposes **two separate registries** over the same numeric ID namespace: **`+0x00`** returns a lazily created view object (or null), while **`+0x04`** returns its **canonical diagnostic name**.
+
+**Full verified coverage:** **179/179 names**, **92/179 object-factory-supported**, **87/179 name-only**. “Name-only” means this provider's local object factory returns null for the ID; it does **not** prove the feature is absent elsewhere in the system or cannot be displayed by a different renderer.
+
+### Previously unresolved 30 IDs now have exact canonical names
+
+| ID | Canonical name from `+0x04` | Earlier constructor diagnostic |
+| --- | --- | --- |
+| 68 | `PV_OpenSourceLicenses` | `CHMIPvOpensourcelicensesViewData::construct` |
+| 69 | `PV_OpenSourceLicenses_Loading` | `CHMIPvOpensourcelicensesLoadingViewData::construct` |
+| 70 | `MV_SlideShowScreen` | `CHMIMvSlideshowscreenViewData::construct` |
+| 101 | `PV_Versions` | `CHMIPvVersionsViewData::construct` |
+| 147 | `PV_IncomingCall` | `CHMIPvIncomingcallViewData::construct` |
+| 154 | `PV_PartialPopupBAP` | `CHMIPvPartialpopupbapViewData::construct` |
+| 173 | `PV_ACC_Popup` | `CHMIPvAccPopupViewData::construct` |
+| 174 | `MV_ClusterBlackScreen` | `CHMIMvClusterblackscreenViewData::construct` |
+| 176 | `MV_ClusterFull` | `CHMIMvClusterfullViewData::construct` |
+| 177 | `MV_ClusterEarlyTubes` | `CHMIMvClusterearlytubesViewData::construct` |
+| 178 | `MV_EarlyWelcome` | `CHMIMvEarlywelcomeViewData::construct` |
+
+All 30 have an exact canonical name in the registry; the table shows representative high-value IDs. For the complete 179-row mapping, run the committed script below.
+
+### Crucial distinction: named IDs without local view objects
+
+| ID | Canonical registry name | Factory `+0x00` |
+| --- | --- | --- |
+| 9 | `SV_LVDS_Audio` | null |
+| 27 | `SV_LVDS_Car_Bordbuch` | null |
+| 59 | `SV_LVDS_Car_View360_NA_Off` | null |
+| 73 | `SV_MainWizard` | null |
+| 74 | `SV_LVDS_AudiConnect` | null |
+| 123 | `SV_LVDS_B_Call` | null |
+| 150 | `PV_PP_SmartphoneNotConnected` | null |
+| 151 | `SV_WarnRoller_Clamp15Off` | null |
+| 153 | `PV_LVDS_MMI_Popup` | null |
+| **175** | **`MV_ClusterFull_BY`** | **null** |
+
+The **ID 175** result is particularly useful for startup reconstruction: the registry **knows** `MV_ClusterFull_BY`, but the **active object factory has no implementation** for it in this firmware build. By contrast **174, 176, 177, 178** all have concrete lazy initializers. Therefore the startup view inventory must distinguish **named-but-uninstantiable** from **locally instantiated** views, not infer availability from names alone.
+
+### Reproduce the complete canonical map
+
+```sh
+python3 tools/fpk1/research/gtf2/map_provider_names.py /path/to/gtf2 > build_fpk1/research-artifacts/gtf2-provider-names.csv
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x25df30 --stop 0x25df70
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a9ec8 --stop 0x6a9ef4
+```
+
+This is an **exact decoder of a firmware-implemented lookup table**, rather than a heuristic string scan. No proprietary ELF bytes are committed. The next GTF2-owned task is to trace **who requests startup IDs 174/176/177/178** and whether the object provider is invoked before or after the EarlyTubes/ClusterFull KZB gates.

@@ -4749,3 +4749,19 @@ A fresh disassembly of the stock GTF2 at `0x693c20..0x693d10` distinguishes **tw
 ### Derived comm proxy vtable: forwarding adapter, not callback registration (2026-10-28)
 
 Re-read the original GTF2 ELF bytes and decoded the derived proxy vtables. `0x88e360` begins `0x6937cc, 0x6938f4, 0x18caf8, 0x18cb20, 0x18cb44, 0x18cb68, 0x10eef4`; the secondary subobject vtable begins at `0x88e384` and contains adjustment thunks subtracting 8 from `this` before forwarding to the same methods. The forwarding functions are concrete: `0x18caf8` reads `[r0,#4]`, checks null, then calls that object's virtual slot 2; `0x18cb20`, `0x18cb44`, `0x18cb68` read `[r0,#4]` and call slots 3, 4, 5 respectively. These accesses are to **offset +4 of the adapter object**, not to the GTF2 wrapper callback stored at `+0x48`. Destructor entries `0x6937cc` and `0x6938f4` do not implement the missing factory setter. The companion vtable at `0x88e608` contains `0x693988, 0x69394c, 0x18ca64, 0x18ca8c, 0x18cab0, 0x18cad4`, again with inherited forwarding functions. This rules out identifying the obvious derived vtable entries as direct reads of `[wrapper+0x48]`. The callback-transfer path is **still not established**; next inspect initialization and service-registration helper calls around `0x6935d8..0x693620` and `0x693cd0..0x693d10`, including factory ABI rather than conflating distinct offsets.
+
+
+### Non-DP side effects in unresolved GTF2 IPC callbacks (static ARM32 verification, 2026-10-28)
+
+The `gtf2-unresolved-callback-functions.csv` entries must **not** be interpreted as DP-only handlers. Direct disassembly of stock GTF2 shows additional calls *after* the `0x131390` DP write, all within the same callback invocation:
+
+| Callback start | DP write (field offset/type) | Subsequent operations, in execution order |
+|---|---|---|
+| `0x695898` | `0x02000174` at `0x6958b0` (`payload+0`, u16) | `0x151558`, `0x14eb5c`, then `0x15ff7c(payload+0 u16, payload+2 u16)` |
+| `0x696540` | `0x0200017d` at `0x696558` (`payload+1`, u8) | `0x151558`, `0x14eb98`, then `0x18f3d0` with the callback argument pointer |
+| `0x6965a8` | `0x02000175` at `0x6965c0` (`payload+2`, u8) | `0x151558`, `0x14ec58`, `0x1dde40(payload+3 u8)`, `0x151558`, `0x14ec58`, `0x1ddea0(payload+4 u8)` |
+| `0x696b6c` | `0x020001cb` at `0x696b84` (`payload+0`, u8) | `0x1562d8(payload+0 u8)` (additional constant loaded at `0x696b8c`) |
+| `0x696c00` | `0x020001d5` at `0x696c18` (`payload+0xa`, u8) | `0x151558`/`0x14eb5c` and `0x163488(index=0,payload+4 u8)` at `0x696c30`; repeats for index=1/payload+5 at `0x696c48` and index=2/payload+8 at `0x696c60`; callback continues beyond `0x696c6c` |
+| `0x696f4c` | `0x02000224` at `0x696f64` (`payload+5`, u8) | `0x151558`/`0x14eb78`, `0x18bb88` with payload bytes +0,+1,+2,+3 at `0x696f88`; `0x151558`/`0x14eca8`, `0x1a5e10(payload+5)` at `0x696f9c`; `0x151558`/`0x14ec38`, `0x1d7f4c(payload+5)` at `0x696fb8` |
+
+These are **verified call sites and input-byte dependencies**, not yet semantically named actions. In particular `0x696f4c` forwards one incoming event to at least three other handlers in addition to its DP write, and `0x696c00` fans one event into indexed calls. This is evidence that the true IPC event reaction graph has non-DP edges; a DP-ID-only routing CSV cannot be treated as a complete event-effects inventory. The next static step should resolve the targets (`0x163488`, `0x18bb88`, `0x1a5e10`, `0x1d7f4c`) and add confirmed semantics only after their bodies are inspected. No QEMU execution is implied.

@@ -2042,3 +2042,67 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d820 --stop 0x69d834
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x11871c --stop 0x118750
 ```
+
+## State view-ID writer identified: conditional setter and five concrete callsites
+
+The direct writer of the state record's **`+0x14` view ID** is **`0x69d810`**, immediately adjacent to the previously established selector getter `0x69d820`. These are short GTF2-owned functions, so their exact behavior can be expressed without symbolic guesses:
+
+```c
+void state_set_id(State *s, uint32_t id) {  // 0x69d810
+    if (s->flags_10 & 0x6)
+        s->id_14 = id;
+}
+uint32_t state_selected_id(State *s) {     // 0x69d820
+    return (s->flags_10 & 1) ? 0 : s->id_14;
+}
+uint32_t state_candidate_id(State *s) {    // 0x69d7f0
+    return (s->flags_10 & 1) && (s->flags_10 & 0x6)
+           ? s->id_14 : 0;
+}
+```
+
+**Important distinction:** the setter requires **bit 1 or bit 2** (`flags & 0x6`), while the view-selection getter requires **bit 0 clear**. These are **independent gates**. The separate `0x69d7f0` candidate getter requires **bit 0 set AND at least one of bits 1/2 set**; it is not equivalent to the selection getter. Avoid modeling all three as a single boolean `view_active` flag.
+
+### Five direct callers of the setter
+
+A complete ARM BL scan of the executable PT_LOAD found exactly **five** direct calls to `0x69d810`:
+
+| Callsite | GTF2-owned caller path | Value written |
+| --- | --- | --- |
+| **`0x69c8f8`** | list/tree synchronization in `0x69c7bc–0x69c974` | **`[r5+0x00]`** (ID from a source record) |
+| **`0x69c958`** | same synchronization loop | **`[r2+0x00]`** (ID from another source record) |
+| **`0x6ac258`** | index/range maintenance in `0x6ac208–0x6ac398` | literal **0** |
+| **`0x6ac2d8`** | same range-maintenance routine | literal **0** |
+| **`0x6ac374`** | same range-maintenance routine | literal **0** |
+
+At **`0x69c8f0–0x69c8f8`**, the first synchronization path loads `r1=[r5]` and passes `r0=r6` to the setter. At **`0x69c94c–0x69c958`**, the second path loads `r2=[sp+0x18]`, then `r1=[r2]` and again passes `r0=r6`. Thus **the nonzero requested ID is copied from a source record**, not generated as a hardcoded constant at the setter callsite.
+
+The three `0x6ac2xx` calls all explicitly load **`r1=0`** before calling the setter; they are **clear/reset paths** that can invalidate a view selection when range/list entries change. These calls are conditional on record-state tests involving GTF2 helpers `0x69d864` and `0x69d870`; they are **not** unconditional clears.
+
+### Consequence: view IDs are data-driven
+
+The actual GTF2 view selection now has an explicit producer-consumer chain:
+
+```text
+source record ID ([record+0x00])
+  -> synchronization 0x69c8f8 / 0x69c958
+  -> state_set_id 0x69d810, conditional on flags & 0x6
+  -> state+0x14
+  -> state_selected_id 0x69d820, conditional on !(flags & 1)
+  -> BaseViewManager selector 0x6a8d5c
+  -> provider getView(id)
+  -> derived handleViewSwitch +0x50, subject to transition gates
+```
+
+The producer is a **record list/tree**, so a startup view ID may originate from an **upstream state record**, not from a literal `mov r1,#174` near `ViewManager`. This is a useful constraint on the remaining reverse engineering: trace construction and updates of **source record `+0x00`** and the list synchronization function rather than scanning only for startup ID constants.
+
+The five calls above are a **direct BL census**; additional inlined writes or indirect calls have not been excluded. The list structure's exact semantic name is still unknown.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/trace_view_id_state_writers.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d7f0 --stop 0x69d834
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69c7bc --stop 0x69c974
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6ac208 --stop 0x6ac398
+```

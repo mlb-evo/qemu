@@ -377,3 +377,29 @@ llvm-objdump -d --start-address=0x122c54 --stop-address=0x123490 /tmp/gtf2-with-
 ```
 
 The synthetic-section file is a **local disassembly aid only**, never committed or distributed.
+
+### Skin-switch preconditions and distinct KZB wait counters (ARM-confirmed)
+
+A further pass over the **GTF2 executable itself** clarifies the first branch of `handleLoadingKZBs()`. It is **not** merely a terminal/abort flag check: `this+0xdfd` selects an in-function **skin-switch validation path**, including checks that the UI is still in the *please wait* view, no popup is active, and that the selected skin matches the requested one.
+
+| Code VA | Evidence | Interpretation / limit |
+| --- | --- | --- |
+| `0x122cac–0x122cb4` | `ldrb [r4,#0xdfd]`, branch to `0x122de0` when zero | Validation path runs only when `+0xdfd != 0`; exact field name unknown |
+| `0x122cb8–0x122d04` | Internal calls, diagnostic `Skin switching aborted. No longer in 'please wait' view.` | Validates view before advancing resource handling |
+| `0x122d04–0x122d38` | Internal call on `this+0x20`, diagnostic `Skin switching aborted. Popup active.` | Popup presence can abort switching |
+| `0x122d38–0x122dbc` | `this+0xe00` check, read config ID, compare with `this+0xdfe`; diagnostic `Skin switching aborted. MMI did not switch skin.` | Validates requested/observed skin IDs; do not invent enum values |
+| `0x122dbc–0x122ddc` | Set `this+0xdf4 = 1`, invoke internal `0x69e144` and `0x121830` | Aborted/finished switching path; the earlier label “terminal/abort guard” was incomplete |
+| `0x122de0` | Begins the previously mapped `EarlyTubes` completion checks | Normal resource-processing path |
+
+**Two distinct counters**, both stored in the writable ELF segment and accessed through literal-pool addresses:
+
+| Stage | Literal-pool slot | Global variable | Branch | Counter decrement |
+| --- | --- | --- | --- | --- |
+| `ClusterFull` request | `0x1234e8` | `0xa65b04` | `0x123030–0x12303c` checks positive and branches to `0x123380` | `0x123380–0x123384` |
+| 3D car request | `0x1234fc` | `0xa65b08` | `0x123370–0x12337c` checks positive | `0x123380–0x123384` |
+
+The shared decrement basic block operates on **the pointer currently held in `r3`**, so it decrements the relevant variable in either branch. `ClusterFull` logs `Done waiting -> Requesting Cluster Full` at its zero-counter path (`0x123040` onward). The 3D path logs `3D Car Requested` when its own counter has expired. Neither delay duration nor initialization site is established by these branches alone.
+
+Literal pool also ties GTF2-owned code to precise strings: `0x1234a8` → `0x7c15c0` (please-wait abort), `0x1234ac` → `0x7c15f9` (popup abort), `0x1234b4` → `0x7c161f` (skin mismatch abort), `0x1234f0` → `0x7c1723` (ClusterFull wait completion), `0x123500` → `0x7c1760` (3D request). These are original **virtual addresses**, not file offsets.
+
+**Remaining GTF2-only questions:** find writes/initialization for `0xa65b04` and `0xa65b08`; find the callbacks that cause `this+0xdfd` or resource state to advance; trace the internal `0x121830` transition to understand how aborted skin switching returns to the UI. No dependency-library disassembly is required.

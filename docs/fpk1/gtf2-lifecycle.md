@@ -2404,3 +2404,39 @@ Most of these handlers have literal `batchLock() failed` diagnostics in **`0x88e
 Run `python3 tools/fpk1/research/gtf2/inventory_ipc_handlers.py /path/to/gtf2` to print the exact ELF string addresses. The SPI framing, KSS mode request/response, MFL RTE bridge and working `kss_peer.py` are documented in `docs/fpk1-firmware-research.md` and should not be conflated with the local ASI IPC layer.
 
 **Remaining for a byte-exact IPC emulator:** trace the GTF2-owned ASI registration/vtable dispatch and per-method argument layout; recover the full MFL keycode mapping table and DP-ID mappings for individual `IHmiKss` callbacks; compare against runtime logs. The service and signal inventory above is concrete, but is not yet a byte-level reimplementation of every IPC interface.
+
+### Exact MFL keycode → GTF2 event-ID table recovered
+
+The GTF2-owned mapper **`0x18c82c–0x18c98c`** uses three fixed data tables:
+
+- **`0x7da8a4`**: 36 × `uint32_t` mapping external **keycode 0–35** to internal index **0–16**; index **16** is the invalid sentinel.
+- **`0x7d9d30`**: 16 × `uint8_t` button/rotary classifier; **index 8** is the non-button (rotary) entry.
+- **`0x7da5a8`**: 16 rows × 6 `uint32_t` HMI event IDs, with **`0xffffffff`** as no-event sentinel. The lookup uses event-code positions 1–6. For buttons, event codes **1 and 3** produce the same event ID, **4** generally produces a different one, and **2, 5, 6** are unmapped. Key index **8** is handled by the separate wheel-tick path, not by this matrix.
+
+| Incoming MFL keycode | Internal index | HMI event ID for eventcode 1/3 | HMI event ID for eventcode 4 |
+| ---: | ---: | ---: | ---: |
+| 1 | 1 | 495 | 494 |
+| 2 | 2 | 444 | 441 |
+| 3 | 3 | 439 | 438 |
+| 7 | 9 | 473 | 470 |
+| 8 | 4 | 447 | 446 |
+| 9 | 5 | 465 | 464 |
+| 10 | 6 | 483 | 482 |
+| 11 | 7 | 486 | 485 |
+| 19 | 10 | 498 | 497 |
+| 25 | 11 | 477 | 476 |
+| 28 | 15 | 479 | 478 |
+| 32 | 12 | 468 | 467 |
+| 33 | 13 | 450 | 449 |
+| 35 | 14 | 495 | 494 |
+
+**Keycode 6** maps to **index 8 (rotary)** and is processed via signed ticks for eventcodes in the mapper's accepted range; its six matrix entries are all invalid. **Keycode 0** maps to index 0, whose event matrix entries are all invalid. All other keycodes in **0–35** map to sentinel index 16; values **greater than 35** also take the invalid path. This is the numeric translation only; semantic button labels (OK, BACK, etc.) are **not** assigned without additional proof.
+
+The table is **directly extracted from the original ELF**, not inferred from a list of expected buttons. Reproduce with:
+
+```sh
+python3 tools/fpk1/research/gtf2/decode_mfl_keymap.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x18c82c --stop 0x18c9ac
+```
+
+For a KSS peer or input simulator, this establishes the application-side **keycode/eventcode → HMI event ID** mapping, while the exact KSS-to-`gss_ipc` RTE wire record remains a separate transport question.

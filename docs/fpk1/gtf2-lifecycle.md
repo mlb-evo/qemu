@@ -831,3 +831,61 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 ```
 
 **Next GTF2-only task:** resolve vtable(s) of the receiver object passed as `[caller+0x18]`, and locate the implementations at offsets `+0x4c` and `+0x28`. This should identify how pending DP-ID notifications are consumed without analyzing external libraries.
+
+## View switching owns DP subscription lifecycle: BaseViewManager
+
+**Direct ELF diagnostic and ARM control-flow cross-reference.** The previously unnamed GTF2 routine at **`0x6a91a8`** is anchored by literal-pool strings `BaseViewManager::handleViewSwitch` (pool VA `0x6a9324` → string VA `0x891bbe`), `handleViewSwitch` (`0x6a932c` → `0x891bcf`) and `handleViewSwitch: %p` (`0x6a9330` → `0x891be0`). This **links the 180-slot DP subscription API directly to a GTF2 view-manager operation**, rather than to a generic subscriber of unknown provenance.
+
+### Verified state transitions in `handleViewSwitch`
+
+The function `0x6a91a8–0x6a9320` accepts `r0=this`, `r1` and `r2` as arguments. Its ARM instructions show:
+
+1. `0x6a91dc–0x6a91ec`: invoke `this` virtual method **`+0x58`** with the third input (`r2`), retaining the returned value in `r6`. Compare it against **`this+0x18`** (`0x6a91f0–0x6a91fc`).
+2. If the returned value is null, branch toward `0x6a9310` and clear **`this+0x22`**. If unchanged and `+0x22==0`, return early at `0x6a9318`.
+3. For a changed non-null target, when the **old `this+0x18` is non-null**, call its virtual methods **`+0x2c`** and **`+0x30`** (`0x6a9244–0x6a9280`), then call **`enableSlot` at `0x6a9298`** using the old `this+0x1c` slot index.
+4. `0x6a929c–0x6a92b4`: update the active-view state: **`this+0x18 := r6`** (new view), **`this+0x1c := [r7]`** (new slot ID supplied indirectly by the caller).
+5. `0x6a92b8–0x6a92dc`: invoke virtual method **`+0x54`** on `this` and **`+0x24`** on the new active-view object.
+6. `0x6a92e0–0x6a92f0`: call **`disableAndFlushSlot(0x122338)`** with `r1=this+0x18` (the **new** active-view pointer) and `r2=this+0x1c` (the **new** slot ID).
+7. `0x6a92f4–0x6a930c`: invoke the new view's virtual method **`+0x28`**. Return.
+
+**Crucial ordering correction:** earlier documentation described `+0x18` as a “receiver” and `+0x1c` as a slot ID, which remains correct for this object layout. But the view-switch routine changes both fields **before** calling `disableAndFlushSlot`. Therefore the flush is passed the **new view and new slot ID**, not the old view. Do not infer a simple “unsubscribe old view, subscribe new view” pattern from the helper names alone. The seemingly counterintuitive order may implement a view-switch notification handshake or slot ownership transfer; exact semantics require inspecting the vtable implementations.
+
+The `enableSlot` call at `0x6a9298` occurs on the **old** slot before the new-view fields are assigned. It may preserve pending changes during transition, rather than merely subscribe a new view. The ARM ordering is stronger evidence than conventional method naming.
+
+### Other confirmed ViewManager anchors
+
+A separate GTF2 function around `0x119800` contains direct diagnostics:
+
+- `0x119a48` literal → `0x7bf437`: **`doSwitch(), switching off current view %s before delay for context fade in for popup`**.
+- `0x119a58` literal → `0x7bf41f`: **`ViewManager::justHidden`**.
+
+At `0x119870` it calls `enableSlot` with `[this+0x1c]`; at `0x119890–0x11989c` it clears `this+0x18` and `this+0x1c`. This is another concrete point where view transitions affect the DP slot lifecycle.
+
+### Architecture consequence
+
+```text
+GTF2 kind-2 DP event
+  -> for every active DP slot, accumulate DP ID in ordered set
+GTF2 BaseViewManager::handleViewSwitch [0x6a91a8]
+  -> query requested view via virtual +0x58
+  -> call outgoing view virtual methods
+  -> enable old DP slot
+  -> assign new view pointer and slot ID
+  -> invoke new view lifecycle methods
+  -> flush new slot's pending DP IDs via receiver virtual +0x4c
+  -> invoke new view virtual +0x28
+ViewManager::doSwitch / justHidden [~0x119800]
+  -> another view-transition path enabling and resetting slot state
+```
+
+**Caveats:** the `+0x4c` callback is virtual, so the concrete target varies by view class. The mapping from the 180 numeric slot IDs to actual view names is still unknown. This evidence demonstrates a **direct architectural coupling between DP accumulation and GTF2 view transitions**, not a completed mapping of every dashboard widget.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_view_switch.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6a91a8 --stop 0x6a9324
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x119800 --stop 0x1198b8
+```
+
+No external library implementations were analyzed.

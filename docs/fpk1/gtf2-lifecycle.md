@@ -3252,3 +3252,36 @@ The scene column below is the **root segment of the exact scene node path**, not
 | `TelltaleHMI_Display` | `0x020002d3` | `MV_ClusterFull` | `StatusBar.Laserlight` | `Laserlight` |
 
 This presentation deliberately separates `scene_root`, `node_path`, and `property_name`. For future rows, if the node path or property has not been instruction-verified, use `unknown` rather than inferring a scene from callback names.
+
+### Additional resolved DP: TelltaleHMI_Display field +0x00 → Fernlicht_AUTO
+
+A previously omitted `TelltaleHMI_Display` field `+0x00` is written to DP **`0x020002ce`**. This DP does not appear as a direct literal in the 24-entry event matrix because the HMI dispatcher computes it by subtracting 4 from the `0x020002d2` comparison value:
+
+```asm
+5754e8  ldr r3,[pc,#...]  ; literal 0x020002d2
+5754ec  cmp r8,r3         ; direct 0x020002d2 -> 0x586cd0
+5754f8  sub r3,r3,#4      ; 0x020002ce
+5754fc  cmp r8,r3
+575500  bne 0x58a640
+575504  b   0x586c40     ; 0x020002ce handler
+```
+
+The handler `0x586c40` falls through to `0x586c74` and `0x586ca0`, invoking three separate scene wrappers. The owner-relative offsets are `0x1f5d0`, **`0x1f868`**, and `0x1fb00`. The newly identified `0x1f868` wrapper is configured in the constructor:
+
+- `0x5beef4` → `MV_ClusterFull.StatusBar.Fernlicht_BIG.Fernlicht_AUTO`, assigned by `0x5bf794 → 0x6343d8`.
+- `0x5beef8` → **`Fernlicht_AUTO`**, assigned by `0x5bf7c0 → 0x6343f0`.
+- `0x5bef08` → owner offset `0x1f868`, used in the constructor's store at `0x5bf7d8`; the same offset appears in the HMI handler's literal slot `0x587414`.
+
+| IPC event | Payload field | DP ID | Scene root | Node path within scene | Exact property |
+| --- | --- | --- | --- | --- | --- |
+| `TelltaleHMI_Display` | `+0x00` | `0x020002ce` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht` | `Fernlicht` |
+| `TelltaleHMI_Display` | `+0x00` | `0x020002ce` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht_AUTO` | **`Fernlicht_AUTO`** |
+| `TelltaleHMI_Display` | `+0x00` | `0x020002ce` | `MV_ClusterFull` | `StatusBar.Fernlicht_BIG.Fernlicht_BIG` | `Fernlicht_BIG` |
+
+**Caution:** this is a **computed-dispatch route**, so an inventory that recognizes only direct `LDR literal → CMP → BEQ` misses it. This is a concrete reason to extend the event catalog scanner to arithmetic comparisons. No rendering/animation semantics are inferred from the `AUTO` name.
+
+Verified locally against the original GTF2 ELF:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_fernlicht_auto_property.py /path/to/gtf2
+```

@@ -2797,3 +2797,25 @@ python3 tools/fpk1/research/gtf2/verify_other_ipc_events.py /path/to/gtf2
 ```
 
 **Classification caution:** references in `0x2a0xxx` and `0x59exxx` for other DP IDs are often bulk descriptor initialization (`LDR literal` followed by `STR`), not event consumers. The two paths above are established by **literal comparison → conditional branch → receiver-side effects**, a higher evidence standard than a mere xref.
+
+### Additional IHmiKss event reactions: ACC, odometer and telltales
+
+Three further IPC-fed DP IDs were matched to the **actual HMI event dispatcher** via `LDR literal → CMP event ID → BEQ target` and then traced into receiver code. All three are distinct from the previously traced RPM and Gear_Display paths.
+
+| Incoming callback | Payload-to-DP write | Dispatcher comparison | Matching event target | Verified side effect |
+| --- | --- | --- | --- | --- |
+| `ACC_HMI_Display` | `0x6955f4` → `0x02000297` | `0x57535c–0x575364` (literal `0x575128`) | `0x58644c` | Load receiver from owner-relative slot `0x58555c`, resolve via `0x6218cc`, then call its vtable slot `+0x00` with event arguments; return to common dispatcher `0x597c7c` |
+| `ODO_HMI_Distance` | `0x69710c` → `0x020002c2` | `0x575498–0x5754a0` (literal `0x575144`) | `0x58696c` | Set bit `0x08` in byte `+0x06` of **two** owner-held objects; resolve a **third** receiver via `0x6218cc` and invoke its virtual event method |
+| `TelltaleHMI_Display` | `0x695fbc` → `0x0200021d` | `0x574dcc–0x574dd4` (literal `0x5750f0`) | `0x583ff0` | Resolve receiver via `0x6218cc`, then invoke its virtual event method, passing event kind `2` |
+
+The odometer's first two object slots are read using offsets **`0x4a54c`** and **`0x50834`** (literals `0x5873dc`, `0x5873e0`), and the third via **`0x4a8e4`** (`0x5873e4`). The first two flags are set at `0x586980–0x586988` and `0x586998–0x5869a0`. These are **not** the same `+0xe3` dirty bits used in the RPM example; the role of `+0x06` needs class-specific interpretation.
+
+The ACC and telltale paths use a receiver's **virtual slot `+0x00`** after `0x6218cc`. That is the observed event forwarding operation; its concrete implementation and on-screen effect require vtable resolution. Neither path alone proves a visible ACC icon or telltale lamp changed.
+
+The committed verifier checks **29 exact ARM instruction/literal words** and **three conditional branch targets** against the original extracted GTF2 ELF:
+
+```sh
+python3 tools/fpk1/research/gtf2/verify_acc_odo_telltale_events.py /path/to/gtf2
+```
+
+This brings the independently traced **IPC→DP→HMI event routes to six**: Gear_Display `0x020001f9`, Gear_Display `0x020001f7`, RPM `0x02000295`, ACC `0x02000297`, odometer `0x020002c2`, and telltale `0x0200021d`. These six routes are **examples**, not exhaustive coverage of the 176 DP writes. All three newly added routes are statically verified; no runtime rendering observation is claimed.

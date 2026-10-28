@@ -65,3 +65,26 @@ The entry to this callback branch has now been traced back to the proxy's 180-wa
 Thus **dispatch index 127 → branch 0x43968 → callback slot 28** is statically proven. `r7` comes directly from the second argument of the proxy dispatch function (`r1` at entry). Whether this is the original on-wire IPC selector or a preprocessed ID remains to be established from the caller of `0x40b80`; label it *dispatch index*, not proven wire selector. This is unrelated to log/source constants 122 and 128 found inside the branch.
 
 `0x40720` is a generic shared helper called with multiple payload sizes (including 6 and 20 bytes at other sites), not an identified six-byte decoder. Its entry compares `r1` with `[r0+4]`; later `0x408d8` stores `{r0,r8}` into the receiver, consistent with buffer ownership/update. Avoid treating the six-byte zero-fill as a fixed wire payload layout.
+
+## Dispatch function ABI and preprocessing, verified against original proxy ELF
+
+`0x40b80` is not a simple direct branch stub. Its register/data provenance at entry is:
+
+| PC | ARM operation | Evidence |
+|---|---|---|
+| `0x40b84` | `ldr r10,[r0,#0x18]` | `this+0x18` is a processing/status object |
+| `0x40ba0` | `ldr r6,[r2]` | dereferences the third argument, storing message/context pointer in `r6` |
+| `0x40bc0` | `mov r5,r0` | preserves dispatch object as `r5` |
+| `0x40bcc` | `mov r7,r1` | preserves the **second ABI argument** as dispatch index |
+| `0x40bd0` | `add r1,r6,#4` | prepares message/context bytes for a helper |
+| `0x40bd8` | `bl 0x3fac` | constructs temporary wrapper |
+| `0x40bf4` | `blx r9` | invokes virtual method of `[this+0x18]` object, vtable offset `0x10` (`0x40bd4`) |
+| `0x40c04–0x40c10` | test `[r8+4]` | may leave to common failure handling before the dispatch table |
+| `0x40c90` | `uxth r1,r0` | result of another virtual call is narrowed to 16 bits and passed to `0x3e98`; it is **not** the dispatch index |
+| `0x40c9c–0x40ca0` | `cmp r7,#179`; `addls pc,pc,r7,lsl #2` | dispatch uses unchanged original `r1` argument |
+| `0x40ea4` | `b 0x43968` | index 127 branch |
+| `0x43b3c–0x43b5c` | receiver `[r5+4]`, vtable slot 28 | callback invocation |
+
+**Strong conclusion:** Within `0x40b80`, the dispatch index 127 is **not derived from the payload, status byte, or a decoder return**: it is copied unchanged from the function's incoming `r1` at `0x40bcc`. This narrows the outstanding question to the upstream caller/virtual interface supplying argument `r1`. The third argument (`r2`) supplies a separate pointer-bearing message context. There is no direct `bl 0x40b80` in the proxy's disassembly, consistent with an indirect or externally invoked entrypoint; this absence alone does not prove a particular registration mechanism.
+
+**Important caveat:** the earlier shorthand described `0x40b9c` as `ldr r6,[r2]`; the correct instruction address is `0x40ba0`. `0x40b9c` is `add lr,sp,#7040`.

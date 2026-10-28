@@ -1719,3 +1719,63 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 ```
 
 This is an **exact decoder of a firmware-implemented lookup table**, rather than a heuristic string scan. No proprietary ELF bytes are committed. The next GTF2-owned task is to trace **who requests startup IDs 174/176/177/178** and whether the object provider is invoked before or after the EarlyTubes/ClusterFull KZB gates.
+
+## KZB startup requests are per-view resource preparation, not view activation
+
+A direct reconstruction of the **GTF2-owned** helper **`0x1217c8`** resolves the earlier ambiguity around ID constants in `handleLoadingKZBs`.
+
+```text
+prepareViewResources(this, view_id, resource_batch):
+  provider = 0x25a8f4()                # registered provider singleton
+  view = provider->virtual_0x00(view_id) # 0x25a940 lazy factory
+  if view != NULL:
+      view->virtual_0x88(resource_batch)
+  else:
+      log view_id at debug level (0x121804..0x121824)
+```
+
+The direct call sequence is **`0x1217d4 -> 0x25a8f4`**, virtual `+0x00` at **`0x1217dc–0x1217e4`**, and **view virtual `+0x88`** at **`0x1217f0–0x1217fc`**. This is an **application-owned view resource hook**, not a `ViewManager::handleViewSwitch` call. It can create the ViewData singleton as a side effect of lazy lookup; it does not prove the view was shown.
+
+### Exact startup batches in `handleLoadingKZBs`
+
+| Stage / gate | Direct calls | Meaning |
+| --- | --- | --- |
+| EarlyTubes, `this+0xdf5==0` | `0x122f70`: **174** (`MV_ClusterBlackScreen`); `0x122f80`: **177** (`MV_ClusterEarlyTubes`) | Prepare two views with the **same batch pointer** in `r2`, then enqueue a resource operation at `0x122fdc`; set `+0xdf5=1` at `0x122fec` |
+| ClusterFull, `+0xdf7==0` and `+0xdf6!=0` | `0x123074`: **178** (`MV_EarlyWelcome`); `0x123084`: **99** (`SV_LogoAnimWelcome`); additional popup and warning IDs at `0x123120..0x123248` | Prepare the larger cluster/welcome/warning batch, enqueue at `0x123100` and `0x123258`; set `+0xdf7=1` at `0x12332c` |
+| ClusterFull supplemental ID list | `0x123260–0x123304` | Obtain mode-specific ID array and call the same `0x1217c8` hook for IDs **not excluded by the explicit filter** |
+| 3D car, `+0xdf9==0` and `+0xdf8!=0` | `0x12333c–0x123484` | Wait on signed counter, then enqueue a distinct 3D-related operation and set `+0xdf9=1` |
+
+**Crucial correction:** the presence of `174`, `177`, `178`, `99` in the batch is evidence of **resource-preparation ordering**, not of a rendered screen sequence. The current evidence **does not establish** whether `MV_ClusterBlackScreen` becomes visible before `MV_ClusterEarlyTubes`, or whether `MV_EarlyWelcome` is shown at all.
+
+### Mode-indexed supplemental view lists: 16 entries
+
+The call at **`0x123260`** invokes GTF2 function **`0x69e144(6)`**. Its result is mapped at `0x123268–0x12327c` to **mode 2 if result==0**, **mode 14 if result==256**, or **mode 0 otherwise**. The GTF2 provider method **`0x239a80`** then resolves the selected mode via a **16-pointer table at `0x8169b8`**, with each non-null pointer referencing a zero-terminated array of numeric view IDs. The exact meaning of `0x69e144(6)` and the two modes is **not yet established**; avoid naming them “skin 2/14” without further proof.
+
+A byte-for-byte cross-check of all arrays against the **92-ID object factory** gives:
+
+| Mode(s) | Array length | Supported IDs | Name-only IDs | Missing supported IDs |
+| --- | ---: | ---: | ---: | ---: |
+| **2, 9, 13, 14, 15, 16** | **92** | **92** | **0** | **0** |
+| **1, 4, 5, 10, 12** | **137** | **51** | **86** | **41** |
+| **3** | **24** | **23** | **1** (ID **175**, `MV_ClusterFull_BY`) | **69** |
+| **6, 7, 8, 11** | null pointer | 0 | 0 | 92 |
+
+The six 92-entry arrays are **exactly the same set** as the active lazy factory's 92 supported IDs, without duplicates, though some arrays have different order. The 137-entry arrays reference **86 IDs for which this firmware's factory returns null**, and the 24-entry mode-3 array contains the named but uninstantiable ID **175**. The `0x1217c8` null check makes such unsupported IDs safe to skip when invoked through this hook.
+
+**One important branch constraint:** the supplemental loop excludes **ID 0**, **99**, **147**, **154..171**, **174**, **177** and **178** before invoking the helper (`0x1232a4–0x1232f8`). Thus a mode array is **not** a literal list of all resource-hook invocations: several views are handled explicitly earlier, and unsupported IDs can be ignored by the helper. In particular, **ID 176 (`MV_ClusterFull`) is *not* in the exclusion set** and can reach the resource hook through the mode list.
+
+### Practical implications for QEMU
+
+- **Do not simulate a view switch when the KZB handler calls `0x1217c8`.** Model it as per-view resource preparation.
+- Preserve the gate order **EarlyTubes requested → EarlyTubes handled → ClusterFull requested → ClusterFull handled → 3D request**. The requested/handled flags remain distinct from actual GPU completion.
+- A mode-dependent resource walk can include null-returning IDs; **skip them rather than treating them as fatal**, consistent with `0x1217c8`.
+- To reconstruct **visible** startup order, trace the actual **`ViewManager::handleViewSwitch` / `doSwitch`** entry points and event payloads independently of these resource requests.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/inspect_kzb_view_groups.py /path/to/gtf2
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x1217c8 --stop 0x121830
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x122f28 --stop 0x123110
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x123260 --stop 0x123334
+```

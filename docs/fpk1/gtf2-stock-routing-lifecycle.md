@@ -148,3 +148,20 @@ python3 tools/fpk1/research/gtf2/verify_receiver_vtables.py /path/to/gtf2 --csv
 ```
 
 **Next precise reverse-engineering step:** search ARM indirect call sites loading slot `+0x30` from a wrapper's vtable, follow the call's `r1` producer backward to the scene lookup result, and then find the lifecycle caller. Avoid treating an ordinary function pointer occurrence as proof of invocation or a timestamp.
+
+## Indirect-call search caveat: ARM BLX register is printed as unknown
+
+A new binary-wide inspection of the sectioned GTF2 disassembly found that the installed `llvm-objdump` decodes ARM register-indirect `BLX` instructions (e.g. `e12fff33` = `BLX r3`) as `<unknown>`. Thus, a textual grep for `blx r3` **misses real indirect call sites**. Inspect instruction words directly instead.
+
+A broad scan for `LDR rN,[rM,#0x30]` followed within 12 instructions by `0xe12fff3N` found **1,250 candidate indirect calls** in the whole disassembly. This is *not* a count of calls to receiver binder `0x6218b8`: many unrelated C++ classes have a method in slot `+0x30`. The virtual-table object type and receiver provenance must be proved before attributing any particular call to the binding method.
+
+Representative raw instructions:
+
+```asm
+111564: e5903000    ldr r3,[r0]         ; read object's vtable
+111568: e3a0100a    mov r1,#10
+11156c: e5933030    ldr r3,[r3,#0x30]  ; load virtual slot +0x30
+111570: e12fff33    blx r3             ; objdump labels <unknown>
+```
+
+**Next investigation target:** identify constructor-installed vtable pointers for the 63 wrapper classes, then track call sites operating on objects of those classes. A generic slot-number scan alone cannot establish binder callers or lifecycle timing.

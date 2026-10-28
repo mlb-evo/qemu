@@ -2106,3 +2106,63 @@ python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69c7bc --stop 0x69c974
 python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6ac208 --stop 0x6ac398
 ```
+
+## Upstream record source resolved: 32-byte indexed records and a linked ID chain
+
+Direct disassembly of **`0x69c68c–0x69cbcc`** and **`0x6ac100–0x6ac204`** reveals the data structures supplying the view ID to the conditional setter. This narrows the producer beyond the earlier generic “list/tree” description.
+
+### Indexed record lookup `0x6ac100`
+
+The routine takes `r0=indexed_container`, `r1=record_id` and checks:
+
+1. `record_id != 0` and `container->records_00 != NULL`.
+2. `record_id < container->count_04` (unsigned).
+3. Calculates **`record = records_00 + (record_id << 5)`**, i.e. a **32-byte record stride** (`0x6ac12c–0x6ac130`).
+4. Requires **`record->id_00 == record_id`** (`0x6ac134–0x6ac138`), otherwise logs a mismatch at `0x6ac13c–0x6ac160` and returns null.
+
+The exact ID-indexed record layout confirmed from callers is:
+
+```c
+struct IndexedRecord {           // 32-byte stride, not complete field naming
+    uint32_t id_00;              // self-ID, must match array index
+    uint32_t next_id_04;         // linked-chain successor
+    uint8_t unknown_08[8];
+    uint32_t flags_10;           // gates view-ID read/write and callbacks
+    uint32_t selected_id_14;     // conditional view ID
+    uint32_t callback_18;        // used when flags & 0x40
+    uint32_t callback_1c;        // used when flags & 0x20
+};
+```
+
+The **`next_id_04`** interpretation is directly supported by `0x69c790–0x69c7b8`: the synchronization routine reads **`[record+4]`**, appends that value to a temporary list, and calls **`0x6ac100(container, next_id)`** to walk to the next record. It stops at a zero successor or an invalid lookup.
+
+### Synchronization entry `0x69c68c`
+
+At function entry:
+
+- `r0` points to a small manager record that holds the indexed container at **`[r0]`**.
+- `r1` is a requested starting ID; `r2` and `r3` supply additional context.
+- It reads **`container->selected_id_14`** from the object referenced by **`[r0]`** at **`0x69c6a8–0x69c6b0`**. This is a distinct field from the **individual 32-byte record's `selected_id_14`** and should not be merged into one state variable.
+- At `0x69c77c–0x69c7b8`, it builds an ordered chain of IDs by following `next_id_04`, using `0x6ac100` for every link.
+- At `0x69c884–0x69c8f8`, it resolves a destination record via **`0x6ac100(container, source->next_id_04)`**, then conditionally copies **`source->id_00`** into **`destination->selected_id_14`** via `0x69d810`.
+- The companion path at `0x69c94c–0x69c958` copies another saved chain ID into that same destination field.
+
+Therefore **`selected_id_14` can be the ID of an adjacent/previous chain record**, not necessarily the destination record's own `id_00`. This explains why the base selector reads `selected_id_14` instead of returning the record's self-ID.
+
+### Structural checks and clear paths
+
+`0x6ac184` validates that one ID is reachable from another by repeatedly following **`next_id_04`** through `0x6ac100`; it terminates on null, a matching successor, or an invalid lookup. The separate `0x6ac208` routine traverses record IDs and conditionally resets **`selected_id_14=0`** via the three known `0x69d810` callsites.
+
+The view-selection state is therefore a **validated, ID-indexed, singly linked record graph**, not a flat array of screen IDs or a static switch statement. Its **32-byte record stride** is a useful QEMU inspection target and can be verified against a runtime memory dump without reverse-engineering external libraries.
+
+### Limits and next boundary
+
+The disassembly establishes the **layout and propagation algorithm**, but does **not** establish who initially populates the 32-byte records with IDs **174, 176, 177, 178**. Those numeric IDs are currently proven in the **view factory and KZB resource-preparation calls**, not in this record graph. The next trace is **writes to `IndexedRecord.id_00` and `next_id_04`**, and the caller chain into **`0x69c68c`**.
+
+### Reproduce
+
+```sh
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x6ac100 --stop 0x6ac208
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69c68c --stop 0x69c974
+python3 tools/fpk1/research/gtf2/disassemble_ptload.py /path/to/gtf2 --start 0x69d7b0 --stop 0x69d878
+```

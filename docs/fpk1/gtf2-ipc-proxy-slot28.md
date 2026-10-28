@@ -88,3 +88,24 @@ Thus **dispatch index 127 → branch 0x43968 → callback slot 28** is staticall
 **Strong conclusion:** Within `0x40b80`, the dispatch index 127 is **not derived from the payload, status byte, or a decoder return**: it is copied unchanged from the function's incoming `r1` at `0x40bcc`. This narrows the outstanding question to the upstream caller/virtual interface supplying argument `r1`. The third argument (`r2`) supplies a separate pointer-bearing message context. There is no direct `bl 0x40b80` in the proxy's disassembly, consistent with an indirect or externally invoked entrypoint; this absence alone does not prove a particular registration mechanism.
 
 **Important caveat:** the earlier shorthand described `0x40b9c` as `ldr r6,[r2]`; the correct instruction address is `0x40ba0`. `0x40b9c` is `add lr,sp,#7040`.
+
+## Breakthrough: `0x40b80` is a virtual method in the proxy's own vtable
+
+The original ELF has two `PT_LOAD` segments: RX file offset/vaddr `0`, RW file offset `0x517a4` at virtual address `0x527a4`. Consequently RW virtual address `0x53d74` maps to **file offset `0x52d74`**, where the little-endian word is exactly `0x00040b80`. The ELF dynamic relocation table marks virtual `0x53d74` as `R_ARM_RELATIVE`; the loader will add the shared-object load base.
+
+Adjacent entries (virtual addresses, pre-relocation values):
+
+| Virtual address | Word | Vtable interpretation |
+|---|---|---|
+| `0x53d68` | `0` | plausible Itanium C++ offset-to-top (ABI hypothesis) |
+| `0x53d6c` | `0` | plausible RTTI pointer (ABI hypothesis) |
+| `0x53d70` | `0x3d47c` | virtual slot 0 |
+| **`0x53d74`** | **`0x40b80`** | **virtual slot 1: 180-way IPC dispatcher** |
+| `0x53d78` | `0x3d77c` | virtual slot 2 |
+| `0x53d7c` | `0x3d484` | virtual slot 3 |
+| `0x53d80` | `0x3ff98` | virtual slot 4 |
+| `0x53d84` | `0x3fe94` | virtual slot 5 |
+
+Thus the entrypoint is not merely an unreferenced local function: **the shared library publishes it through a relocatable virtual method table**. A caller can invoke this dispatcher via the object vtable slot 1, which explains why a direct `bl 0x40b80` need not exist. This is a distinct vtable from the *callback receiver* loaded from `[r5+4]` in `0x43b3c`: the `0x53d70` table belongs to the proxy dispatch object; the GTF2 receiver's table remains unverified.
+
+Note: searching for `0x40b80` in file bytes yields offset `0x52d74`; confusing that file offset with ELF virtual address leads to a false conclusion. The relocation at virtual `0x53d74` independently verifies the table entry.

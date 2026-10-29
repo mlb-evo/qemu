@@ -19,6 +19,15 @@ REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c')
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 
 
+def scenario_keys():
+    from research.hmi.assist_scenarios import LABELS
+    selected = os.environ.get('FPK1_PROBE_SCENARIOS')
+    keys = tuple(selected.split(',')) if selected else tuple(LABELS)
+    if any(key not in LABELS for key in keys):
+        raise ValueError('Unknown FPK1_PROBE_SCENARIOS key')
+    return keys
+
+
 def verify(out):
     text = (out / 'console.log').read_text()
     peer_log = (out / 'kss.log').read_text()
@@ -96,6 +105,50 @@ def verify_assist(out):
         raise SystemExit('Some configured assist fields were not observed in HMI input traces')
 
 
+def verify_scenarios(out):
+    """Check guest input traces; does not certify pixels or raw enum meanings."""
+    from research.hmi.assist_catalog import SIGNALS
+    from research.hmi.assist_scenarios import LABELS, scenario
+    text = (out / 'console.log').read_text()
+    peer_log = (out / 'kss.log').read_text()
+    lines = text.splitlines()
+    received = {}
+    for key in scenario_keys():
+        profile = scenario(key)
+        channels = {}
+        for name, values in profile.items():
+            if name == 'ACC_KBI':
+                channels[name] = f'ACC_KBI(incoming data={values.get("available", 0)})' in text
+                continue
+            channels[name] = any(all(
+                (match := re.search(re.escape(field) + r' = (-?\d+)', line))
+                and int(match[1]) == values.get(field, 0) for field, _, _ in SIGNALS[name][2])
+                for line in lines if name + '(incoming data=' in line)
+        from research.hmi.traffic_lights import PROFILES
+        if key in PROFILES:
+            signal, seconds, speed = PROFILES[key]
+            channels.update(
+                available='handleConnectionStateChange(): Traffic light available' in text,
+                synchronized='on_GetAll_StatusAll(): Request FunctionList::Get next' in text,
+                no_sync_error=not any('GSS_BAP_OnlineFunction' in line and 'on_GetAll_Error(' in line
+                                      for line in lines),
+                functions='Supported functions: AIO Info: true, AIO Speed true, AIO Time: true' in text,
+                info=f'AioInfo( Signalstate: {signal},' in text,
+                display=f'writeAioTrafficLight(): Writing traffic light to DP: signalState { {0: 0, 1: 1, 3: 2}[signal]},' in text,
+                time=f'Sending AioTime to Application: time {seconds}, validity {int(bool(seconds))}' in text,
+                speed=f'Sending AioSpeed to Application: speed {speed}, unit 0, validity {int(bool(speed))}' in text)
+        received[key] = dict(queued=bool(re.search(r'\[kss[^\n]*\] Assist scenario: '
+                             + re.escape(key) + r'(?=\n|$)', peer_log)),
+                             channels=channels)
+    report = dict(scenarios=received, scope='Input delivery only; rendering not certified',
+                  passed=all(row['queued'] and all(row['channels'].values())
+                             for row in received.values()))
+    (out / 'scenario-check.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps(report, indent=2), flush=True)
+    if not report['passed']:
+        raise SystemExit('Some scenario inputs were not observed in guest traces')
+
+
 def peer(socket, closures=False, assist=False, scenarios=False):
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     from PySide6.QtCore import QTimer
@@ -111,8 +164,8 @@ def peer(socket, closures=False, assist=False, scenarios=False):
         panel = AssistPanel(kss, report)
         if scenarios:
             from research.hmi.assist_scenarios import LABELS
-            for n, key in enumerate((*LABELS, 'off')):
-                QTimer.singleShot(60000 + n * 6000,
+            for n, key in enumerate((*scenario_keys(), 'off')):
+                QTimer.singleShot(int(os.environ.get('FPK1_PROBE_START', '60')) * 1000 + n * 6000,
                     lambda key=key: panel.scenario.setCurrentIndex(panel.scenario.findData(key)))
         for n, ((name, field), control) in enumerate(panel.controls.items() if not scenarios else ()):
             if name == 'ZPM_HMI_Info':
@@ -172,13 +225,16 @@ def boot(seconds, closures=False, capture=False, assist=False, scenarios=False):
         raw = image[row['offset']:row['offset'] + row['size']].decode()
     config = json.loads('\n'.join(l for l in raw.splitlines() if not l.lstrip().startswith('#')))
     for name, channels in {
-        'gss_ipc': ('GSS_IPC_RteInbound', 'GSS_IPC_HmiKssCommService'),
+        'gss_ipc': ('GSS_IPC_RteInbound', 'GSS_IPC_HmiKssCommService', 'GSS_IPC_BapIpcService', 'GSS_IPC_BapBindings', 'GSS_IPC_BapLogger'),
         'gtf2': ('GSS_APP_KeyHandler', 'GSS_APP_KeyEventConverter', 'GSS_APP_GemHandler',
                  'GSS_HMI_GTF2_GEMKeyInputServiceImpl', 'GSS_APP_CarOutline',
                  'GSS_HMI_Model_CHMIGTFCarOutlineModel', 'GSS_HMI_CHMIGTFCarOutline',
                  'GSS_HMI_CHMIGTFCarOutline_DoorWarning', 'GSS_APP_Warning',
                  'GSS_GTF_ViewManager', 'GSS_APP_ACC', 'GSS_APP_AsgSwa', 'GSS_APP_FAS',
-                 'GSS_HMI_CHMIGTF_FAS'),
+                 'GSS_HMI_CHMIGTF_FAS', 'GSS_APP_AsgNightVision', 'GSS_ASG_NightVision',
+                 'GSS_APP_AsgVza', 'GSS_APP_AsgOnlineFunctions', 'GSS_APP_AioVza',
+                 'GSS_BAP_OnlineFunctionsSD', 'GSS_BAP_OnlineFunctionsSD_DATA',
+                 'GSS_HMI_Model_CHMIGTFAIOVZAModel'),
     }.items():
         client = config['client'][name]
         for levels in (client['levels'], client['backends']['ConsoleBackend']['levels']):
@@ -195,7 +251,10 @@ def boot(seconds, closures=False, capture=False, assist=False, scenarios=False):
 
         def capture_frame(instance, process, elapsed):
             original_capture(instance, process, elapsed)
-            for second in (70, 76, 80, 88, 96, 104, 108, 115, 122):
+            from research.hmi.assist_scenarios import LABELS
+            samples = (tuple(int(os.environ.get('FPK1_PROBE_START', '60')) + 4 + n * 6 for n in range(len(scenario_keys()) + 1)) if scenarios
+                       else (70, 76, 80, 88, 96, 104, 108, 115, 122))
+            for second in samples:
                 target = out / 'frames' / f'at-{second:03d}.ppm'
                 if elapsed >= second and not target.exists():
                     source = instance.directory / 'dc-scanout.ppm'
@@ -227,7 +286,7 @@ def boot(seconds, closures=False, capture=False, assist=False, scenarios=False):
             kss=True, native_display='none', capture_scanout=capture, scanout_interval=1)
         (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         if scenarios:
-            print('Scenario run saved:', out, flush=True)
+            verify_scenarios(out)
         elif assist:
             verify_assist(out)
         else:
@@ -246,11 +305,14 @@ if __name__ == '__main__':
     parser.add_argument('--assist', action='store_true', help='exercise all Driver Assist message controls')
     parser.add_argument('--scenarios', action='store_true', help='exercise coherent assist scenarios via Qt')
     parser.add_argument('--verify', type=Path, help='verify a saved probe run without booting')
-    parser.add_argument('--seconds', type=int, default=110)
+    parser.add_argument('--seconds', type=int, help='run duration; defaults to all scenarios or 110 s')
     args = parser.parse_args()
     if args.verify:
-        (verify_assist if args.assist else (verify_closures if args.closures else verify))(args.verify)
+        (verify_scenarios if args.scenarios else (verify_assist if args.assist else
+            (verify_closures if args.closures else verify)))(args.verify)
     elif args.peer:
         peer(args.peer, args.closures, args.assist, args.scenarios)
     else:
-        boot(args.seconds, args.closures, args.capture, args.assist, args.scenarios)
+        from research.hmi.assist_scenarios import LABELS
+        seconds = args.seconds if args.seconds is not None else (70 + 6 * len(scenario_keys()) if args.scenarios else 110)
+        boot(seconds, args.closures, args.capture, args.assist, args.scenarios)

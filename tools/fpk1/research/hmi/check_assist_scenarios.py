@@ -35,6 +35,33 @@ class Checks(unittest.TestCase):
             self.assertEqual(profile['ACC_HMI_Display']['acc_SetTimeGap_uint8'],
                              profile['ACC_02']['ACC_Gesetzte_Zeitluecke_uint8'])
 
+    def test_extended_requests_and_isolation(self):
+        self.assertEqual(scenario('night_pedestrian')['HMI_C_NightVision_Display']['NV_Symbol_uint8'], 1)
+        self.assertEqual(scenario('night_animal')['HMI_C_NightVision_Display']['NV_Symbol_uint8'], 0)
+        self.assertEqual(scenario('sign_timeout')['VZE_01'], {})
+        self.assertEqual(scenario('sign_warning')['ACC_12']['ACC_Warnung_Verkehrszeichen_1_uint8'], 1)
+        first = scenario('sign_three')
+        first['VZE_01']['VZE_Verkehrszeichen_1_uint8'] = 255
+        self.assertEqual(scenario('sign_three')['VZE_01']['VZE_Verkehrszeichen_1_uint8'], 1)
+        commands = Queue()
+        peer = kss_peer.Kss(lambda text: None, assist_commands=commands)
+        peer.application_running = True
+        with patch('time.monotonic', return_value=10.) as clock:
+            previous = set()
+            from research.hmi.traffic_lights import PROFILES
+            for key in (*(key for key in LABELS if key not in PROFILES), 'off'):
+                commands.put(('@scenario', None, key))
+                peer.tick()
+                actual = dict(messages(peer))
+                profile = scenario(key)
+                expected = {SIGNALS[name][0]: pack(name, profile.get(name, {})) + b'\0'
+                            for name in previous | set(profile)}
+                self.assertEqual(actual, expected, key)
+                while peer.outbox:
+                    peer.delivered(peer.next_frame())
+                clock.return_value += .151
+                previous = set(profile)
+
     def test_one_command_applies_snapshot_and_off_clears_old_channels(self):
         commands = Queue()
         peer = kss_peer.Kss(lambda text: None, assist_commands=commands)
@@ -72,6 +99,12 @@ class Checks(unittest.TestCase):
         self.assertTrue(peer.assist_commands.empty())
         self.assertTrue(window.enables['ACC_HMI_Display'].isChecked())
         self.assertTrue(window.controls['LDW_02', 'LDW_Status_LED_gruen_uint8'].isChecked())
+        from research.hmi.assist_scenarios import description
+        for key in ('sign_three', 'night_pedestrian', 'night_animal', 'traffic_red',
+                    'traffic_green', 'off', 'acc_lane'):
+            window.scenario.setCurrentIndex(window.scenario.findData(key))
+            self.assertEqual(peer.assist_commands.get_nowait(), ('@scenario', None, key))
+            self.assertEqual(window.scenario_detail.text(), description(key))
         window.advanced.setChecked(True)
         self.assertFalse(window.tabs.isHidden())
         peer.stopped = True

@@ -59,7 +59,7 @@
         "channel": {
           "*": "warning",
           "GSS_AUDIO_AudioPlayerApp": "info",
-          "GSS_AUDIO_SoundCharacteristics": "info",
+           "GSS_AUDIO_SoundCharacteristics": "info",
           "GSS_AUDIO_main": "info",
           "FW_COMM_Services": "error"
         }

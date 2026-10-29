@@ -1,4 +1,4 @@
-"""Local persistent Driver Assist RTE inputs; no coding or BAP alteration."""
+"""Local persistent Driver Assist inputs, including the OnlineFunctions fixture."""
 import sys
 sys.dont_write_bytecode = True
 from queue import Empty
@@ -51,6 +51,8 @@ class DriverAssist:
         self.transmit = set()
         self.inflight = None
         self.next_at = 0.
+        from research.hmi.traffic_lights import TrafficLights
+        self.traffic = TrafficLights(peer)
 
     def enabled(self, name):
         return name in self.transmit
@@ -72,8 +74,11 @@ class DriverAssist:
             stream += ipc.l4c_message(data_id, value + b'\0')
             if log:
                 self.peer.log(f'tx RTE Assist {name} id={data_id:#05x} value={value.hex()} status=0')
+        before = len(self.peer.outbox)
         if stream:
             self.peer.queue(ipc.LUN_RTE, 0, stream)
+        self.traffic.send()
+        if len(self.peer.outbox) > before:
             self.inflight = self.peer.outbox[-1]
 
     def tick(self):
@@ -89,11 +94,15 @@ class DriverAssist:
         if name == '@scenario':
             from research.hmi.assist_scenarios import scenario
             profile = scenario(value)
+            queued_before = len(self.peer.outbox)
+            self.traffic.select(value)
             changed = self.transmit | set(profile)
             self.values = {key: dict(profile.get(key, {})) for key in SIGNALS}
             self.transmit = set(profile)
             self.peer.log(f'Assist scenario: {value}')
             self.send([key for key in SIGNALS if key in changed], log=True, force=True)
+            if self.inflight is None and len(self.peer.outbox) > queued_before:
+                self.inflight = self.peer.outbox[-1]
             return
         if field is None:
             if value:

@@ -32,7 +32,7 @@ class AssistPanel(QWidget):
         self.controls, self.enables, self.accepted = {}, {}, {}
         root = QVBoxLayout(self)
         note = QLabel('Выберите сценарий: связанные состояния и команды показа отправятся вместе.\n'
-                      'Сценарий заменяет текущие входы ассистентов; кодировка не меняется.')
+                      'Сценарий заменяет текущие входы; светофор временно включает OnlineFunctions.')
         note.setWordWrap(True)
         root.addWidget(note)
         from research.hmi.assist_scenarios import LABELS
@@ -44,6 +44,12 @@ class AssistPanel(QWidget):
         self.scenario.currentIndexChanged.connect(self.apply_scenario)
         self.last_scenario = 0
         root.addWidget(self.scenario)
+        self.scenario_detail = QLabel('Новые пресеты — запросы индикации; их показ зависит от прошивки и кодировки.')
+        self.scenario_detail.setWordWrap(True)
+        root.addWidget(self.scenario_detail)
+        missing = QLabel('Пока нет видео Night Vision / рамок объектов и отдельной BAP-сессии Side Assist.')
+        missing.setWordWrap(True)
+        root.addWidget(missing)
         self.advanced = QCheckBox('Расширенный режим — отдельные поля')
         root.addWidget(self.advanced)
         self.search = QLineEdit()
@@ -132,7 +138,7 @@ class AssistPanel(QWidget):
                 self.scenario.setCurrentIndex(self.last_scenario)
             self.status.setText('Не удалось поставить сценарий в очередь KSS.')
             return
-        from research.hmi.assist_scenarios import scenario
+        from research.hmi.assist_scenarios import scenario, description
         profile = scenario(key)
         for name, button in self.enables.items():
             enabled = name in profile
@@ -149,6 +155,7 @@ class AssistPanel(QWidget):
                 else:
                     control.setCurrentIndex(control.findData(value))
             self.accepted[name, field] = value
+        self.scenario_detail.setText(description(key))
         self.last_scenario = index
         title = self.scenario.itemText(index)
         self.status.setText('Сценарий поставлен в очередь KSS: ' + title)

@@ -33,7 +33,7 @@ def signal(mask):
     return bytes([mask, 0])
 
 
-def updates(mask):
+def updates(mask, include_warning=True):
     # Local KSS fixture: request the outline while any supported opening is
     # open. gtf2 gates the four door display states on this separate signal.
     # Both updates share one l4c stream/SPI frame, so ACK covers both.
@@ -42,7 +42,7 @@ def updates(mask):
     zpm = b'\0' + warning.to_bytes(2, 'big') + bytes(7)
     return (ipc.l4c_message(DATA_ID, signal(mask) + b'\0') +
             ipc.l4c_message(ACTIVE_ID, bytes([bool(mask), 0])) +
-            ipc.l4c_message(ZPM_INFO_ID, zpm + b'\0'))
+            (ipc.l4c_message(ZPM_INFO_ID, zpm + b'\0') if include_warning else b''))
 
 
 class Closures:
@@ -58,12 +58,15 @@ class Closures:
         if self.inflight is not None:
             return
         payload = signal(self.mask)
-        self.peer.queue(ipc.LUN_RTE, 0, updates(self.mask))
+        assist = getattr(self.peer, 'assist', None)
+        include_warning = not (assist and assist.enabled('ZPM_HMI_Info'))
+        self.peer.queue(ipc.LUN_RTE, 0, updates(self.mask, include_warning=include_warning))
         self.inflight = self.peer.outbox[-1]
         if log:
             self.peer.log(f'tx RTE CarOutline_HMI id=0x010 value={payload.hex()} status=0')
             self.peer.log(f'tx RTE CarOutline_HMI_Active id=0x1c2 value={int(bool(self.mask))} status=0')
-            self.peer.log(f'tx RTE ZPM_HMI_Info id=0x272 WarnID={CAR_OUTLINE_WARN_ID if self.mask else 0:#06x} status=0')
+            if include_warning:
+                self.peer.log(f'tx RTE ZPM_HMI_Info id=0x272 WarnID={CAR_OUTLINE_WARN_ID if self.mask else 0:#06x} status=0')
 
     def delivered(self, frame):
         if self.inflight == frame:

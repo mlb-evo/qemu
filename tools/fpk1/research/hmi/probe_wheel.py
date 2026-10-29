@@ -74,7 +74,29 @@ def verify_closures(out):
         raise SystemExit('Closure changes did not all reach HMI; inspect console.log/kss.log')
 
 
-def peer(socket, closures=False):
+def verify_assist(out):
+    from research.hmi.assist_catalog import SIGNALS
+    text = (out / 'console.log').read_text()
+    received = {}
+    for name, (_, _, fields) in SIGNALS.items():
+        candidates = [line for line in text.splitlines() if name + '(incoming data=' in line]
+        if name == 'ACC_KBI':
+            received[name] = any('ACC_KBI(incoming data=1)' in line for line in candidates)
+            continue
+        expected = {field: (0xa800 if field == 'ZPM_warnID_unit16' else 0)
+                    if name == 'ZPM_HMI_Info' else 1 for field, _, _ in fields}
+        received[name] = any(all(
+            (match := re.search(re.escape(field) + r' = (-?\d+)', line))
+            and int(match[1]) == value for field, value in expected.items()) for line in candidates)
+    report = dict(received=received, checked_fields=sum(len(row[2]) for row in SIGNALS.values()),
+                  passed=all(received.values()))
+    (out / 'assist-check.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps(report, indent=2), flush=True)
+    if not report['passed']:
+        raise SystemExit('Some configured assist fields were not observed in HMI input traces')
+
+
+def peer(socket, closures=False, assist=False, scenarios=False):
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QToolButton
@@ -83,10 +105,36 @@ def peer(socket, closures=False):
     kss = KssPeer(Path(socket))
     kss.line.connect(lambda line: print(line, flush=True))
     report = lambda line: print('UI ' + line, flush=True)
-    panel = ClosurePanel(kss, report) if closures else WheelPanel(kss, report)
+    if assist or scenarios:
+        from research.hmi.assist_ui import AssistPanel
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QSpinBox
+        panel = AssistPanel(kss, report)
+        if scenarios:
+            from research.hmi.assist_scenarios import LABELS
+            for n, key in enumerate((*LABELS, 'off')):
+                QTimer.singleShot(60000 + n * 6000,
+                    lambda key=key: panel.scenario.setCurrentIndex(panel.scenario.findData(key)))
+        for n, ((name, field), control) in enumerate(panel.controls.items() if not scenarios else ()):
+            if name == 'ZPM_HMI_Info':
+                if field != 'ZPM_warnID_unit16':
+                    continue
+                callback = lambda c=control: c.setCurrentIndex(c.findData(0xa800))
+            elif isinstance(control, QCheckBox):
+                callback = lambda c=control: c.setChecked(True)
+            elif isinstance(control, QComboBox):
+                callback = lambda c=control: c.setCurrentIndex(1)
+            else:
+                callback = lambda c=control: c.setValue(1)
+            QTimer.singleShot(20000 + n * 30, callback)
+        for n, button in enumerate(panel.enables.values() if not scenarios else ()):
+            QTimer.singleShot(75000 + n * 1000, button.click)
+    else:
+        panel = ClosurePanel(kss, report) if closures else WheelPanel(kss, report)
     # HMI startup can take over a minute on the host. Repeated equal actions
     # verify that the neutral state prevents gtf2's duplicate suppression.
-    if closures:
+    if assist or scenarios:
+        pass
+    elif closures:
         for n, button in enumerate(panel.buttons.values()):
             QTimer.singleShot(75000 + n * 4000, button.click)
             QTimer.singleShot(77000 + n * 4000, button.click)
@@ -105,13 +153,14 @@ def peer(socket, closures=False):
     app.exec()
 
 
-def boot(seconds, closures=False, capture=False):
+def boot(seconds, closures=False, capture=False, assist=False, scenarios=False):
     from inspect_stage2_catalogs import parse_catalog
     from verify_sifs_partitions import member, parse_table, verify_part
     from configm import DEFAULT_CODING
     import run_stage1_console as console
     build = REPO / 'build_fpk1'
-    out = build / ('research-artifacts/closures' if closures else 'research-artifacts/wheel') / datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    kind = 'assist-scenarios' if scenarios else ('driver-assist' if assist else ('closures' if closures else 'wheel'))
+    out = build / 'research-artifacts' / kind / datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     out.mkdir(parents=True)
     archive = REPO / 'AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip'
     with zipfile.ZipFile(archive) as z:
@@ -128,7 +177,8 @@ def boot(seconds, closures=False, capture=False):
                  'GSS_HMI_GTF2_GEMKeyInputServiceImpl', 'GSS_APP_CarOutline',
                  'GSS_HMI_Model_CHMIGTFCarOutlineModel', 'GSS_HMI_CHMIGTFCarOutline',
                  'GSS_HMI_CHMIGTFCarOutline_DoorWarning', 'GSS_APP_Warning',
-                 'GSS_GTF_ViewManager'),
+                 'GSS_GTF_ViewManager', 'GSS_APP_ACC', 'GSS_APP_AsgSwa', 'GSS_APP_FAS',
+                 'GSS_HMI_CHMIGTF_FAS'),
     }.items():
         client = config['client'][name]
         for levels in (client['levels'], client['backends']['ConsoleBackend']['levels']):
@@ -159,6 +209,10 @@ def boot(seconds, closures=False, capture=False):
             command = [command[0], str(Path(__file__).resolve()), '--peer', command[2]]
             if closures:
                 command += ['--closures']
+            if assist:
+                command += ['--assist']
+            if scenarios:
+                command += ['--scenarios']
         return original(command, *args, **kwargs)
 
     subprocess.Popen = popen
@@ -172,7 +226,12 @@ def boot(seconds, closures=False, capture=False):
             glhost=build / 'bridge/glhost', gl_frames=out / 'frames',
             kss=True, native_display='none', capture_scanout=capture, scanout_interval=1)
         (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
-        (verify_closures if closures else verify)(out)
+        if scenarios:
+            print('Scenario run saved:', out, flush=True)
+        elif assist:
+            verify_assist(out)
+        else:
+            (verify_closures if closures else verify)(out)
     finally:
         subprocess.Popen = original
         if capture:
@@ -184,12 +243,14 @@ if __name__ == '__main__':
     parser.add_argument('--peer')
     parser.add_argument('--closures', action='store_true', help='exercise six closure switches instead of wheel')
     parser.add_argument('--capture', action='store_true', help='retain selected QEMU scanout samples')
+    parser.add_argument('--assist', action='store_true', help='exercise all Driver Assist message controls')
+    parser.add_argument('--scenarios', action='store_true', help='exercise coherent assist scenarios via Qt')
     parser.add_argument('--verify', type=Path, help='verify a saved probe run without booting')
     parser.add_argument('--seconds', type=int, default=110)
     args = parser.parse_args()
     if args.verify:
-        (verify_closures if args.closures else verify)(args.verify)
+        (verify_assist if args.assist else (verify_closures if args.closures else verify))(args.verify)
     elif args.peer:
-        peer(args.peer, args.closures)
+        peer(args.peer, args.closures, args.assist, args.scenarios)
     else:
-        boot(args.seconds, args.closures, args.capture)
+        boot(args.seconds, args.closures, args.capture, args.assist, args.scenarios)

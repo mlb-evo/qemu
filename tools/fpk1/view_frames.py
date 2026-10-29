@@ -32,7 +32,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal, QSignalBlocker
 from PySide6.QtGui import QFontDatabase, QImage
 from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout,
                                QLabel, QPlainTextEdit, QSplitter, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QVBoxLayout, QWidget, QTabWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'mhi2'))
 from viewer_widgets import FrameView, fit_to_screen  # noqa: E402
@@ -88,7 +88,21 @@ class KssPeer(QObject):
         self.log_file = log_path.open('a', buffering=1) if log_path else None
         self.wheel_commands = Queue(maxsize=32)
         self.closure_commands = Queue(maxsize=32)
+        self.assist_commands = Queue(maxsize=128)
         self.stopped = False
+
+    def set_assist(self, name, field, value):
+        from research.hmi.driver_assist import valid_command
+        if self.stopped or not valid_command(name, field, value):
+            return False
+        try:
+            self.assist_commands.put_nowait((name, field, value))
+            return True
+        except Full:
+            return False
+
+    def set_assist_scenario(self, key):
+        return self.set_assist('@scenario', None, key)
 
     def set_closure(self, name, opened):
         from research.hmi.closures import BITS
@@ -121,7 +135,7 @@ class KssPeer(QObject):
         import kss_peer
         try:
             kss_peer.run(self.socket_path, 0.01, self.emit, wheel_commands=self.wheel_commands,
-                         closure_commands=self.closure_commands)
+                         closure_commands=self.closure_commands, assist_commands=self.assist_commands)
         except (OSError, SystemExit) as error:
             self.emit(f'[kss] stopped: {error}')
         finally:
@@ -237,7 +251,10 @@ class Viewer(QWidget):
         middle.addWidget(self.view, 1)
         self.panel = InputPanel(kss, self.keys_status.setText)
         middle.addWidget(self.panel, 0, Qt.AlignVCenter)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        main = QWidget()
+        layout = QVBoxLayout(main)
         if not embedded_name:
             layout.addLayout(top)
         if kss:
@@ -263,6 +280,11 @@ class Viewer(QWidget):
         bottom.addWidget(self.status, 1)
         bottom.addWidget(self.keys_status)
         layout.addLayout(bottom)
+        from research.hmi.assist_ui import AssistPanel
+        self.assist = AssistPanel(kss, self.keys_status.setText)
+        self.tabs.addTab(main, 'Лог и руль')
+        self.tabs.addTab(self.assist, 'Driver assist')
+        outer.addWidget(self.tabs)
         self.stamp = None
         self.timer = None
         if not embedded_name:
@@ -309,7 +331,9 @@ class PeerWindow(QWidget):
         self.setWindowTitle('FPK1 KSS')
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel('Display is shown in the QEMU window.'))
-        middle = QHBoxLayout()
+        self.tabs = QTabWidget()
+        main = QWidget()
+        middle = QHBoxLayout(main)
         self.kss_log = QPlainTextEdit()
         self.kss_log.setReadOnly(True)
         self.kss_log.setMaximumBlockCount(5000)
@@ -319,8 +343,13 @@ class PeerWindow(QWidget):
             kss.line.connect(self.kss_log.appendPlainText)
         middle.addWidget(self.kss_log, 1)
         self.keys_status = QLabel()
-        middle.addWidget(InputPanel(kss, self.keys_status.setText))
-        layout.addLayout(middle, 1)
+        self.panel = InputPanel(kss, self.keys_status.setText)
+        middle.addWidget(self.panel)
+        from research.hmi.assist_ui import AssistPanel
+        self.assist = AssistPanel(kss, self.keys_status.setText)
+        self.tabs.addTab(main, 'Лог и руль')
+        self.tabs.addTab(self.assist, 'Driver assist')
+        layout.addWidget(self.tabs, 1)
         layout.addWidget(self.keys_status)
         self.resize(900, 580)
 

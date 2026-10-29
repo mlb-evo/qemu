@@ -2100,6 +2100,122 @@ disassembly and NvM ROM metadata. `probe_wheel.py --closures --capture
 --seconds 125` additionally retains selected QEMU scanout frames under its
 private output directory.
 
+### Driver Assist input tab (2026-10-29)
+
+The local viewer's **Driver assist** tab exposes all 126 non-reserved
+fields recovered from the following 16 HMI-facing RTE messages. It changes
+operating inputs and warnings, not system-presence coding:
+
+| Message | dataID | Wire bytes | Fields |
+| --- | --- | --- | --- |
+| ACC_KBI | 0x293 | 1 | 1 |
+| TelltaleAALA_Display | 0x29a | 3 | 10 |
+| ACC_HMI_Display | 0x294 | 8 | 17 |
+| ACC_HMI_Ring | 0x433 | 4 | 3 |
+| ACC_02 | 0x06c | 8 | 14 |
+| ACC_12 | 0x257 | 2 | 6 |
+| ACC_14 | 0x259 | 8 | 12 |
+| ACC_13_HMIStatus | 0x39b | 1 | 2 |
+| LDW_02 | 0x0b5 | 2 | 4 |
+| TSK_07 | 0x0c9 | 5 | 9 |
+| HMI_C_NightVision_Parameters | 0x30d | 5 | 4 |
+| HMI_C_NightVision_Display | 0x30c | 2 | 7 |
+| TelltaleHMI_Display | 0x01b | 2 | 12 |
+| VZE_01 | 0x212 | 7 | 14 |
+| VZE_Timeout | 0x3b0 | 1 | 2 |
+| ZPM_HMI_Info | 0x272 | 10 | 9 |
+
+`inspect_driver_assist.py` links original Rte_Read components/elements to
+the l4c callback table, executes each original ARM unpacker and trace
+formatter in Unicorn, and varies each wire bit to recover its numeric-field
+position. `assist_catalog.py` contains the resulting runtime bit mapping;
+the normal viewer needs neither firmware files nor Unicorn/capstone.
+The inspector independently checks the runtime encoder using 544 original
+ARM round trips (minimum, maximum and 32 random complete states per message,
+including signed fields and big-endian words). See private
+`driver-assist/oracle-check.json`; gss_ipc SHA-256 is
+`590e17373caa83f80f3d1965d6ccd9bee50a67b060a88bafeaa2761fa1a1d056`.
+On macOS Unicorn requires execution outside the restrictive sandbox for its
+cache/JIT initialization; these are bounded local firmware functions.
+
+In advanced mode, six nested tabs group ACC, Lane/lamps, cruise/limiter, traffic signs, Night
+Vision and warnings. One-bit fields are toggles, small fields select every
+raw code, and larger/signed fields use bounded numeric controls. No units or
+named mode meanings are invented: ranges include reserved/error encodings
+where semantics are unresolved. Warning selectors expose the 582 nonzero
+WarnIDs from gtf2's original ZPM table at `0xa65be4` (28-byte entries), with
+text/layout IDs rather than unverified translated names. The list includes
+all warning categories, not only assist. Side Assist warnings can use this
+ZPM route; a Side Assist BAP operating-status/settings session is not emulated.
+This is a catalog of the recovered inputs, not a claim to support every
+vehicle-specific assist ECU/protocol or every visual asset variant.
+
+Each message is independently enabled by **Transmit**. Preparing values
+while disabled sends nothing. Enabled values are sent after application run
+and repeated with alive traffic; changes wait for ACK and 150 ms host
+settling time. Larger combined updates use the existing IPC fragmentation.
+Stopping a message retains its last guest state. ZPM is the exception:
+explicit warning input owns that channel while enabled, so the door fixture
+omits its ZPM record; disabling it resumes the door warning on the next
+alive update. This prevents repeated closed-door updates from clearing an
+assist warning. GUI queue rejection restores the last accepted selection.
+
+`check_driver_assist.py` covers wire fixtures, bounds, idle behavior,
+ACK/retry retention, fragmentation, ZPM ownership and real Qt controls.
+`probe_wheel.py --assist --seconds 110` prepares all fields via Qt then
+enables all 16 messages against unmodified firmware executables, saving
+its evidence under `build_fpk1/research-artifacts/driver-assist/`.
+
+Validation: run `driver-assist/20261029-005134` lasted 110 seconds. The real
+Qt controls prepared representative raw states and enabled all 16 messages.
+`probe_wheel.py --assist --verify build_fpk1/research-artifacts/driver-assist/20261029-005134`
+matched all 126 configured fields in `gss_ipc` HMI-input trace lines;
+`assist-check.json` reports `passed: true`. This checks representative input
+delivery, not all combinations, 582 warning renderings, ECU semantics or
+visibility of every gated view. The selected peer/frame/viewer/wheel/closure/
+assist suite passes 34 tests. The separate original-ARM oracle check passes
+544 complete-state round trips. UI preview is saved privately as
+`driver-assist/ui.png`.
+
+### Coherent assist scenarios and main tabs (2026-10-29)
+
+Raw fields are diagnostic inputs, not independent on/off switches for
+complete systems. In particular, original `GSS_APP_FAS::updateAccPopupRequest`
+at `0x1ddd58` tests the time-gap display request and learning-screen state;
+setting an availability or lamp bit alone does not request that view.
+
+`assist_scenarios.py` supplies named local fixtures that consistently populate
+availability, legacy ACC_02 and ACC_HMI_Display values, time gap, vehicle,
+ring and telltale requests, LDW and TSK. These are display experiments, not
+complete ECU behavior models. Numeric speed values are wire encodings:
+the initial capture with ACC raw speed 100 displayed 32 km/h; no physical
+unit claim is made in the scenario labels.
+
+A scenario is one queued command. The KSS thread replaces its assist
+snapshot and sends the related messages together, without the intermediate
+states caused by separate UI commands. Switching scenarios also clears
+messages owned by the previous selection. Off sends neutral values before
+stopping transmission. Coding and door selections are not changed. Manual
+advanced edits mark the selection custom, and GUI state changes only when
+the command was accepted by the queue.
+
+Both the KSS-only and embedded-frame viewers now have **Лог и руль** and
+**Driver assist** tabs in their existing main window. The first keeps the
+log, wheel and closure controls; the second embeds an AssistPanel QWidget.
+There is no separate Driver Assist window. Scenario selection is shown by
+default; **Расширенный режим — отдельные поля** reveals the raw controls.
+Switching tabs preserves inputs and the log keeps receiving background data.
+
+Run `assist-scenarios/20261029-010053` exercised scenarios through Qt for
+130 seconds with scanout captures. The ACC/follow fixture changed the speed
+and vehicle/distance display under the right dial (`frames/at-076.png`);
+the lane fixture changed its line indications (`frames/at-088.png`). Rendered
+glyph/geometry quality remains subject to the existing GLES translation.
+This does not certify the meaning or rendering of every raw state. Local
+scenario checks cover one-command application, clearing on Off, synchronized
+legacy/HMI values, queue rejection, optional advanced mode and both main-tab
+implementations without an additional top-level window.
+
 ## SLINK1 slave model and a host KSS stand-in: gtf2 starts
 
 ### libnvspislave protocol

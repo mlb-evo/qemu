@@ -165,6 +165,32 @@ clears it. The local warning fixture also sends `ZPM_HMI_Info` (0x272),
 WarnID 0xa800 while open and 0 when all closed. It does not select or override
 the cluster design.
 
+The main UI has two tabs: **Лог и руль** (log, wheel and doors) and
+**Driver assist**. Driver assist is embedded in the same window. Choose a
+scenario to apply its related states and transmit them together; no separate
+Transmit steps are needed. Scenarios cover ACC, a vehicle ahead, time gap,
+lane lines, combined ACC/lane, cruise and limiter. **Выключить ассистенты**
+sends neutral states for the previous scenario instead of leaving them latched.
+
+**Расширенный режим — отдельные поля** reveals the existing ACC, Lane/lamps,
+cruise/limiter, signs, Night Vision and warning controls: 126 fields from 16
+recovered RTE inputs. Enable **Transmit** for each message to send
+its selected state immediately and repeat it with KSS alive traffic. Changing
+fields before enabling only prepares the state. Single-bit fields are toggles;
+multibit fields use raw numeric selections, including reserved/error encodings
+whose meanings are not yet recovered. Speed/distance values are raw values,
+without assumed physical units. Unchecking Transmit stops updates and leaves
+the last guest value; change the fields while transmitting to change that value.
+
+Warnings provides all 582 WarnIDs in the original gtf2 database, identified
+by hexadecimal ID and text/layout metadata. This includes the ZPM warning
+route used by Side Assist, but does not emulate its separate BAP operating
+status/settings session. When warning transmission is enabled, the closure
+fixture yields the ZPM channel so it cannot overwrite the selected warning.
+Stopping warning transmission restores the current door-warning fixture.
+These controls leave system-presence coding unchanged; the guest may suppress
+an unavailable system or a view gated by other vehicle conditions.
+
 The output holds `qemu/qemu-system-arm`, the GLES `bridge/` (guest shim and
 `glhost`), `media/emmc.img`, a `venv/` with `lzokay` (sharing system PySide6)
 and `build-manifest.json`. The archive is referenced, not copied; the output

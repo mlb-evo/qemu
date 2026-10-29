@@ -2521,8 +2521,18 @@ artifacts are for local research only, not upstream contributions.
   where the programs compute `a + d*(1-a)`; `6d69eec5eb9bcc01` blends with
   SRC_ALPHA, not premultiplied; `64e5808e3310cc1f` leaves the pixel unchanged
   where the hand version paints red; `994e3f42c55c79e5` premultiplies
-  `vModulate`. Those hand versions still take precedence (`find_shader` runs
-  before the cache).
+  `vModulate`. The binary-derived cache now takes precedence; the historical
+  table is only a fallback for binaries missing from the selected cache.
+
+For local telltale rendering research, collect runtime binaries as well as KZB
+programs before rebuilding the cache. `collect.py` accepts either a run directory
+or a complete `MHI2_GL_CAPTURE` recording. Runtime programs include the atlas
+pair `223fe1d808050136-876` / `6d69eec5eb9bcc01-808`. The old fragment translation
+used source-over with unpremultiplied RGB, painting colored rectangles wherever
+the icon texture had nonzero RGB and zero alpha. The recovered program multiplies
+RGB by alpha before blending. `research/hmi/check_icon_alpha.py` exercises that
+actual fragment binary with alpha 0, 128 and 255 over blue; `--legacy` measures
+the old table for comparison. These remain local debugging experiments.
 
 ### Platform binary container
 

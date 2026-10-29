@@ -813,15 +813,9 @@ static void serve(int cfd)
             uint64_t hash = UINT64_C(14695981039346656037);
             for (unsigned i=0;i<size;i++) hash=(hash^binary[i])*UINT64_C(1099511628211);
             bool matched=false;
-            const struct ShaderTranslation *translation = count == 1 ? find_shader(hash, size) : NULL;
-            if (translation) {
-                GLuint shader=M(u32(p,12));
-                blend->shader[u32(p,12)]=translation->blend;
-                glShaderSource(shader,1,&translation->source,NULL);
-                glCompileShader(shader);check_shader("translated shader",shader,0);
-                matched=true;
-            }
-            if (!matched && count == 1) {
+            /* Prefer the binary-derived local research cache over historical
+             * approximations. Retain the table for builds without a full cache. */
+            if (count == 1) {
                 unsigned mode;
                 char *source = load_firmware_shader(hash, size, &mode);
                 if (source) {
@@ -834,6 +828,15 @@ static void serve(int cfd)
                     free(source);
                     matched = true;
                 }
+            }
+            const struct ShaderTranslation *translation = !matched && count == 1 ?
+                find_shader(hash, size) : NULL;
+            if (translation) {
+                GLuint shader=M(u32(p,12));
+                blend->shader[u32(p,12)]=translation->blend;
+                glShaderSource(shader,1,&translation->source,NULL);
+                glCompileShader(shader);check_shader("translated shader",shader,0);
+                matched=true;
             }
             if (!matched) fprintf(stderr,"UNSUPPORTED NVIDIA shader hash=%016llx\n",(unsigned long long)hash);
 

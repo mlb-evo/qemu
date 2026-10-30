@@ -13,7 +13,7 @@ REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c')
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
-import view_frames
+from ui import viewer as view_frames
 
 
 class Checks(unittest.TestCase):

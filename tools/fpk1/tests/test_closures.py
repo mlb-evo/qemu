@@ -12,7 +12,7 @@ REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c')
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 import gss_ipc_frames as ipc
 import kss_peer
-from research.hmi.closures import CLOSURES, signal, updates
+from hmi.closures import CLOSURES, signal, updates
 
 
 def payload(frame):
@@ -85,7 +85,7 @@ class Checks(unittest.TestCase):
 
     def test_qt_open_close_and_reject_rollback(self):
         from PySide6.QtWidgets import QApplication
-        from view_frames import KssPeer, ClosurePanel
+        from ui.viewer import KssPeer, ClosurePanel
         app = QApplication.instance() or QApplication([])
         peer = KssPeer(Path('/unused'))
         panel = ClosurePanel(peer, lambda line: None)
@@ -108,7 +108,7 @@ class Checks(unittest.TestCase):
         self.assertTrue(all(not b.isEnabled() for b in disabled.buttons.values()))
 
     def test_configuration_and_closures_coexist_at_startup_and_alive(self):
-        from research.hmi.configm import DEFAULT_CODING, all_signals, parse_coding
+        from hmi.configm import DEFAULT_CODING, all_signals, parse_coding
         peer = kss_peer.Kss(lambda text: None, coding=DEFAULT_CODING)
         peer.handle(7, ipc.CID_GSS_STATUS, b'\x01')
         startup = [ipc.parse_frame(frame)[0][2] for frame in peer.outbox]

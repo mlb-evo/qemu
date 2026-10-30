@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 try:
-    import view_frames
+    from ui import viewer as view_frames
 except ImportError:  # PySide6 QtGui/QtWidgets not installed
     view_frames = None
 

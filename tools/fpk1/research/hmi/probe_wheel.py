@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO / 'tools/fpk1'))
 
 
 def scenario_keys():
-    from research.hmi.assist_scenarios import LABELS
+    from hmi.assist_scenarios import LABELS
     selected = os.environ.get('FPK1_PROBE_SCENARIOS')
     keys = tuple(selected.split(',')) if selected else tuple(LABELS)
     if any(key not in LABELS for key in keys):
@@ -84,7 +84,7 @@ def verify_closures(out):
 
 
 def verify_assist(out):
-    from research.hmi.assist_catalog import SIGNALS
+    from hmi.assist_catalog import SIGNALS
     text = (out / 'console.log').read_text()
     received = {}
     for name, (_, _, fields) in SIGNALS.items():
@@ -107,8 +107,8 @@ def verify_assist(out):
 
 def verify_scenarios(out):
     """Check guest input traces; does not certify pixels or raw enum meanings."""
-    from research.hmi.assist_catalog import SIGNALS
-    from research.hmi.assist_scenarios import LABELS, scenario
+    from hmi.assist_catalog import SIGNALS
+    from hmi.assist_scenarios import LABELS, scenario
     text = (out / 'console.log').read_text()
     peer_log = (out / 'kss.log').read_text()
     lines = text.splitlines()
@@ -124,7 +124,7 @@ def verify_scenarios(out):
                 (match := re.search(re.escape(field) + r' = (-?\d+)', line))
                 and int(match[1]) == values.get(field, 0) for field, _, _ in SIGNALS[name][2])
                 for line in lines if name + '(incoming data=' in line)
-        from research.hmi.traffic_lights import PROFILES
+        from hmi.traffic_lights import PROFILES
         if key in PROFILES:
             signal, seconds, speed = PROFILES[key]
             channels.update(
@@ -153,17 +153,17 @@ def peer(socket, closures=False, assist=False, scenarios=False):
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QToolButton
-    from view_frames import KssPeer, WheelPanel, WHEEL_BUTTONS, ClosurePanel
+    from ui.viewer import KssPeer, WheelPanel, WHEEL_BUTTONS, ClosurePanel
     app = QApplication([])
     kss = KssPeer(Path(socket))
     kss.line.connect(lambda line: print(line, flush=True))
     report = lambda line: print('UI ' + line, flush=True)
     if assist or scenarios:
-        from research.hmi.assist_ui import AssistPanel
+        from ui.assist import AssistPanel
         from PySide6.QtWidgets import QCheckBox, QComboBox, QSpinBox
         panel = AssistPanel(kss, report)
         if scenarios:
-            from research.hmi.assist_scenarios import LABELS
+            from hmi.assist_scenarios import LABELS
             for n, key in enumerate((*scenario_keys(), 'off')):
                 QTimer.singleShot(int(os.environ.get('FPK1_PROBE_START', '60')) * 1000 + n * 6000,
                     lambda key=key: panel.scenario.setCurrentIndex(panel.scenario.findData(key)))
@@ -209,7 +209,7 @@ def peer(socket, closures=False, assist=False, scenarios=False):
 def boot(seconds, closures=False, capture=False, assist=False, scenarios=False):
     from inspect_stage2_catalogs import parse_catalog
     from verify_sifs_partitions import member, parse_table, verify_part
-    from configm import DEFAULT_CODING
+    from hmi.configm import DEFAULT_CODING
     import run_stage1_console as console
     build = REPO / 'build_fpk1'
     kind = 'assist-scenarios' if scenarios else ('driver-assist' if assist else ('closures' if closures else 'wheel'))
@@ -246,12 +246,12 @@ def boot(seconds, closures=False, capture=False, assist=False, scenarios=False):
                       MHI2_SHADER_CACHE=str(build / 'research-artifacts/shader-translate/cache'))
     original = subprocess.Popen
     if capture:
-        from research.hmi.capture_scanout import ScanoutCapture
+        from hmi.capture_scanout import ScanoutCapture
         original_capture = ScanoutCapture.capture
 
         def capture_frame(instance, process, elapsed):
             original_capture(instance, process, elapsed)
-            from research.hmi.assist_scenarios import LABELS
+            from hmi.assist_scenarios import LABELS
             samples = (tuple(int(os.environ.get('FPK1_PROBE_START', '60')) + 4 + n * 6 for n in range(len(scenario_keys()) + 1)) if scenarios
                        else (70, 76, 80, 88, 96, 104, 108, 115, 122))
             for second in samples:
@@ -313,6 +313,6 @@ if __name__ == '__main__':
     elif args.peer:
         peer(args.peer, args.closures, args.assist, args.scenarios)
     else:
-        from research.hmi.assist_scenarios import LABELS
+        from hmi.assist_scenarios import LABELS
         seconds = args.seconds if args.seconds is not None else (70 + 6 * len(scenario_keys()) if args.scenarios else 110)
         boot(seconds, args.closures, args.capture, args.assist, args.scenarios)

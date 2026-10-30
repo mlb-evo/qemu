@@ -77,7 +77,7 @@ def scenario(key):
         raise ValueError(f'Unknown assist scenario: {key}')
     if key == 'off':
         return {}
-    from research.hmi.traffic_lights import PROFILES
+    from hmi.traffic_lights import PROFILES
     if key in PROFILES:
         return {}
     if key.startswith('sign_'):

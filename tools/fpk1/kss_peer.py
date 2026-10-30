@@ -19,7 +19,7 @@ knows nothing of KSS's real behaviour beyond those messages.
 
 CarOutline_HMI carries the persistent six-closure state (initially closed),
 sent before application run and repeated with alive traffic. The viewer's
-closure_commands queue updates that state; research/hmi/closures.py records
+closure_commands queue updates that state; hmi/closures.py records
 the original wire bit assignments.
 
 With --coding HEX or FPK1_CODING it sends fourteen ConfigM signals before
@@ -28,7 +28,7 @@ seven signals; the remaining internal coding and startup vehicle identity
 use the original KSS ROM fallback for NvM block 0x39. FPK1_INTERNAL_CODING
 can override that 16-byte block with device-specific hex data. This does not
 reproduce later CAN identity updates or persisted user overrides. The local
-research decoder in research/hmi/configm.py documents the recovered masks.
+runtime decoder in hmi/configm.py documents the recovered masks.
 BAP_DesignChange (0x3cd) is separate: its persisted selected design comes
 from NvM block 0x4b, and this peer does not currently reproduce that state.
 """
@@ -152,7 +152,7 @@ class Kss:
         self.config_signals = []
         coding = coding if coding is not None else os.environ.get('FPK1_CODING')
         if coding is not None:
-            from research.hmi.configm import parse_coding, all_signals
+            from hmi.configm import parse_coding, all_signals
             self.config_signals = list(all_signals(parse_coding(coding)))
             source = 'explicit FPK1_INTERNAL_CODING' if os.environ.get('FPK1_INTERNAL_CODING') is not None else 'ROM fallback for NvM 0x39 (device NvM unavailable)'
             self.log('ConfigM internal source: ' + source)
@@ -167,13 +167,13 @@ class Kss:
         self.application_running = False
         self.assist = None
         if assist_commands is not None:
-            from research.hmi.driver_assist import DriverAssist
+            from hmi.driver_assist import DriverAssist
             self.assist = DriverAssist(self, assist_commands)
-        from research.hmi.closures import Closures
+        from hmi.closures import Closures
         self.closures = Closures(self, closure_commands)
         self.wheel = None
         if wheel_commands is not None:
-            from research.hmi.mfl import WheelInput
+            from hmi.mfl import WheelInput
             self.wheel = WheelInput(self, wheel_commands)
 
     def queue(self, lun, cid, data):

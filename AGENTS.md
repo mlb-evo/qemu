@@ -49,3 +49,13 @@ Store generated/private artifacts under `build_fpk1/research-artifacts/`
 Keep runnable scripts pointed at those separate artifact paths.
 Research remains local and is not intended for upstream contribution; the
 code-provenance policy above continues to apply.
+
+## Local FPK1 UI and runtime layout
+
+Keep Qt interface code under `tools/fpk1/ui/`, shared HMI runtime modules
+under `tools/fpk1/hmi/`, and their regression tests under `tools/fpk1/tests/`.
+Only inspectors, firmware oracle checks and experimental runners belong in
+`tools/fpk1/research/hmi/`. Research may import the UI/runtime; the UI and its
+runtime dependencies must never import research modules or test helpers.
+`tools/fpk1/view_frames.py` remains a compatibility launcher for `ui.viewer`.
+This organization does not change the local-only provenance policy above.

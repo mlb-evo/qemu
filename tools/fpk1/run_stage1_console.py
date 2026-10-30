@@ -95,7 +95,7 @@ def run(archive, qemu, seconds, *, stage2_nor=True, tcg_thread='single', icount_
         native_display = 'sdl'
     capture = None
     if capture_scanout:
-        from research.hmi.capture_scanout import ScanoutCapture
+        from hmi.capture_scanout import ScanoutCapture
         destination = gl_frames or (Path(keep_dir) / 'frames' if keep_dir else None)
         if destination is None:
             raise ValueError('scanout capture needs gl_frames or keep_dir')
@@ -349,7 +349,7 @@ def main():
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
     if args.coding is not None:
-        from research.hmi.configm import parse_coding
+        from hmi.configm import parse_coding
         if not args.kss:
             parser.error('--coding needs --kss')
         try:

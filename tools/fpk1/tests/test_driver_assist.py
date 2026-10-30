@@ -12,8 +12,8 @@ REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c')
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 import gss_ipc_frames as ipc
 import kss_peer
-from research.hmi.driver_assist import pack, valid_command
-from research.hmi.assist_catalog import SIGNALS
+from hmi.driver_assist import pack, valid_command
+from hmi.assist_catalog import SIGNALS
 
 
 def messages(peer):
@@ -88,8 +88,8 @@ class Checks(unittest.TestCase):
 
     def test_real_qt_controls_queue_and_rollback(self):
         from PySide6.QtWidgets import QApplication
-        from view_frames import KssPeer
-        from research.hmi.assist_ui import AssistPanel
+        from ui.viewer import KssPeer
+        from ui.assist import AssistPanel
         app = QApplication.instance() or QApplication([])
         peer = KssPeer(Path('/unused'))
         window = AssistPanel(peer, lambda text: None)

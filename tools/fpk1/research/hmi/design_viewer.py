@@ -7,7 +7,7 @@ from pathlib import Path
 REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c').is_file())
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 import kss_peer
-import view_frames
+from ui import viewer as view_frames
 
 
 def enable_design(design):

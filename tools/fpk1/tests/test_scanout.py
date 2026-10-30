@@ -10,9 +10,9 @@ sys.dont_write_bytecode = True
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c').is_file())
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
-from capture_scanout import ScanoutCapture, assess
+from hmi.capture_scanout import ScanoutCapture, assess
 from PySide6.QtWidgets import QApplication
-import view_frames
+from ui import viewer as view_frames
 
 
 def single_plane():

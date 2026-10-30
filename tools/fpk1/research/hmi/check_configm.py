@@ -9,10 +9,10 @@ import random
 import unittest
 from unittest.mock import patch
 
-from configm import (DEFAULT_CODING, DEFAULT_INTERNAL_CODING, parse_coding,
-                     INTERNAL_LAYOUT, parse_internal, signals, all_signals)
 from configm_oracle import Oracle, REPO
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
+from hmi.configm import (DEFAULT_CODING, DEFAULT_INTERNAL_CODING, parse_coding,
+                     INTERNAL_LAYOUT, parse_internal, signals, all_signals)
 import gss_ipc_frames as ipc
 import kss_peer
 from qnx_elf_disasm import Elf

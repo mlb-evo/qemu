@@ -1982,7 +1982,7 @@ Local research scripts:
 
 - `tools/fpk1/research/hmi/inspect_mfl.py`: reproduces extraction, descriptor
   checks, key tables and disassembly from the original archive (capstone/lzokay).
-- `tools/fpk1/research/hmi/check_wheel.py`: wire fixtures, ACK/pacing/repeat
+- `tools/fpk1/tests/test_wheel.py`: wire fixtures, ACK/pacing/repeat
   checks and real Qt panel routing, using `build_fpk1/venv/bin/python`.
 - `tools/fpk1/research/hmi/probe_wheel.py`: boots the original executables
   with debug tracing and clicks all panel actions, including repeats.
@@ -2039,7 +2039,7 @@ fix below adds CarOutline_HMI_Active and the ZPM CarOutline warning.
 
 Research scripts: `research/hmi/inspect_closures.py` records descriptor and
 disassembly from the original binary extracted by `inspect_mfl.py`;
-`research/hmi/check_closures.py` checks independent bits, combined openings,
+`tests/test_closures.py` checks independent bits, combined openings,
 open/close pacing, pre-start retention, repeating state and Qt rollback.
 `research/hmi/probe_wheel.py --closures --seconds 125` runs the six real Qt
 switches against the firmware, opening/closing each individually then all
@@ -2160,7 +2160,7 @@ omits its ZPM record; disabling it resumes the door warning on the next
 alive update. This prevents repeated closed-door updates from clearing an
 assist warning. GUI queue rejection restores the last accepted selection.
 
-`check_driver_assist.py` covers wire fixtures, bounds, idle behavior,
+`tools/fpk1/tests/test_driver_assist.py` covers wire fixtures, bounds, idle behavior,
 ACK/retry retention, fragmentation, ZPM ownership and real Qt controls.
 `probe_wheel.py --assist --seconds 110` prepares all fields via Qt then
 enables all 16 messages against unmodified firmware executables, saving

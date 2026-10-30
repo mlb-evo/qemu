@@ -1,6 +1,6 @@
 """Q7 0378 long coding -> ConfigM l4c signals, for local research only.
 
-Run: python3 tools/fpk1/research/hmi/configm.py HEX
+Run: PYTHONPATH=tools/fpk1 python3 -m hmi.configm HEX
 Boot: build_fpk1/run.sh --coding HEX
 
 The KSS routine at 0x1086094 reads the 20 raw bytes via 0xc308.

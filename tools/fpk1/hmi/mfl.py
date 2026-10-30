@@ -12,7 +12,8 @@ import gss_ipc_frames as ipc
 
 DATA_ID = 0x1cc
 # Event 1 maps to *_pressed; 2 is ignored by the button converter; 4 is long.
-BUTTONS = {'left': 3, 'right': 2, 'view': 1, 'ok': 7, 'back': 8}
+BUTTONS = {'left': 3, 'right': 2, 'view': 1, 'ok': 7, 'back': 8,
+           'menu': 9, 'side_left': 10, 'side_right': 11}
 ACTIONS = (*BUTTONS, 'up', 'down')
 
 

@@ -144,6 +144,12 @@ IDs and wire values appear in `kss.log`. Internal coding, vehicle type and
 drivetrain need separate KSS data; this option alone does not establish a
 fully configured HMI startup.
 
+The Qt interface lives in `tools/fpk1/ui/`; its inputs, presets and codecs
+live in `tools/fpk1/hmi/`. Neither package imports `research/`. Inspectors and
+firmware experiments live in `tools/fpk1/research/hmi/` and may use the runtime.
+Regression tests live in `tools/fpk1/tests/`. The existing `view_frames.py`
+command remains a thin compatibility launcher for `ui.viewer`.
+
 `run.sh` always opens the viewer. The viewer is also the KSS peer
 (`kss_peer.py` in a thread on the `kss` chardev): its log is shown under the
 frame and saved as `kss.log`. Closing the window stops the KSS link.

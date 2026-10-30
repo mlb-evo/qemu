@@ -13,9 +13,9 @@ os.environ['QT_QPA_PLATFORM'] = 'xcb'
 REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c').is_file())
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 from probe_stage1_startup import qmp, receive
-from research.hmi.embedded_qemu import X11Windows
+from ui.embedded_qemu import X11Windows
 from PySide6.QtWidgets import QApplication, QSplitter, QWidget
-import view_frames
+from ui import viewer as view_frames
 
 
 def main():

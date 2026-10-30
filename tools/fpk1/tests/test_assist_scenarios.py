@@ -11,10 +11,10 @@ from unittest.mock import patch
 REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c').exists())
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 import kss_peer
-from research.hmi.assist_catalog import SIGNALS
-from research.hmi.assist_scenarios import LABELS, scenario
-from research.hmi.driver_assist import pack, valid_command
-from research.hmi.check_driver_assist import messages
+from hmi.assist_catalog import SIGNALS
+from hmi.assist_scenarios import LABELS, scenario
+from hmi.driver_assist import pack, valid_command
+from tests.test_driver_assist import messages
 
 
 class Checks(unittest.TestCase):
@@ -48,7 +48,7 @@ class Checks(unittest.TestCase):
         peer.application_running = True
         with patch('time.monotonic', return_value=10.) as clock:
             previous = set()
-            from research.hmi.traffic_lights import PROFILES
+            from hmi.traffic_lights import PROFILES
             for key in (*(key for key in LABELS if key not in PROFILES), 'off'):
                 commands.put(('@scenario', None, key))
                 peer.tick()
@@ -86,8 +86,8 @@ class Checks(unittest.TestCase):
 
     def test_simple_ui_sends_one_transaction_and_advanced_is_optional(self):
         from PySide6.QtWidgets import QApplication
-        from view_frames import KssPeer
-        from research.hmi.assist_ui import AssistPanel
+        from ui.viewer import KssPeer
+        from ui.assist import AssistPanel
         app = QApplication.instance() or QApplication([])
         peer = KssPeer(Path('/unused'))
         window = AssistPanel(peer, lambda text: None)
@@ -99,7 +99,7 @@ class Checks(unittest.TestCase):
         self.assertTrue(peer.assist_commands.empty())
         self.assertTrue(window.enables['ACC_HMI_Display'].isChecked())
         self.assertTrue(window.controls['LDW_02', 'LDW_Status_LED_gruen_uint8'].isChecked())
-        from research.hmi.assist_scenarios import description
+        from hmi.assist_scenarios import description
         for key in ('sign_three', 'night_pedestrian', 'night_animal', 'traffic_red',
                     'traffic_green', 'off', 'acc_lane'):
             window.scenario.setCurrentIndex(window.scenario.findData(key))
@@ -113,17 +113,18 @@ class Checks(unittest.TestCase):
         self.assertTrue(peer.assist_commands.empty())
         window.close()
 
-    def test_two_main_tabs_keep_log_and_state_without_another_window(self):
+    def test_main_tabs_keep_log_and_state_without_another_window(self):
         from PySide6.QtWidgets import QApplication
-        from view_frames import KssPeer, PeerWindow, Viewer
+        from ui.viewer import KssPeer, PeerWindow, Viewer
         app = QApplication.instance() or QApplication([])
         for make in (lambda peer: PeerWindow(peer),
                      lambda peer: Viewer(Path('/unused.ppm'), Path('/unused'), peer)):
             peer = KssPeer(Path('/unused.sock'))
             window = make(peer)
             self.assertEqual([window.tabs.tabText(i) for i in range(window.tabs.count())],
-                             ['Лог и руль', 'Driver assist'])
+                             ['Лог и руль', 'Driver assist', 'TPMS'])
             self.assertIs(window.tabs.widget(1), window.assist)
+            self.assertIs(window.tabs.widget(2), window.tpms)
             self.assertFalse(window.assist.isWindow())
             self.assertIs(window.assist.window(), window)
             window.tabs.setCurrentIndex(1)

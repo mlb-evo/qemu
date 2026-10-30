@@ -6,8 +6,8 @@ from PySide6.QtCore import Qt, QSignalBlocker
 from PySide6.QtWidgets import (QVBoxLayout, QLabel, QTabWidget, QScrollArea,
                                QWidget, QFormLayout, QCheckBox, QComboBox, QSpinBox,
                                QGroupBox, QLineEdit)
-from research.hmi.assist_catalog import SIGNALS, WARNINGS
-from research.hmi.driver_assist import limits
+from hmi.assist_catalog import SIGNALS, WARNINGS
+from hmi.driver_assist import limits
 
 GROUPS = {
     'ACC': ('ACC_KBI', 'ACC_HMI_Display', 'ACC_HMI_Ring', 'ACC_02', 'ACC_12', 'ACC_14', 'ACC_13_HMIStatus'),
@@ -35,7 +35,7 @@ class AssistPanel(QWidget):
                       'Сценарий заменяет текущие входы; светофор временно включает OnlineFunctions.')
         note.setWordWrap(True)
         root.addWidget(note)
-        from research.hmi.assist_scenarios import LABELS
+        from hmi.assist_scenarios import LABELS
         self.scenario = QComboBox()
         self.scenario.addItem('Выберите сценарий…', None)
         for key, title in LABELS.items():
@@ -138,7 +138,7 @@ class AssistPanel(QWidget):
                 self.scenario.setCurrentIndex(self.last_scenario)
             self.status.setText('Не удалось поставить сценарий в очередь KSS.')
             return
-        from research.hmi.assist_scenarios import scenario, description
+        from hmi.assist_scenarios import scenario, description
         profile = scenario(key)
         for name, button in self.enables.items():
             enabled = name in profile

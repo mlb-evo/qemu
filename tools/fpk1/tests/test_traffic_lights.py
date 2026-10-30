@@ -9,8 +9,8 @@ REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c')
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 import gss_ipc_frames as ipc
 import kss_peer
-from research.hmi.configm import DEFAULT_CODING
-from research.hmi.traffic_lights import status_frames, ONLINE_MASK
+from hmi.configm import DEFAULT_CODING
+from hmi.traffic_lights import status_frames, ONLINE_MASK
 
 
 def records(peer):

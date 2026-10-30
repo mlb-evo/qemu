@@ -176,8 +176,8 @@ def main():
     # Validate the runtime encoder, not merely the extraction algorithm: each
     # random state is packed by the UI's module, unpacked and formatted by the
     # original ARM routines, then compared field by field (including signs).
-    from research.hmi.driver_assist import pack
-    from research.hmi.assist_catalog import SIGNALS
+    from hmi.driver_assist import pack
+    from hmi.assist_catalog import SIGNALS
     rng = random.Random(378)
     checks = 0
     for row in catalog:

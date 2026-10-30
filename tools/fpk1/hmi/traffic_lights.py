@@ -7,7 +7,6 @@ The fixture temporarily enables only Config_BAP_Strecke bit 14 (coding bit
 """
 import sys
 sys.dont_write_bytecode = True
-import gss_ipc_frames as ipc
 
 LUN, CAN_CID, MASK_CID = 6, 28, 17
 FSG, ONLINE_MASK = 0x2a, 1 << 22
@@ -22,9 +21,9 @@ PROFILES = {
 }
 
 
-def status_frames(function, data, opcode=4):
+def status_frames(function, data, opcode=4, *, fsg=FSG):
     """BAP CAN Status (opcode 4), including BAP's own segmentation."""
-    header = bytes([(opcode << 4) | (FSG >> 2), ((FSG & 3) << 6) | function])
+    header = bytes([(opcode << 4) | (fsg >> 2), ((fsg & 3) << 6) | function])
     if len(data) <= 6:
         return (header + data,)
     # Start frame length counts property data, excluding both BAP headers.
@@ -39,34 +38,16 @@ class TrafficLights:
     def __init__(self, peer):
         self.peer = peer
         self.profile = None
-        self.original_config = None
+        from hmi.bap_availability import availability
+        self.availability = availability(peer)
         peer.reassembler = TrafficReceiver(peer.reassembler, self)
 
     def select(self, key):
         profile = PROFILES.get(key)
-        if profile and self.original_config is None:
-            self.original_config = list(self.peer.config_signals)
-            found = False
-            updated = []
-            for name, data_id, payload in self.original_config:
-                if data_id == 0x12c:
-                    payload = (int.from_bytes(payload, 'little') | (1 << 14)).to_bytes(2, 'little')
-                    found = True
-                updated.append((name, data_id, payload))
-            if not found:
-                updated.append(('BAPStrecke', 0x12c, (1 << 14).to_bytes(2, 'little')))
-            self.peer.config_signals = updated
-            self.peer.queue_config(log=True)
-        if not profile and self.original_config is not None:
-            # Clear visible traffic data before restoring system availability.
+        if not profile and self.profile is not None:
             self.profile = (0, 0, 0)
             self.send()
-            self.peer.queue(LUN, MASK_CID, bytes(4))
-            if not any(data_id == 0x12c for _, data_id, _ in self.original_config):
-                self.peer.queue(*ipc.rte_signal(0x12c, bytes(2)))
-            self.peer.config_signals = self.original_config
-            self.original_config = None
-            self.peer.queue_config(log=True)
+        self.availability.select('traffic', 14, ONLINE_MASK, profile is not None)
         self.profile = profile
 
     def properties(self):
@@ -107,7 +88,7 @@ class TrafficLights:
     def send(self):
         if self.profile is None:
             return
-        self.peer.queue(LUN, MASK_CID, ONLINE_MASK.to_bytes(4, 'little'))
+        self.availability.send()
         # Respond to initialization requests through TrafficReceiver; periodic
         # CAN display inputs do not restart BAP_Config/GetAll synchronization.
         values = self.properties()

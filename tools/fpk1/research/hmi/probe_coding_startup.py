@@ -15,7 +15,7 @@ import zipfile
 
 REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c').is_file())
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
-from configm import (DEFAULT_CODING, DEFAULT_INTERNAL_CODING, parse_coding,
+from hmi.configm import (DEFAULT_CODING, DEFAULT_INTERNAL_CODING, parse_coding,
                      parse_internal, all_signals)
 from inspect_stage2_catalogs import parse_catalog
 from verify_sifs_partitions import member, parse_table, verify_part

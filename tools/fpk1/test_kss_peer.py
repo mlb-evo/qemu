@@ -2,7 +2,7 @@ import unittest
 
 import gss_ipc_frames as ipc
 import kss_peer
-from research.hmi.closures import updates as closure_updates
+from hmi.closures import updates as closure_updates
 
 
 class FakeSocket:

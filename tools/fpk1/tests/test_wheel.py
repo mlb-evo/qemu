@@ -12,7 +12,7 @@ REPO = next(p for p in Path(__file__).resolve().parents if (p / 'hw/arm/fpk1.c')
 sys.path.insert(0, str(REPO / 'tools/fpk1'))
 import gss_ipc_frames as ipc
 import kss_peer
-from research.hmi import mfl
+from hmi import mfl
 
 
 class WheelTests(unittest.TestCase):
@@ -21,6 +21,9 @@ class WheelTests(unittest.TestCase):
         self.assertEqual(mfl.signal(3, 4, 8, 2, 1, 5), bytes.fromhex('24510308'))
         self.assertEqual(mfl.pulse('up')[0], bytes.fromhex('01000600'))
         self.assertEqual(mfl.pulse('down')[0], bytes.fromhex('0f000600'))
+        self.assertEqual(mfl.pulse('menu')[0], bytes.fromhex('01000900'))
+        self.assertEqual(mfl.pulse('side_left')[0], bytes.fromhex('01000a00'))
+        self.assertEqual(mfl.pulse('side_right')[0], bytes.fromhex('01000b00'))
         for action in mfl.ACTIONS:
             self.assertEqual(mfl.pulse(action)[-1], bytes(4))
 
@@ -60,7 +63,7 @@ class WheelTests(unittest.TestCase):
         self.assertIn('not acknowledged', logs[-1])
 
     def test_qt_buttons_enqueue_kss_actions_without_serial(self):
-        import view_frames
+        from ui import viewer as view_frames
         from PySide6.QtWidgets import QApplication, QToolButton
         app = QApplication.instance() or QApplication([])
         peer = view_frames.KssPeer(Path('/unused'))

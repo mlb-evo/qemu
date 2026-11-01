@@ -26,6 +26,7 @@ from hmi.configm import DEFAULT_CODING
 from hmi.assist_scenarios import LABELS, scenario
 from hmi.driver_assist import pack
 from hmi.tpms import preset
+from hmi.navigation import preset as navigation_preset
 from ui.viewer import KssPeer, PeerWindow, Viewer
 import view_frames
 assert view_frames.Viewer is Viewer
@@ -36,6 +37,7 @@ for key in LABELS:
         pack(name, values)
 peer.assist.traffic.select('traffic_red')
 peer.assist.tpms.select(preset('values_30'))
+peer.assist.navigation.select(navigation_preset('normal'))
 peer.assist.send()
 assert peer.outbox
 app = QApplication([])

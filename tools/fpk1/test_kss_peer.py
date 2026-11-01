@@ -119,5 +119,42 @@ class KssTests(unittest.TestCase):
         self.assertEqual(kss.outbox, pending)
         self.assertTrue(kss.run_pending)
 
+
+    def test_run_request_waits_for_ack_and_delay(self):
+        from unittest.mock import patch
+        kss = kss_peer.Kss(lambda text: None)
+        with patch.object(kss_peer.time, 'monotonic', return_value=100.0):
+            kss.handle(7, ipc.CID_GSS_STATUS, b'\x01')
+            self.assertTrue(kss.run_pending)
+            self.assertIsNone(kss.run_request_at)
+            # A lost/NACKed SPI transfer must not advance the startup state.
+            first = kss.next_frame()
+            kss.tick()
+            self.assertEqual(kss.next_frame(), first)
+            kss.delivered(first)
+            self.assertTrue(kss.run_pending)
+            kss.tick()
+            self.assertEqual(len(kss.outbox), 1)
+            kss.delivered(kss.next_frame())
+            self.assertFalse(kss.run_pending)
+            self.assertAlmostEqual(kss.run_request_at, 100.0 + kss.RUN_REQUEST_DELAY)
+        with patch.object(kss_peer.time, 'monotonic', return_value=100.1):
+            kss.tick()
+            self.assertEqual(kss.outbox, [])
+        with patch.object(kss_peer.time, 'monotonic', return_value=100.3):
+            kss.tick()
+            self.assertEqual(len(kss.outbox), 1)
+            lun, cid, payload, last = ipc.parse_frame(kss.next_frame())[0]
+            self.assertEqual((lun, cid, payload[:2], last),
+                             (7, ipc.CID_GSS_MODE_REQUEST, b'\x01\x02', True))
+
+    def test_ready_status_retransmission_does_not_duplicate_startup(self):
+        kss = kss_peer.Kss(lambda text: None)
+        ready = ipc.build_frame([(7, ipc.CID_GSS_STATUS, b'\x01', True)])
+        kss.receive(ready)
+        before = list(kss.outbox)
+        kss.receive(ready)
+        self.assertEqual(kss.outbox, before)
+
 if __name__ == '__main__':
     unittest.main()

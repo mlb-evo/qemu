@@ -4,7 +4,7 @@ sys.dont_write_bytecode = True
 from copy import deepcopy
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QComboBox, QSpinBox,
-                               QPushButton, QHBoxLayout, QFormLayout)
+                               QPushButton, QHBoxLayout, QFormLayout, QCheckBox)
 from hmi.navigation import DEFAULT, PRESETS, preset
 
 
@@ -30,6 +30,10 @@ class NavigationPanel(QWidget):
         self.operation.setRange(0, 255)
         self.operation.valueChanged.connect(self.edit)
         form.addRow('FSG_OperationState — код (0 = рабочий режим)', self.operation)
+        self.carplay = QCheckBox('Пункт CarPlay в «Map display» (SupportedMapViews бит 3, патч au736_evo)')
+        self.carplay.setChecked(True)
+        self.carplay.toggled.connect(self.edit)
+        form.addRow(self.carplay)
         root.addLayout(form)
         buttons = QHBoxLayout()
         self.apply = QPushButton('Активировать навигацию')
@@ -44,7 +48,7 @@ class NavigationPanel(QWidget):
         self.presets.currentIndexChanged.connect(self.select_preset)
         self.apply.clicked.connect(lambda: self.submit(self.values()))
         self.stop.clicked.connect(self.select_off)
-        for control in (self.presets, self.operation, self.apply, self.stop):
+        for control in (self.presets, self.operation, self.carplay, self.apply, self.stop):
             control.setEnabled(peer is not None)
 
     def edit(self, *_):
@@ -53,11 +57,13 @@ class NavigationPanel(QWidget):
         self.status.setText('Значения изменены. Нажмите «Активировать навигацию».')
 
     def load(self, profile):
-        with QSignalBlocker(self.operation):
+        with QSignalBlocker(self.operation), QSignalBlocker(self.carplay):
             self.operation.setValue(profile['operation'])
+            self.carplay.setChecked(bool(profile['map_views'] & 8))
 
     def values(self):
-        return dict(DEFAULT, operation=self.operation.value())
+        return dict(DEFAULT, operation=self.operation.value(),
+                    map_views=DEFAULT['map_views'] if self.carplay.isChecked() else DEFAULT['map_views'] & ~8)
 
     def select_preset(self, index):
         key = self.presets.itemData(index)

@@ -90,6 +90,9 @@ class Checks(unittest.TestCase):
         nav = peer.assist.navigation
         nav.select(preset('normal'))
         self.assertEqual(nav.state[0x2c][2] & 8, 8)
+        nav.select(preset('no_carplay'))
+        self.assertEqual(nav.state[0x2c][2], 7)
+        nav.select(preset('normal'))
         peer.outbox.clear()
         # Patched gtf2: segmented MapViewAndOrientation SetGet with MapView 3,
         # then Map_Presentation SetGet with stage bit 0 and CarPlay bit 1.
@@ -123,6 +126,12 @@ class Checks(unittest.TestCase):
         panel.presets.setCurrentIndex(panel.presets.findData('operation_2'))
         self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, preset('operation_2')))
         self.assertEqual(panel.operation.value(), 2)
+        panel.carplay.setChecked(False)
+        panel.apply.click()
+        self.assertEqual(peer.assist_commands.get_nowait()[2], dict(preset('operation_2'), map_views=7))
+        panel.presets.setCurrentIndex(panel.presets.findData('normal'))
+        self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, preset('normal')))
+        self.assertTrue(panel.carplay.isChecked())
         panel.stop.click()
         self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, None))
         peer.stopped = True

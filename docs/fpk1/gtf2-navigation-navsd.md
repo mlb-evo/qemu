@@ -232,50 +232,60 @@ Details of the generated code (static unless marked):
   `Standard\0Google Earth\0<traffic>\0<orientation>\0<orientation>` (English
   `Traffic`, German `Verkehr`); they have no absolute references either.
 
-### 6.3 CarPlay experiment: Traffic item reused (verified)
+### 6.3 CarPlay experiment: a fourth item (verified)
 
-A real fourth item would need a second copy of the generated item code with
-new member offsets, a larger ViewData, new `processDPEvent` branches, a guard,
-a statechart event and a `handleMessage` case (estimated several days, high
-risk). The experiment instead reuses the third item. The patch itself lives
-in the firmware-modification repository `au736_evo` (patch
-`carplay_map_display`, `scripts/patch_gtf2.py` → `build/patched/bin/gtf2`,
-described in its `docs/gtf2-carplay-map-display.md`); this checkout only
-runs it. It checks every original byte and changes:
+The au736_evo repository (patch `carplay_map_display`, library
+`libau736_evo_hmi.so`, documented in its `docs/gtf2-carplay-map-display.md`)
+adds a fourth item **CarPlay** after Standard, Google Earth and Traffic; this
+checkout only runs it. Selecting it sends SetGet **MapView 3** and sets
+Map_Presentation **bit 1**; the stock items keep MapView 0/1/2. Firmware facts
+it relies on (static, then exercised in the runs below):
 
-| VA | Change |
-| --- | --- |
-| `0x7d1afc` | sendMapDisplay table entry 3: MapView 2 → 3 |
-| `0x17659c` | `ubfx r1, r4, #2, #1` → `#3`: DP `0x4000071` follows SupportedMapViews bit 3 |
-| `0x178d68`, `0x178dd8` | receive bound `cmp r3, #3` and table `[2, 1, 0, 3]` |
-| `0x176e14` | the "before setting bits" trace becomes: ASG_HMI_State bit 1 = (`+0x98d` MapView == 3) |
-| `0x177388` | sendMapDisplay calls a trampoline: startNextMORequest, then sendStageInfo |
-| `0x804164` | table and trampoline, in the unreferenced string `Nav_Submenu_MapDisplay_StandardMap_visible` (R+X segment) |
-| 28 strings | traffic label → `CarPlay` (`CPlay` where the slot has fewer than 7 bytes) |
+- Code loading: gtf2 has no `dlopen` import, but `libc.so.3` (Stage1 image)
+  exports `dlopen` `0x44e64` / `dlsym` `0x4604c`; gtf2 binds lazily (the
+  `snprintf` GOT slot `0xa653ec` holds PLT0 `0x10d77c` until the first call).
+  `/mnt/persist_fpk` is mounted before `construct` runs at boot (≈7 s).
+- The DP-name/TID string span `0x806fea..0x807cad` has no references and lies
+  in the R+X text segment; the last bss page past `p_memsz` (`0xe8b9e8`) is
+  unused.
+- ViewData: static object `0xd52360`, constructor `0x2c6fe8` (base `0x6a9e84`,
+  vtable `0x846a78`, `0x146380(this + 8)`, then 51 one-argument member
+  constructors). `construct` stores the tree at its end: Menu `+0x4788`, items
+  appended in order, Traffic item `+0x4784`, its LayoutContainer `+0x4778`,
+  GlassPlate `+0x4798`. `appendChild` `0x14460c` (`"[%s] appendChild(%s)"`)
+  re-parents a node. A second ViewData built the same way constructs cleanly,
+  and its Traffic item moved into the stock Menu is laid out and focused as a
+  fourth item.
+- Item widget `+0x3b5c`: `0x62a1c4(widget, event)` stores the pressed event at
+  `+0x128`; Standard/Google Earth/Traffic use events 124/123/125
+  (`eEventIdAPPOUT_Nav_Submenu_MapDisplay_*_pressed`, name getter jump table
+  `0x751da0`). The generic press handler reads it at `0x6d3db4` and posts it
+  via `0x6d3a50`.
+- Labels are bound to string DPs `0x6400644..646` (TIDs `0xB055..0xB057`, pairs
+  in the language table `0x22d944..0x22e014`) and read by
+  `CHMIGTFLabel::text` `0x6aec84` (vtable slot `0x892ee8`). The datapool
+  refuses writes to unknown DP IDs (`dp_write_string` `0x69e76c` returned 2)
+  and to `0x400007e` (a list reference, `dp_write_int` returned 3).
+- Radio "checked" functors (vtables `0x880d68`/`0x881050`/`0x880d08`) evaluate
+  `0x4000066 == k` and set the state with `0x650f58`.
 
-`probe_navigation.py --gtf2 ../au736_evo/build/patched/bin/gtf2` substitutes
-`bin/gtf2`. Run `20261101-212234` (fixture SupportedMapViews `0x0f`; right ×3,
-Menu R, ▼, OK, ▼ ▼, OK; same gtf2 bytes as the au736_evo output) shows
-(verified):
+Runs (`probe_navigation.py --gtf2 ../au736_evo/build/patched/bin/gtf2
+--persist ../au736_evo/build/patched/persist`, fixture SupportedMapViews
+`0x0f`), run `20261101-224337`:
 
-- The submenu lists *Standard, Google Earth, CarPlay*; ▼ ▼ focuses CarPlay
-  (`key-frames/at-138.png`, `at-154.png`).
-- OK logs `eSID_APPOUT_Nav_Submenu_MapDisplay_Verkehr_pressed`,
-  `sendMapDisplay mapView=3`, `[MapViewAndOrientation::SetGet] MapView=0x3`,
-  and at once `sendStageInfo(): ASG_HMI_State after setting bits = 3`
-  (stage bit 0 + CarPlay bit 1). kss.log: `rx … function=0x36 data=03`,
-  `rx … function=0x2c data=03000000010000`,
-  `tx BAP NavSD CarPlay selected (MapView=3, Map_Presentation=0x03)`.
-- The Status echo logs `onUpdateMapViewAndOrientation mapView 3`.
-  Map_Presentation SetGet stays at one per OperationState Status (about 1/s,
-  as before); the Status handler compares only bit 0 with the stage, so the
-  new bit causes no extra requests.
-- Not verified: that the CarPlay radio button is drawn checked after
-  reopening the submenu (the submenu closes after OK, as in stock).
+- the submenu lists *Standard, Google Earth, Traffic, CarPlay*; ▼ ▼ ▼ focuses
+  CarPlay;
+- OK: `[MapViewAndOrientation::SetGet] MapView=0x3`, Status echo
+  `onUpdateMapViewAndOrientation mapView 4`, `sendStageInfo(): ASG_HMI_State
+  after setting bits = 3`; kss.log `tx BAP NavSD CarPlay selected (MapView=3,
+  Map_Presentation=0x03)`; Map_Presentation SetGet stays at ≈1/s;
+- the submenu closes to Options; OK reopens it with the CarPlay radio checked;
+- Traffic still sends MapView 2 (run `20261101-223810`);
+- profile `no_carplay` (SupportedMapViews `0x07`) hides the item (run
+  `20261101-224754`).
 
-Loss: the Traffic map view (MapView 2) cannot be selected; a Status with
-MapView 2 now checks no item. With the stock GTF2 the fixture's extra
-SupportedMapViews bit 3 is ignored.
+Earlier the same patch only reused the Traffic item (label and table
+changes); that variant was dropped because it removed Traffic.
 
 ### 6.4 Path to the head unit (static / inferred, not implemented)
 
@@ -329,6 +339,7 @@ FSG, not data from the FSG:
   black in every mode. Any real map/CarPlay content needs that path first.
 - Route guidance (RG_Status, maneuvers, distances, lists) is not implemented
   by the fixture; "Stop route guidance" stays hidden.
-- Selecting a Map display item was verified only with the CarPlay patch
-  (section 6.3); the fixture answers Set/SetGet by updating the writable
-  fields only and logs MapView and the Map_Presentation CarPlay bit.
+- Selecting a Map display item was verified only for CarPlay and Traffic
+  with the au736_evo patch (section 6.3); the fixture answers Set/SetGet by
+  updating the writable fields only and logs MapView and the Map_Presentation
+  CarPlay bit. Profile `no_carplay` advertises SupportedMapViews `0x07`.

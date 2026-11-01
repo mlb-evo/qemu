@@ -37,7 +37,26 @@ def peer(socket):
     kss_peer.run(socket, .01, assist_commands=commands, wheel_commands=wheel)
 
 
-def boot(seconds, experiment, gtf2=None):
+def persist_emmc(build, directory, out):
+    """Copy of the eMMC whose persist_fpk volume holds DIRECTORY as au736_evo/."""
+    import create_fpk1_emmc
+    layout = json.loads((build / 'media/emmc.json').read_text())
+    row = next(p for p in layout['partitions'] if p['label'] == 'persist_fpk')
+    work = out / 'persist'
+    shutil.copytree(directory, work / 'blank/au736_evo')
+    volume = create_fpk1_emmc.blank_volume(work, row['sectors'] * 512)
+    image = out / 'emmc.img'
+    if subprocess.run(['cp', '-c', str(build / 'media/emmc.img'), str(image)],
+                      stderr=subprocess.DEVNULL).returncode != 0:
+        shutil.copyfile(build / 'media/emmc.img', image)
+    with image.open('r+b') as stream:
+        stream.seek(row['start_sector'] * 512)
+        stream.write(volume)
+    shutil.rmtree(work)
+    return image
+
+
+def boot(seconds, experiment, gtf2=None, persist=None):
     import run_stage1_console as console
     from hmi.configm import DEFAULT_CODING
     build = REPO / 'build_fpk1'
@@ -83,10 +102,15 @@ def boot(seconds, experiment, gtf2=None):
                           gtf2_sha256=hashlib.sha256(overrides['bin/gtf2']).hexdigest())
         if (gtf2.parent / 'patch.json').exists():
             shutil.copyfile(gtf2.parent / 'patch.json', out / 'patch.json')
+    emmc = build / 'media/emmc.img'
+    if persist:
+        emmc = persist_emmc(build, persist, out)
+        experiment = dict(experiment, persist=str(persist.resolve()),
+                          persist_files=sorted(str(p.relative_to(persist)) for p in persist.rglob('*')))
     (out / 'experiment.json').write_text(json.dumps(experiment, indent=2) + '\n')
     try:
         result = console.run(REPO / 'AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip',
-            build / 'qemu/qemu-system-arm', seconds, tcg_thread='multi', emmc=build / 'media/emmc.img',
+            build / 'qemu/qemu-system-arm', seconds, tcg_thread='multi', emmc=emmc,
             keep_dir=out, cmdline=console.BOARD_CMDLINE,
             replacements={'config/tracing.json': tracing, **overrides, **{
                 'lib/' + name: (build / 'bridge' / name).read_bytes() for name in ('libEGL.so', 'libGLESv2.so')}},
@@ -107,9 +131,11 @@ if __name__ == '__main__':
     parser.add_argument('--actions', default='90:right,98:right,106:right,116:side_right,124:down,132:down',
                         help='comma-separated SECONDS:WHEEL_ACTION presses')
     parser.add_argument('--gtf2', type=Path, help='Private experiment executable override (bin/gtf2)')
+    parser.add_argument('--persist', type=Path,
+                        help='directory copied to /mnt/persist_fpk/au736_evo/ on a run-local eMMC copy')
     args = parser.parse_args()
     if args.peer:
         peer(args.peer)
     else:
         actions = [(float(t), a) for t, a in (item.split(':') for item in args.actions.split(','))]
-        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, actions=actions), args.gtf2)
+        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, actions=actions), args.gtf2, args.persist)

@@ -12,10 +12,10 @@ The side menu (Menu R) entries are DPs written by setMapDisplayAvailable
 MapViewAndOrientation/MapColorAndType/MapScale in the FunctionList (0x179644)
 and SupportedMapViews outside {0, 1, 2, 4} and SupportedMapTypes != 0.
 
-CarPlay experiment (au736_evo patch carplay_map_display): a patched gtf2
-turns the third Map display item into "CarPlay", sends MapViewAndOrientation
-SetGet MapView 3 and sets Map_Presentation (ASG_HMI_State) bit 1 while
-MapView 3 is requested. Stock gtf2 only reads
+CarPlay experiment (au736_evo patch carplay_map_display): a patched gtf2 adds
+a fourth Map display item "CarPlay", shown while SupportedMapViews bit 3 is
+set; it sends MapViewAndOrientation SetGet MapView 3 and sets Map_Presentation
+(ASG_HMI_State) bit 1 while MapView 3 is requested. Stock gtf2 only reads
 SupportedMapViews bits 0..2, so advertising bit 3 is harmless there.
 """
 import sys
@@ -48,10 +48,12 @@ CARPLAY_VIEW, CARPLAY_BIT = 3, 2
 WRITABLE = {0x24: (0,), 0x2b: (0, 1, 2), 0x2c: (0, 1, 4, 5, 6), 0x2d: (1, 2), 0x36: (0,)}
 # GSS descriptor type 0xf (byte sequence): GetAll carries a uint16 length.
 SEQUENCES = {0x2c}
-DEFAULT = dict(operation=0)
+# map_views: SupportedMapViews; bit 3 shows the au736_evo CarPlay item.
+DEFAULT = dict(operation=0, map_views=0x0f)
 PRESETS = {
     'off': ('Навигация выключена', None),
     'normal': ('Навигация активна (OperationState 0)', DEFAULT),
+    'no_carplay': ('Навигация активна, без CarPlay (SupportedMapViews 0x07)', dict(DEFAULT, map_views=0x07)),
 }
 for code in range(1, 16):
     PRESETS[f'operation_{code}'] = (f'OperationState = {code}', dict(DEFAULT, operation=code))
@@ -97,6 +99,12 @@ class Navigation:
             raise ValueError('Invalid navigation profile')
         self.profile = deepcopy(profile)
         self.state = dict(MAP)
+        if profile is not None:
+            views = bytearray(self.state[0x2c])
+            views[2] = profile['map_views']
+            self.state[0x2c] = bytes(views)
+            # Status for a running cluster; ignored before BAP_Config.
+            self.reply(0x2c, self.state[0x2c])
         self.carplay = None
         self.availability.select('navigation', CONFIG_BIT, MASK, profile is not None, key=CONFIG_KEY)
 

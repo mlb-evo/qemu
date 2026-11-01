@@ -1,6 +1,9 @@
 """Shared local BAP coding/mask ownership for independent display fixtures."""
 import gss_ipc_frames as ipc
 
+# ConfigM messages a fixture may extend: l4c dataID -> (name, wire bytes).
+CONFIG = {0x127: ('Driverassist_Media', 3), 0x12c: ('BAPStrecke', 2)}
+
 
 class Availability:
     def __init__(self, peer):
@@ -11,14 +14,15 @@ class Availability:
     @property
     def mask(self):
         result = 0
-        for _, mask in self.owners.values():
+        for _, mask, _ in self.owners.values():
             result |= mask
         return result
 
-    def select(self, owner, bit, mask, enabled):
+    def select(self, owner, bit, mask, enabled, key=0x12c):
+        """Own `bit` of ConfigM message `key` (BAPStrecke by default) and `mask`."""
         before = dict(self.owners)
         if enabled:
-            self.owners[owner] = (bit, mask)
+            self.owners[owner] = (bit, mask, key)
         else:
             self.owners.pop(owner, None)
         if before == self.owners:
@@ -26,16 +30,18 @@ class Availability:
         if self.original is None:
             self.original = list(self.peer.config_signals)
         updated = list(self.original)
-        bits = sum(1 << value[0] for value in self.owners.values())
-        found = False
-        for i, (name, key, payload) in enumerate(updated):
-            if key == 0x12c:
-                found = True
-                updated[i] = (name, key, (int.from_bytes(payload, 'little') | bits).to_bytes(2, 'little'))
-        if not found and bits:
-            updated.append(('BAPStrecke', 0x12c, bits.to_bytes(2, 'little')))
-        if not found and not bits:
-            self.peer.queue(*ipc.rte_signal(0x12c, bytes(2)))
+        for data_id in sorted({value[2] for value in before.values()} | {value[2] for value in self.owners.values()}):
+            name, size = CONFIG[data_id]
+            bits = sum(1 << value[0] for value in self.owners.values() if value[2] == data_id)
+            found = False
+            for i, (signal, current, payload) in enumerate(updated):
+                if current == data_id:
+                    found = True
+                    updated[i] = (signal, current, (int.from_bytes(payload, 'little') | bits).to_bytes(size, 'little'))
+            if not found and bits:
+                updated.append((name, data_id, bits.to_bytes(size, 'little')))
+            if not found and not bits:
+                self.peer.queue(*ipc.rte_signal(data_id, bytes(size)))
         self.peer.config_signals = updated
         self.peer.queue_config(log=True)
         self.send()

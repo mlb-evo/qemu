@@ -31,6 +31,9 @@ def valid_command(name, field, value):
     if name == '@tpms' and field is None:
         from hmi.tpms import valid_profile
         return valid_profile(value)
+    if name == '@navigation' and field is None:
+        from hmi.navigation import valid_profile
+        return valid_profile(value)
     if name == '@scenario' and field is None:
         from hmi.assist_scenarios import LABELS
         return isinstance(value, str) and value in LABELS
@@ -58,6 +61,8 @@ class DriverAssist:
         self.traffic = TrafficLights(peer)
         from hmi.tpms import Tpms
         self.tpms = Tpms(peer)
+        from hmi.navigation import Navigation
+        self.navigation = Navigation(peer)
 
     def enabled(self, name):
         return name in self.transmit
@@ -91,6 +96,7 @@ class DriverAssist:
             self.peer.queue(ipc.LUN_RTE, 0, stream)
         self.traffic.send()
         self.tpms.send()
+        self.navigation.send()
         if len(self.peer.outbox) > before:
             self.inflight = self.peer.outbox[-1]
 
@@ -109,6 +115,14 @@ class DriverAssist:
             self.tpms.select(value)
             self.peer.log(f'TPMS profile: {value}')
             self.send(['TelltaleHMI_Display'], log=True, force=True)
+            if self.inflight is None and len(self.peer.outbox) > queued_before:
+                self.inflight = self.peer.outbox[-1]
+            return
+        if name == '@navigation':
+            queued_before = len(self.peer.outbox)
+            self.navigation.select(value)
+            self.peer.log(f'Navigation profile: {value}')
+            self.navigation.send()
             if self.inflight is None and len(self.peer.outbox) > queued_before:
                 self.inflight = self.peer.outbox[-1]
             return

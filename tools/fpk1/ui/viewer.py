@@ -290,6 +290,9 @@ class Viewer(QWidget):
         from ui.tpms import TpmsPanel
         self.tpms = TpmsPanel(kss, self.keys_status.setText)
         self.tabs.addTab(self.tpms, 'TPMS')
+        from ui.navigation import NavigationPanel
+        self.navigation = NavigationPanel(kss, self.keys_status.setText)
+        self.tabs.addTab(self.navigation, 'Navigation')
         outer.addWidget(self.tabs)
         self.stamp = None
         self.timer = None
@@ -358,6 +361,9 @@ class PeerWindow(QWidget):
         from ui.tpms import TpmsPanel
         self.tpms = TpmsPanel(kss, self.keys_status.setText)
         self.tabs.addTab(self.tpms, 'TPMS')
+        from ui.navigation import NavigationPanel
+        self.navigation = NavigationPanel(kss, self.keys_status.setText)
+        self.tabs.addTab(self.navigation, 'Navigation')
         layout.addWidget(self.tabs, 1)
         layout.addWidget(self.keys_status)
         self.resize(900, 580)

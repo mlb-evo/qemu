@@ -7,6 +7,7 @@ import sys
 sys.dont_write_bytecode = True
 import argparse
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,7 +37,7 @@ def peer(socket):
     kss_peer.run(socket, .01, assist_commands=commands, wheel_commands=wheel)
 
 
-def boot(seconds, experiment):
+def boot(seconds, experiment, gtf2=None):
     import run_stage1_console as console
     from hmi.configm import DEFAULT_CODING
     build = REPO / 'build_fpk1'
@@ -75,12 +76,19 @@ def boot(seconds, experiment):
         return original(command, *args, **kwargs)
     subprocess.Popen = popen
     print(out, flush=True)
+    overrides = {}
+    if gtf2:
+        overrides['bin/gtf2'] = gtf2.read_bytes()
+        experiment = dict(experiment, gtf2_override=str(gtf2.resolve()),
+                          gtf2_sha256=hashlib.sha256(overrides['bin/gtf2']).hexdigest())
+        if (gtf2.parent / 'patch.json').exists():
+            shutil.copyfile(gtf2.parent / 'patch.json', out / 'patch.json')
     (out / 'experiment.json').write_text(json.dumps(experiment, indent=2) + '\n')
     try:
         result = console.run(REPO / 'AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip',
             build / 'qemu/qemu-system-arm', seconds, tcg_thread='multi', emmc=build / 'media/emmc.img',
             keep_dir=out, cmdline=console.BOARD_CMDLINE,
-            replacements={'config/tracing.json': tracing, **{
+            replacements={'config/tracing.json': tracing, **overrides, **{
                 'lib/' + name: (build / 'bridge' / name).read_bytes() for name in ('libEGL.so', 'libGLESv2.so')}},
             glhost=build / 'bridge/glhost', gl_frames=out / 'frames', kss=True,
             native_display='none', capture_scanout=True, scanout_interval=2)
@@ -98,9 +106,10 @@ if __name__ == '__main__':
     parser.add_argument('--enable-at', type=float, default=15)
     parser.add_argument('--actions', default='90:right,98:right,106:right,116:side_right,124:down,132:down',
                         help='comma-separated SECONDS:WHEEL_ACTION presses')
+    parser.add_argument('--gtf2', type=Path, help='Private experiment executable override (bin/gtf2)')
     args = parser.parse_args()
     if args.peer:
         peer(args.peer)
     else:
         actions = [(float(t), a) for t, a in (item.split(':') for item in args.actions.split(','))]
-        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, actions=actions))
+        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, actions=actions), args.gtf2)

@@ -4908,3 +4908,9 @@ Type 7 (`0x189d44`) invokes `0x18930c(owner,0)` if the flag is set. Type 11 (`0x
 ## IPC proxy slot 28 — direct ARM evidence (2026-10-28)
 
 Verified the original Stage2.1 `lib/factories/libgssIpcRteHmiProxy.so` (SHA-256 `188d610c523cbdd1b81ab89420e5fb1042753faeeb7edf9914ae595a449f33a2`). The proxy contains two code paths loading vtable offset `0x70` (slot 28): `0x43b58` followed by `blx r3` at `0x43b5c`, and `0x1ed40` branching to shared `blx r3` at `0x1c9b0`. Their argument registers differ; the same slot offset does not establish the same dynamic receiver type. In the first path `0x43a00–0x43a2c` allocates and initializes a six-byte region, but its on-wire serialization and selector are not yet proven. Full evidence and caveats: [proxy slot 28](gtf2-ipc-proxy-slot28.md); [mapping CSV](gtf2-ipc-selector-callback-evidence.csv). These are static findings only, not QEMU observations.
+
+## Navigation (NavigationSD BAP) — see separate note
+
+Navigation availability, the Menu R map options menu, map type/colour/display
+encodings and Map_Presentation are documented in
+[gtf2-navigation-navsd.md](gtf2-navigation-navsd.md) (2026-11-01).

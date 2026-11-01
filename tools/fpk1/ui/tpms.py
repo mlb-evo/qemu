@@ -18,7 +18,7 @@ class TpmsPanel(QWidget):
         root = QVBoxLayout(self)
         note = QLabel('TPMS / RDK — давление, температура и состояния четырёх колёс.\n'
                       'Поля содержат коды BAP: при единицах 0 давление = код / 10 bar, температура = код − 60 °C. '
-                      'Открыть экран: вкладка автомобиля (заправка) → Меню L → Sport displays → OK. '
+                      'Открыть экран кнопками руля на первой вкладке: вкладка автомобиля (заправка) → Меню L → Sport displays → OK. '
                       'Затем меняйте пресеты. Коды состояний пока не расшифрованы.')
         note.setWordWrap(True)
         root.addWidget(note)
@@ -27,15 +27,6 @@ class TpmsPanel(QWidget):
         for key, (title, _) in PRESETS.items():
             self.presets.addItem(title, key)
         root.addWidget(self.presets)
-        navigation = QHBoxLayout()
-        for title, action in (('◀ раздел', 'left'), ('▶ раздел', 'right'),
-                              ('Меню L', 'side_left'), ('Меню R', 'side_right'),
-                              ('▲', 'up'), ('▼', 'down'), ('OK', 'ok'), ('Назад', 'back')):
-            button = QPushButton(title)
-            button.setEnabled(peer is not None)
-            button.clicked.connect(lambda _=False, action=action: self.wheel(action))
-            navigation.addWidget(button)
-        root.addLayout(navigation)
         page = QWidget()
         grid = QGridLayout(page)
         grid.setAlignment(Qt.AlignTop)
@@ -78,12 +69,6 @@ class TpmsPanel(QWidget):
         self.stop.clicked.connect(lambda: self.select_off())
         for control in (self.presets, self.apply, self.stop, self.lamp, *self.controls.values()):
             control.setEnabled(peer is not None)
-
-    def wheel(self, action):
-        if self.peer and self.peer.send_wheel(action):
-            self.status.setText('Кнопка руля поставлена в очередь: ' + action)
-        else:
-            self.status.setText('Не удалось отправить кнопку руля: KSS остановлен или очередь заполнена.')
 
     def spin(self, key, index, maximum):
         control = QSpinBox()

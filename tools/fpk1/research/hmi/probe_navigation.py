@@ -1,7 +1,7 @@
 """Local NavigationSD guest trace probe. Generated files stay in private artifacts.
 
-Boots the cluster, enables the navigation fixture, then steps through the
-cluster sections with the wheel's right key so scanout frames show each view.
+Boots the cluster, enables the navigation fixture, then presses the scheduled
+wheel keys (default: three sections right to the map, then Menu R and down).
 """
 import sys
 sys.dont_write_bytecode = True
@@ -31,8 +31,8 @@ def peer(socket):
     experiment = json.loads(os.environ['FPK1_NAV_EXPERIMENT'])
     if experiment['profile'] != 'none':
         schedule(experiment['enable_at'], commands, ('@navigation', None, preset(experiment['profile'])))
-    for n in range(experiment['steps']):
-        schedule(experiment['first_step'] + n * experiment['step_every'], wheel, experiment['key'])
+    for second, action in experiment['actions']:
+        schedule(second, wheel, action)
     kss_peer.run(socket, .01, assist_commands=commands, wheel_commands=wheel)
 
 
@@ -96,13 +96,11 @@ if __name__ == '__main__':
     parser.add_argument('--seconds', type=int, default=150)
     parser.add_argument('--profile', default='normal', help="hmi.navigation preset key, or 'none'")
     parser.add_argument('--enable-at', type=float, default=15)
-    parser.add_argument('--key', default='right', help='wheel action used to step views')
-    parser.add_argument('--first-step', type=float, default=90)
-    parser.add_argument('--step-every', type=float, default=8)
-    parser.add_argument('--steps', type=int, default=6)
+    parser.add_argument('--actions', default='90:right,98:right,106:right,116:side_right,124:down,132:down',
+                        help='comma-separated SECONDS:WHEEL_ACTION presses')
     args = parser.parse_args()
     if args.peer:
         peer(args.peer)
     else:
-        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, key=args.key,
-                                first_step=args.first_step, step_every=args.step_every, steps=args.steps))
+        actions = [(float(t), a) for t, a in (item.split(':') for item in args.actions.split(','))]
+        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, actions=actions))

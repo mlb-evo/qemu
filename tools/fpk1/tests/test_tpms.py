@@ -124,8 +124,6 @@ class Checks(unittest.TestCase):
         peer = KssPeer(Path('/unused'))
         panel = TpmsPanel(peer, lambda _: None)
         self.assertTrue(peer.assist_commands.empty())
-        panel.wheel('side_left')
-        self.assertEqual(peer.wheel_commands.get_nowait(), 'side_left')
         panel.presets.setCurrentIndex(panel.presets.findData('lamp_on'))
         self.assertEqual(peer.assist_commands.get_nowait(), ('@tpms', None, preset('lamp_on')))
         panel.controls['pressure', 0].setValue(18)

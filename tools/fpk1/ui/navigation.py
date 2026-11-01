@@ -16,7 +16,8 @@ class NavigationPanel(QWidget):
         root = QVBoxLayout(self)
         note = QLabel('Navigation / BAP NavSD (FSG 0x32). Активация включает бит 14 '
                       'ConfigM Driverassist_Media (BAP_NAVIGATION_ACTIVE, бит кодировки 87) '
-                      'и отвечает gtf2 от имени блока навигации. Карта по LVDS не эмулируется.')
+                      'и отвечает gtf2 от имени блока навигации, включая настройки карты (Menu R на первой вкладке). '
+                      'Карта по LVDS не эмулируется.')
         note.setWordWrap(True)
         root.addWidget(note)
         self.presets = QComboBox()
@@ -30,14 +31,6 @@ class NavigationPanel(QWidget):
         self.operation.valueChanged.connect(self.edit)
         form.addRow('FSG_OperationState — код (0 = рабочий режим)', self.operation)
         root.addLayout(form)
-        wheel = QHBoxLayout()
-        for title, action in (('◀ раздел', 'left'), ('▶ раздел', 'right'), ('VIEW', 'view'),
-                              ('▲', 'up'), ('▼', 'down'), ('OK', 'ok'), ('Назад', 'back')):
-            button = QPushButton(title)
-            button.setEnabled(peer is not None)
-            button.clicked.connect(lambda _=False, action=action: self.wheel(action))
-            wheel.addWidget(button)
-        root.addLayout(wheel)
         buttons = QHBoxLayout()
         self.apply = QPushButton('Активировать навигацию')
         self.stop = QPushButton('Выключить навигацию')
@@ -53,12 +46,6 @@ class NavigationPanel(QWidget):
         self.stop.clicked.connect(self.select_off)
         for control in (self.presets, self.operation, self.apply, self.stop):
             control.setEnabled(peer is not None)
-
-    def wheel(self, action):
-        if self.peer and self.peer.send_wheel(action):
-            self.status.setText('Кнопка руля поставлена в очередь: ' + action)
-        else:
-            self.status.setText('Не удалось отправить кнопку руля: KSS остановлен или очередь заполнена.')
 
     def edit(self, *_):
         with QSignalBlocker(self.presets):

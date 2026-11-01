@@ -56,10 +56,29 @@ class Checks(unittest.TestCase):
         for cid, request in ((6, '1c81'), (5, '1c82'), (5, '1c8f')):
             peer.receive(ipc.build_frame([(6, cid, bytes.fromhex(request), True)]))
         replies = records(peer)
-        self.assertEqual(nav.get_all(), bytes.fromhex('030032000404') + bytes.fromhex('3801000000000000') + b'\0\3')
-        self.assertIn((6, 6, bytes.fromhex('80103c8103003200')), replies)
+        self.assertEqual(nav.get_all(), bytes.fromhex(
+            '030032000404' '38014000081c0200' '00' '03' '00' '01' '0000003f'
+            '0700' '00000700000000' '000000000007' '00'))
+        self.assertIn((6, 6, bytes.fromhex('80263c8103003200')), replies)
         self.assertIn((6, 5, bytes.fromhex('4c82030032000404')), replies)
         self.assertIn((6, 5, bytes.fromhex('4c8f03')), replies)
+        peer.outbox.clear()
+        # Unsegmented SetGet of the leading MapColorAndType field, then the
+        # original segmented MapViewAndOrientation SetGet, whose Reserve
+        # bytes must not clear SupportedMapViews.
+        frames = (('2cab02',), ('80072cac00000000', 'c0010000'))
+        for request in frames:
+            for frame in request:
+                peer.receive(ipc.build_frame([(6, 5, bytes.fromhex(frame), True)]))
+        replies = records(peer)
+        self.assertIn((6, 5, bytes.fromhex('4cab0200003f')), replies)
+        self.assertIn((6, 5, bytes.fromhex('80074cac00000700')), replies)
+        self.assertIn((6, 5, bytes.fromhex('c0010000')), replies)
+        self.assertEqual(nav.state[0x2c], bytes([0, 0, 7, 0, 1, 0, 0]))
+        peer.outbox.clear()
+        for request in ('2cab0000000000', '2c81', '0cf700'):
+            peer.receive(ipc.build_frame([(6, 5, bytes.fromhex(request), True)]))
+        self.assertFalse(peer.outbox)
         nav.select(None)
         peer.outbox.clear()
         peer.receive(ipc.build_frame([(6, 5, bytes.fromhex('1c8f'), True)]))
@@ -73,8 +92,6 @@ class Checks(unittest.TestCase):
         self.__class__.app = QApplication.instance() or QApplication([])
         peer = KssPeer(Path('/unused'))
         panel = NavigationPanel(peer, lambda _: None)
-        panel.wheel('right')
-        self.assertEqual(peer.wheel_commands.get_nowait(), 'right')
         panel.apply.click()
         self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, preset('normal')))
         panel.presets.setCurrentIndex(panel.presets.findData('operation_2'))

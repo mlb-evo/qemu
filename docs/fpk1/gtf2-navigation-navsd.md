@@ -237,10 +237,11 @@ Details of the generated code (static unless marked):
 A real fourth item would need a second copy of the generated item code with
 new member offsets, a larger ViewData, new `processDPEvent` branches, a guard,
 a statechart event and a `handleMessage` case (estimated several days, high
-risk). The experiment instead reuses the third item.
-`tools/fpk1/research/hmi/patch_navigation_carplay.py` writes a patched copy
-(`build_fpk1/research-artifacts/navigation/<run>/gtf2` plus `patch.json`) and
-checks every original byte:
+risk). The experiment instead reuses the third item. The patch itself lives
+in the firmware-modification repository `au736_evo` (patch
+`carplay_map_display`, `scripts/patch_gtf2.py` → `build/patched/bin/gtf2`,
+described in its `docs/gtf2-carplay-map-display.md`); this checkout only
+runs it. It checks every original byte and changes:
 
 | VA | Change |
 | --- | --- |
@@ -252,9 +253,10 @@ checks every original byte:
 | `0x804164` | table and trampoline, in the unreferenced string `Nav_Submenu_MapDisplay_StandardMap_visible` (R+X segment) |
 | 28 strings | traffic label → `CarPlay` (`CPlay` where the slot has fewer than 7 bytes) |
 
-`probe_navigation.py --gtf2 <patched gtf2>` substitutes `bin/gtf2`. Run
-`20261101-212234` (fixture SupportedMapViews `0x0f`; right ×3, Menu R, ▼, OK,
-▼ ▼, OK) shows (verified):
+`probe_navigation.py --gtf2 ../au736_evo/build/patched/bin/gtf2` substitutes
+`bin/gtf2`. Run `20261101-212234` (fixture SupportedMapViews `0x0f`; right ×3,
+Menu R, ▼, OK, ▼ ▼, OK; same gtf2 bytes as the au736_evo output) shows
+(verified):
 
 - The submenu lists *Standard, Google Earth, CarPlay*; ▼ ▼ focuses CarPlay
   (`key-frames/at-138.png`, `at-154.png`).

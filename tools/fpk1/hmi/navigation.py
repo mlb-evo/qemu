@@ -12,10 +12,10 @@ The side menu (Menu R) entries are DPs written by setMapDisplayAvailable
 MapViewAndOrientation/MapColorAndType/MapScale in the FunctionList (0x179644)
 and SupportedMapViews outside {0, 1, 2, 4} and SupportedMapTypes != 0.
 
-CarPlay experiment (tools/fpk1/research/hmi/patch_navigation_carplay.py): a
-patched gtf2 turns the third Map display item into "CarPlay", sends
-MapViewAndOrientation SetGet MapView 3 and sets Map_Presentation
-(ASG_HMI_State) bit 1 while MapView 3 is requested. Stock gtf2 only reads
+CarPlay experiment (au736_evo patch carplay_map_display): a patched gtf2
+turns the third Map display item into "CarPlay", sends MapViewAndOrientation
+SetGet MapView 3 and sets Map_Presentation (ASG_HMI_State) bit 1 while
+MapView 3 is requested. Stock gtf2 only reads
 SupportedMapViews bits 0..2, so advertising bit 3 is harmless there.
 """
 import sys

@@ -282,7 +282,20 @@ Runs (`probe_navigation.py --gtf2 ../au736_evo/build/patched/bin/gtf2
 - the submenu closes to Options; OK reopens it with the CarPlay radio checked;
 - Traffic still sends MapView 2 (run `20261101-223810`);
 - profile `no_carplay` (SupportedMapViews `0x07`) hides the item (run
-  `20261101-224754`).
+  `20261101-224754`);
+- German (`--coding 008500E07C98000800A369602000600000000000`, run
+  `20261102-071341`): *Optionen → Kartendarstellung* lists Standard, Google
+  Earth, Verkehr, CarPlay; selecting CarPlay sends MapView 3 and checks it.
+
+UI language (static, verified effect): ConfigM `Language` (coding byte 8,
+l4c `0x12d`) reaches DP `0x20001cc`; its change handler `0x696bd0` calls
+`setLanguage(code)` (`0x157124`), which maps the code through table
+`0x7efa20` (44 entries; `-1` falls back to `ConfigM_CodedLanguage`
+`0x20001b4`, then to code 1) and writes `Units_Language` `0x20001d2`. The
+internal IDs follow the language sets in gtf2 (ar, cs, da, de, en, en, es, …):
+code 0 → 3 German, 1 → 5 and 2 → 6 English (both verified), 25 → 0. The
+default coding uses code 1. `probe_navigation.py --coding HEX` boots with
+another coding. Switching language while the submenu is open was not tested.
 
 Earlier the same patch only reused the Traffic item (label and table
 changes); that variant was dropped because it removed Traffic.

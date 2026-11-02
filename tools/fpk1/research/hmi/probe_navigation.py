@@ -56,7 +56,7 @@ def persist_emmc(build, directory, out):
     return image
 
 
-def boot(seconds, experiment, gtf2=None, persist=None):
+def boot(seconds, experiment, gtf2=None, persist=None, coding=None):
     import run_stage1_console as console
     from hmi.configm import DEFAULT_CODING
     build = REPO / 'build_fpk1'
@@ -75,7 +75,7 @@ def boot(seconds, experiment, gtf2=None, persist=None):
             levels['channel'].update(dict.fromkeys(channels, 'debug'))
     tracing = (json.dumps(config, indent=2) + '\n').encode()
     (out / 'tracing.json').write_bytes(tracing)
-    os.environ.update(FPK1_CODING=DEFAULT_CODING, TEGRA_GR3D_DISCARD='1', PYTHONDONTWRITEBYTECODE='1',
+    os.environ.update(FPK1_CODING=coding or DEFAULT_CODING, TEGRA_GR3D_DISCARD='1', PYTHONDONTWRITEBYTECODE='1',
                       MHI2_GL_WIDTH='1440', MHI2_GL_HEIGHT='540',
                       MHI2_SHADER_CACHE=str(build / 'research-artifacts/shader-translate/cache'))
     from hmi.capture_scanout import ScanoutCapture
@@ -133,9 +133,11 @@ if __name__ == '__main__':
     parser.add_argument('--gtf2', type=Path, help='Private experiment executable override (bin/gtf2)')
     parser.add_argument('--persist', type=Path,
                         help='directory copied to /mnt/persist_fpk/au736_evo/ on a run-local eMMC copy')
+    parser.add_argument('--coding', help='20-byte ConfigM long coding in hex (default: hmi.configm.DEFAULT_CODING)')
     args = parser.parse_args()
     if args.peer:
         peer(args.peer)
     else:
         actions = [(float(t), a) for t, a in (item.split(':') for item in args.actions.split(','))]
-        boot(args.seconds, dict(profile=args.profile, enable_at=args.enable_at, actions=actions), args.gtf2, args.persist)
+        experiment = dict(profile=args.profile, enable_at=args.enable_at, actions=actions, coding=args.coding)
+        boot(args.seconds, experiment, args.gtf2, args.persist, args.coding)

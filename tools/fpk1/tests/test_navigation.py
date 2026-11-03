@@ -58,7 +58,7 @@ class Checks(unittest.TestCase):
         replies = records(peer)
         self.assertEqual(nav.get_all(), bytes.fromhex(
             '030032000404' '38014000081c0200' '00' '03' '00' '01' '0000003f'
-            '0700' '00000700000000' '000000000007' '00'))
+            '0700' '00000f00000000' '000000000007' '00'))
         self.assertIn((6, 6, bytes.fromhex('80263c8103003200')), replies)
         self.assertIn((6, 5, bytes.fromhex('4c82030032000404')), replies)
         self.assertIn((6, 5, bytes.fromhex('4c8f03')), replies)
@@ -72,9 +72,9 @@ class Checks(unittest.TestCase):
                 peer.receive(ipc.build_frame([(6, 5, bytes.fromhex(frame), True)]))
         replies = records(peer)
         self.assertIn((6, 5, bytes.fromhex('4cab0200003f')), replies)
-        self.assertIn((6, 5, bytes.fromhex('80074cac00000700')), replies)
+        self.assertIn((6, 5, bytes.fromhex('80074cac00000f00')), replies)
         self.assertIn((6, 5, bytes.fromhex('c0010000')), replies)
-        self.assertEqual(nav.state[0x2c], bytes([0, 0, 7, 0, 1, 0, 0]))
+        self.assertEqual(nav.state[0x2c], bytes([0, 0, 0xf, 0, 1, 0, 0]))
         peer.outbox.clear()
         for request in ('2cab0000000000', '2c81', '0cf700'):
             peer.receive(ipc.build_frame([(6, 5, bytes.fromhex(request), True)]))
@@ -83,6 +83,35 @@ class Checks(unittest.TestCase):
         peer.outbox.clear()
         peer.receive(ipc.build_frame([(6, 5, bytes.fromhex('1c8f'), True)]))
         self.assertFalse(peer.outbox)
+
+    def test_carplay_map_view_and_presentation_bit(self):
+        logs = []
+        peer = kss_peer.Kss(logs.append, assist_commands=Queue())
+        nav = peer.assist.navigation
+        nav.select(preset('normal'))
+        self.assertEqual(nav.state[0x2c][2] & 8, 8)
+        nav.select(preset('no_carplay'))
+        self.assertEqual(nav.state[0x2c][2], 7)
+        nav.select(preset('normal'))
+        peer.outbox.clear()
+        # Patched gtf2: segmented MapViewAndOrientation SetGet with MapView 3,
+        # then Map_Presentation SetGet with stage bit 0 and CarPlay bit 1.
+        for frame in ('80072cac03000000', 'c0010000', '2cb603'):
+            peer.receive(ipc.build_frame([(6, 5, bytes.fromhex(frame), True)]))
+        replies = records(peer)
+        self.assertIn((6, 5, bytes.fromhex('80074cac03000f00')), replies)
+        self.assertIn((6, 5, bytes.fromhex('4cb603')), replies)
+        self.assertEqual(nav.state[0x2c], bytes([3, 0, 0xf, 0, 1, 0, 0]))
+        self.assertEqual(nav.state[0x36], b'\x03')
+        text = '\n'.join(map(str, logs))
+        self.assertIn('tx BAP NavSD MapView=3 (CarPlay)', text)
+        self.assertEqual(text.count('tx BAP NavSD CarPlay selected'), 1)
+        # Repeated Map_Presentation SetGet does not log again; clearing bit 1 does.
+        for frame in ('2cb603', '2cb601'):
+            peer.receive(ipc.build_frame([(6, 5, bytes.fromhex(frame), True)]))
+        text = '\n'.join(map(str, logs))
+        self.assertEqual(text.count('tx BAP NavSD CarPlay selected'), 1)
+        self.assertIn('tx BAP NavSD CarPlay not selected (MapView=3, Map_Presentation=0x01)', text)
 
     def test_real_ui_activation_and_queue_failure(self):
         from PySide6.QtCore import QCoreApplication, QEvent
@@ -97,6 +126,12 @@ class Checks(unittest.TestCase):
         panel.presets.setCurrentIndex(panel.presets.findData('operation_2'))
         self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, preset('operation_2')))
         self.assertEqual(panel.operation.value(), 2)
+        panel.carplay.setChecked(False)
+        panel.apply.click()
+        self.assertEqual(peer.assist_commands.get_nowait()[2], dict(preset('operation_2'), map_views=7))
+        panel.presets.setCurrentIndex(panel.presets.findData('normal'))
+        self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, preset('normal')))
+        self.assertTrue(panel.carplay.isChecked())
         panel.stop.click()
         self.assertEqual(peer.assist_commands.get_nowait(), ('@navigation', None, None))
         peer.stopped = True

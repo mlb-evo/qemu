@@ -129,17 +129,30 @@ widget bindings and the `set*Available` function names:
 
 | DP | Meaning | Condition |
 | --- | --- | --- |
-| `0x4000061` | "Map display" entry | MapView available and SupportedMapViews ∉ {0, 1, 2, 4} |
-| `0x4000060` | "Map orientation" entry (`MapType` item) | MapView available and SupportedMapTypes bit 2 |
-| `0x4000062` | "Map colours" entry | MapColorAndType and MapView available and SupportedMapTypes ≠ 0 |
+| `0x4000061` | "Map display" entry (`Nav_SideMenusNav_MapDisplay_visible`) | MapView available and SupportedMapViews ∉ {0, 1, 2, 4} |
+| `0x4000060` | "Map colours" entry (`Nav_SideMenusNav_MapColors_visible`) | MapView available and SupportedMapTypes bit 2 |
+| `0x4000062` | "Map orientation" entry (`Nav_SideMenusNav_MapType_visible`) | MapColorAndType and MapView available and SupportedMapTypes ≠ 0 |
 | `0x400005f` | "Automatic zoom" entry | `setAutozoomAvailable` (MapScale) |
 | `0x4000063` | "Stop route guidance" entry | `setCancelRouteGuidanceAvailable` (RG_Status) |
 
 Verified: with SupportedMapViews `0x07`, SupportedMapTypes `0x3f`,
 SupportedAutoZoom `0x07` and RG_Status 0, Menu R on `SV_LVDS_FPK_NavMap`
 shows "Options" with *Map colours, Map display, Map orientation, Automatic zoom*.
-Which of `0x4000060` / `0x4000062` is which label is inferred from the
-conditions, not from a binding record.
+**DP names (static).** GTF2 has no DP name registry at run time: the only
+ID-to-name resolver (`0x2159f0`) formats `"DPID 0x%04x"`, and the
+`Nav_SideMenusNav_*` / `Nav_Submenu_*` name strings have no absolute or
+PC-relative references. Their IDs follow the ASCII order of those 32 names,
+numbered from `0x400005f` (`0x400005f` `Nav_SideMenusNav_AutoZoom_visible` …
+`0x400007e` `Nav_Submenu_Maptype_checked_ref`). The order reproduces every DP
+literal of the known writers (`0x4000061`, `0x4000066`, `0x4000069..6b`,
+`0x400006f..71`, `0x4000072..77`), so it is taken as the generator's
+numbering. It swaps the earlier inference for `0x4000060` / `0x4000062`
+(now Map colours / Map orientation, as in the table above; static, the
+label-to-DP binding was not checked on screen). Names: `0x4000066`
+`Nav_Submenu_ActiveMapDisplay`, `0x400006f` `…MapDisplay_GoogleMap_visible`,
+`0x4000070` `…_StandardMap_visible`, `0x4000071` `…_TrafficMap_visible`.
+Reproduce with `tools/fpk1/research/hmi/inspect_navigation_mapdisplay.py`
+(`navigation/mapdisplay-static.txt`).
 
 Active-selection DPs: `0x4000065` map colour, `0x4000066` map display,
 `0x4000067` map type, `0x4000068` voice, `0x4000064` auto zoom.
@@ -168,17 +181,150 @@ varying offsets, so the pairing is static evidence only.
 - `sendMapColor(index)` (`0x176c8c`): index 1/2/3 (`mapColor_day`, `_night`,
   `_auto`) → Colour 0/1/2. Receive maps Colour 0..2 through table `0x7d1b1c`
   `[1, 2, 3]` to the index; other values → 0.
-- `sendMapDisplay(index)` (`0x1772f4`): index 1/2/3 (`mapDisplay_Standard`,
-  `_GoogleEarth`, `_Verkehr`) → MapView via table `0x7d1af4` `[1, 0, 2]`.
-  Visibility: SupportedMapViews bit 0 Standard (`0x4000070`), bit 1 Google
-  Earth (`0x400006f`), bit 2 traffic (`0x4000071`).
+- `sendMapDisplay(index)` (`0x1772f4`) maps index → MapView via table
+  `0x7d1af4` `[1, 0, 2]` and writes the index to `0x4000066`. The press
+  handlers in `handleMessage` (`0x17c37c–0x17c3f4`) pass **Google Earth = 1,
+  Standard = 2, Verkehr (traffic) = 3**, so the index is not the widget order.
+  Resulting wire values: **MapView 0 = Standard, 1 = Google Earth,
+  2 = traffic** (verified on receive: Status `MapView=0` logs
+  `onUpdateMapViewAndOrientation mapView 2`, i.e. Standard).
+  Visibility: SupportedMapViews bit 0 → `0x4000070`, bit 1 → `0x400006f`,
+  bit 2 → `0x4000071` (static; consistent with bit n ↔ MapView n, but the
+  DP-to-widget binding is not proven).
 - Auto-zoom items: `autoZoom_Kreuzung` / `_aus` / `_ein` (DPs `0x4000069..6b`).
 
-The submenu has exactly three map-display items. Index bounds (`cmp r3, #2`),
-the three-entry tables and the three visibility bits are compiled in, so a
-fourth option (e.g. CarPlay) would require patching the widget tree, a new
-visibility DP, texts and both tables. CarPlay/Android Auto strings in GTF2
-exist only as audio-source texts (static).
+The submenu has exactly three map-display items, and they are not data
+driven. The KZB files contain no per-item nodes; the item widgets are built
+in straight-line generated code in `CHMISvNavSubmenuMapdisplayViewData::construct`
+(`0x4702f4–0x473790`, roughly `0x9d0` bytes per item: item, LayoutContainer,
+Label, RadioButton), stored as members of the ViewData object (offsets
+`0x1468…0x6588`) and updated by a generated `processDPEvent`
+(`0x46364c–0x464320`) that compares the DP ID against `0x4000066`,
+`0x400006f`, `0x4000070`, `0x4000071`. Press events come from the
+`eEventIdAPPOUT_Nav_Submenu_MapDisplay_*_pressed` table (`0x752a1c`) via the
+state `eStateIdSV_Nav_Submenu_MapDisplay` (`0x22399c`). A fourth option (e.g.
+CarPlay) therefore needs new code in `construct`, a larger ViewData object,
+new branches in `processDPEvent`, a new event ID and handler, a fourth table
+entry and bound in `sendMapDisplay`/`setMapDisplayAvailable`, the receive
+mapping and a text. CarPlay/Android Auto strings in GTF2 exist only as
+audio-source texts (static).
+
+Details of the generated code (static unless marked):
+
+- `construct` (`0x4702e0`) builds each node as an object embedded in the
+  ViewData (`sl = this + offset`), sets its path and name through `0x6343d8`
+  / `0x6343f0` and stores the pointer in a member (Traffic item:
+  `this+0x3b5c`; its visibility binding stores DP `0x4000071` at
+  `this+0x3d64`). Each item is about 650 instructions with tens of
+  property-ID (`0x64xxxxx`) and DP (`0x200010a`, `0x200013a`) literals and
+  static guard objects. Members reach `0x6588`; the allocation site was not
+  found (no direct or virtual references to `construct`).
+- The radio "checked" state is a set of generated guards that read
+  `0x4000066` and compare it with a constant: `0x60faf4` (== 1, Google
+  Earth), `0x60fcc4` (== 2, Standard), `0x60fbdc` (== 3, Traffic).
+- Focus and ▲/▼ are handled by the generic Kanzi list (inferred: no
+  item-specific code found); `0x22399c` is only the state-name getter for
+  `eStateIdSV_Nav_Submenu_MapDisplay`. OK on an item reaches
+  `handleMessage` as `eSID_APPOUT_Nav_Submenu_MapDisplay_*_pressed`
+  (message id 7026 for Verkehr) and the submenu closes back to
+  `SV_LVDS_FPK_NavMap` (both verified).
+- Item texts are not in the KZB: each of the 28 language sets in GTF2 holds
+  `Standard\0Google Earth\0<traffic>\0<orientation>\0<orientation>` (English
+  `Traffic`, German `Verkehr`); they have no absolute references either.
+
+### 6.3 CarPlay experiment: a fourth item (verified)
+
+The au736_evo repository (patch `carplay_map_display`, library
+`libau736_evo_hmi.so`, documented in its `docs/gtf2-carplay-map-display.md`)
+adds a fourth item **CarPlay** after Standard, Google Earth and Traffic; this
+checkout only runs it. Selecting it sends SetGet **MapView 3** and sets
+Map_Presentation **bit 1**; the stock items keep MapView 0/1/2. Firmware facts
+it relies on (static, then exercised in the runs below):
+
+- Code loading: gtf2 has no `dlopen` import, but `libc.so.3` (Stage1 image)
+  exports `dlopen` `0x44e64` / `dlsym` `0x4604c`; gtf2 binds lazily (the
+  `snprintf` GOT slot `0xa653ec` holds PLT0 `0x10d77c` until the first call).
+  `/mnt/persist_fpk` is mounted before `construct` runs at boot (≈7 s).
+- The DP-name/TID string span `0x806fea..0x807cad` has no references and lies
+  in the R+X text segment; the last bss page past `p_memsz` (`0xe8b9e8`) is
+  unused.
+- ViewData: static object `0xd52360`, constructor `0x2c6fe8` (base `0x6a9e84`,
+  vtable `0x846a78`, `0x146380(this + 8)`, then 51 one-argument member
+  constructors). `construct` stores the tree at its end: Menu `+0x4788`, items
+  appended in order, Traffic item `+0x4784`, its LayoutContainer `+0x4778`,
+  GlassPlate `+0x4798`. `appendChild` `0x14460c` (`"[%s] appendChild(%s)"`)
+  re-parents a node. A second ViewData built the same way constructs cleanly,
+  and its Traffic item moved into the stock Menu is laid out and focused as a
+  fourth item.
+- Item widget `+0x3b5c`: `0x62a1c4(widget, event)` stores the pressed event at
+  `+0x128`; Standard/Google Earth/Traffic use events 124/123/125
+  (`eEventIdAPPOUT_Nav_Submenu_MapDisplay_*_pressed`, name getter jump table
+  `0x751da0`). The generic press handler reads it at `0x6d3db4` and posts it
+  via `0x6d3a50`.
+- Labels are bound to string DPs `0x6400644..646` (TIDs `0xB055..0xB057`, pairs
+  in the language table `0x22d944..0x22e014`) and read by
+  `CHMIGTFLabel::text` `0x6aec84` (vtable slot `0x892ee8`). The datapool
+  refuses writes to unknown DP IDs (`dp_write_string` `0x69e76c` returned 2)
+  and to `0x400007e` (a list reference, `dp_write_int` returned 3).
+- Radio "checked" functors (vtables `0x880d68`/`0x881050`/`0x880d08`) evaluate
+  `0x4000066 == k` and set the state with `0x650f58`.
+
+Runs (`probe_navigation.py --gtf2 ../au736_evo/build/patched/bin/gtf2
+--persist ../au736_evo/build/patched/persist`, fixture SupportedMapViews
+`0x0f`), run `20261101-224337`:
+
+- the submenu lists *Standard, Google Earth, Traffic, CarPlay*; ▼ ▼ ▼ focuses
+  CarPlay;
+- OK: `[MapViewAndOrientation::SetGet] MapView=0x3`, Status echo
+  `onUpdateMapViewAndOrientation mapView 4`, `sendStageInfo(): ASG_HMI_State
+  after setting bits = 3`; kss.log `tx BAP NavSD CarPlay selected (MapView=3,
+  Map_Presentation=0x03)`; Map_Presentation SetGet stays at ≈1/s;
+- the submenu closes to Options; OK reopens it with the CarPlay radio checked;
+- Traffic still sends MapView 2 (run `20261101-223810`);
+- profile `no_carplay` (SupportedMapViews `0x07`) hides the item (run
+  `20261101-224754`);
+- German (`--coding 008500E07C98000800A369602000600000000000`, run
+  `20261102-071341`): *Optionen → Kartendarstellung* lists Standard, Google
+  Earth, Verkehr, CarPlay; selecting CarPlay sends MapView 3 and checks it.
+
+UI language (static, verified effect): ConfigM `Language` (coding byte 8,
+l4c `0x12d`) reaches DP `0x20001cc`; its change handler `0x696bd0` calls
+`setLanguage(code)` (`0x157124`), which maps the code through table
+`0x7efa20` (44 entries; `-1` falls back to `ConfigM_CodedLanguage`
+`0x20001b4`, then to code 1) and writes `Units_Language` `0x20001d2`. The
+internal IDs follow the language sets in gtf2 (ar, cs, da, de, en, en, es, …):
+code 0 → 3 German, 1 → 5 and 2 → 6 English (both verified), 25 → 0. The
+default coding uses code 1. `probe_navigation.py --coding HEX` boots with
+another coding. Switching language while the submenu is open was not tested.
+
+Earlier the same patch only reused the Traffic item (label and table
+changes); that variant was dropped because it removed Traffic.
+
+### 6.4 Path to the head unit (static / inferred, not implemented)
+
+- In MIB2 the head unit's HMI reaches BAP through the DSI service `DSIBAP`
+  (`tools/mhi2/dsi_schema.json`: `request`, `requestByteSequence`,
+  `requestVoid`, `requestError`, `setHMIState`; replies `indication`,
+  `indicationByteSequence`, `indicationVoid`, `indicationError`,
+  `bapStateStatus`), whose provider lives on the RCC side. In the MHI2
+  emulator that provider is `tools/mhi2/rcc_services.py` (`Services.handle`);
+  today it answers DSIBAP requests with `asyncException` ("Not supported by
+  simulated vehicle"). That is the bridge point (inferred: the argument
+  order of `request(int, int, int, int, int)` — LSG, function, opcode,
+  values — and whether the HU's NavSD FSG uses DSIBAP at all are not
+  verified; no MHI2 run is available in this workspace).
+- A bridge would map HU `DSIBAP.request*` for LSG 50 to Status frames on the
+  FPK1 KSS link (LUN 6, CID 5 short / CID 6 GetAll, BAP segmentation as in
+  the fixture) and FPK1 Get/SetGet frames to `indication*` replies, replacing
+  `hmi/navigation.py` as the FSG. The two QEMU instances would need one
+  socket between `kss_peer` (FPK1) and `rcc_services` (MHI2).
+- `DISPLAYABLE_KOMBI_MAP_VIEW` (displayable 33) is created by the native
+  navigation application and sent over MOST (`tools/mhi2/MOST.md`); nothing
+  in the emulator or schema selects its source from MapView (static). A
+  CarPlay image would need the projection surface routed to that
+  displayable (as community `mhi2_altscreen_carplay` patches do) and an
+  LVDS/MOST video path into the FPK1 KDK hole, which does not exist
+  (section 8).
 
 ## 7. Map_Presentation: ASG → FSG HMI state (static, verified traffic)
 
@@ -206,5 +352,7 @@ FSG, not data from the FSG:
   black in every mode. Any real map/CarPlay content needs that path first.
 - Route guidance (RG_Status, maneuvers, distances, lists) is not implemented
   by the fixture; "Stop route guidance" stays hidden.
-- Selecting submenu items was not checked on screen; the fixture answers
-  Set/SetGet by updating the writable fields only.
+- Selecting a Map display item was verified only for CarPlay and Traffic
+  with the au736_evo patch (section 6.3); the fixture answers Set/SetGet by
+  updating the writable fields only and logs MapView and the Map_Presentation
+  CarPlay bit. Profile `no_carplay` advertises SupportedMapViews `0x07`.

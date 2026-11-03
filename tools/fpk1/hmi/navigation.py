@@ -11,6 +11,12 @@ The side menu (Menu R) entries are DPs written by setMapDisplayAvailable
 (0x1764f4) and setMapColorAndTypeAvailable (0x1765c8). They need
 MapViewAndOrientation/MapColorAndType/MapScale in the FunctionList (0x179644)
 and SupportedMapViews outside {0, 1, 2, 4} and SupportedMapTypes != 0.
+
+CarPlay experiment (au736_evo patch carplay_map_display): a patched gtf2 adds
+a fourth Map display item "CarPlay", shown while SupportedMapViews bit 3 is
+set; it sends MapViewAndOrientation SetGet MapView 3 and sets Map_Presentation
+(ASG_HMI_State) bit 1 while MapView 3 is requested. Stock gtf2 only reads
+SupportedMapViews bits 0..2, so advertising bit 3 is harmless there.
 """
 import sys
 sys.dont_write_bytecode = True
@@ -27,21 +33,27 @@ MAP = {
     0x11: bytes([0]),                       # RG_Status: no route guidance
     0x24: bytes([1]),                       # VoiceGuidance_State
     0x2b: bytes([0, 0, 0, 0x3f]),           # Colour, ActiveMapType, MainMapSetup, SupportedMapTypes
-    0x2c: bytes([0, 0, 7, 0, 0, 0, 0]),     # MapView, Supplementary, SupportedMapViews,
+    0x2c: bytes([0, 0, 0xf, 0, 0, 0, 0]),   # MapView, Supplementary, SupportedMapViews,
                                             # SupportedSupplementary, MapVisibility, Orientation, Modification
     0x2d: bytes([0, 0, 0, 0, 0, 7]),        # Reserve, AutoZoom, AutoZoomState, Scale, Unit, SupportedAutoZoom
-    0x36: bytes([0]),                       # Map_Presentation PresentationCapabilities
+    0x36: bytes([0]),                       # Map_Presentation ASG_HMI_State
 }
+# MapView values (gtf2 sendMapDisplay table 0x7d1af4); 3 exists only with the
+# CarPlay patch. ASG_HMI_State bit 0 is the cluster stage, bit 1 CarPlay.
+MAP_VIEWS = {0: 'Standard', 1: 'Google Earth', 2: 'Traffic', 3: 'CarPlay'}
+CARPLAY_VIEW, CARPLAY_BIT = 3, 2
 # Bytes an HMI Set/SetGet may change; the others are Reserve in the request
 # layout (e.g. MapViewAndOrientation SetGet zeroes SupportedMapViews) and
 # MapScale's first request byte is a zoom step, not a stored value.
 WRITABLE = {0x24: (0,), 0x2b: (0, 1, 2), 0x2c: (0, 1, 4, 5, 6), 0x2d: (1, 2), 0x36: (0,)}
 # GSS descriptor type 0xf (byte sequence): GetAll carries a uint16 length.
 SEQUENCES = {0x2c}
-DEFAULT = dict(operation=0)
+# map_views: SupportedMapViews; bit 3 shows the au736_evo CarPlay item.
+DEFAULT = dict(operation=0, map_views=0x0f)
 PRESETS = {
-    'off': ('Навигация выключена', None),
-    'normal': ('Навигация активна (OperationState 0)', DEFAULT),
+    'off': ('Navigation off', None),
+    'normal': ('Navigation active (OperationState 0)', DEFAULT),
+    'no_carplay': ('Navigation active, no CarPlay (SupportedMapViews 0x07)', dict(DEFAULT, map_views=0x07)),
 }
 for code in range(1, 16):
     PRESETS[f'operation_{code}'] = (f'OperationState = {code}', dict(DEFAULT, operation=code))
@@ -78,6 +90,7 @@ class Navigation:
         self.profile = None
         self.state = dict(MAP)
         self.segments = {}
+        self.carplay = None
         self.availability = availability(peer)
         peer.reassembler = TrafficReceiver(peer.reassembler, self)
 
@@ -86,6 +99,13 @@ class Navigation:
             raise ValueError('Invalid navigation profile')
         self.profile = deepcopy(profile)
         self.state = dict(MAP)
+        if profile is not None:
+            views = bytearray(self.state[0x2c])
+            views[2] = profile['map_views']
+            self.state[0x2c] = bytes(views)
+            # Status for a running cluster; ignored before BAP_Config.
+            self.reply(0x2c, self.state[0x2c])
+        self.carplay = None
         self.availability.select('navigation', CONFIG_BIT, MASK, profile is not None, key=CONFIG_KEY)
 
     def reply(self, function, payload, opcode=4):
@@ -139,6 +159,19 @@ class Navigation:
                     state[n] = value[n]
             self.state[function] = bytes(state)
             self.reply(function, self.state[function])
+            if function == 0x2c:
+                self.peer.log(f'tx BAP NavSD MapView={state[0]} ({MAP_VIEWS.get(state[0], "unknown")})')
+            self.report_carplay()
+
+    def report_carplay(self):
+        # Logged on change only: gtf2 repeats Map_Presentation SetGet with
+        # every FSG_OperationState Status.
+        view = self.state[0x2c][0] == CARPLAY_VIEW
+        presentation = bool(self.state[0x36][0] & CARPLAY_BIT)
+        if (view, presentation) != self.carplay:
+            self.carplay = view, presentation
+            self.peer.log(f'tx BAP NavSD CarPlay {"selected" if view and presentation else "not selected"} '
+                          f'(MapView={self.state[0x2c][0]}, Map_Presentation={self.state[0x36][0]:#04x})')
 
     def send(self):
         if self.profile is None:

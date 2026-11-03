@@ -31,26 +31,26 @@ class AssistPanel(QWidget):
         self.peer, self.report = peer, report
         self.controls, self.enables, self.accepted = {}, {}, {}
         root = QVBoxLayout(self)
-        note = QLabel('Выберите сценарий: связанные состояния и команды показа отправятся вместе.\n'
-                      'Сценарий заменяет текущие входы; светофор временно включает OnlineFunctions.')
+        note = QLabel('Choose a scenario: related states and display requests are sent together.\n'
+                      'A scenario replaces the current inputs; traffic lights temporarily enable OnlineFunctions.')
         note.setWordWrap(True)
         root.addWidget(note)
         from hmi.assist_scenarios import LABELS
         self.scenario = QComboBox()
-        self.scenario.addItem('Выберите сценарий…', None)
+        self.scenario.addItem('Choose a scenario…', None)
         for key, title in LABELS.items():
             self.scenario.addItem(title, key)
         self.scenario.setEnabled(peer is not None)
         self.scenario.currentIndexChanged.connect(self.apply_scenario)
         self.last_scenario = 0
         root.addWidget(self.scenario)
-        self.scenario_detail = QLabel('Новые пресеты — запросы индикации; их показ зависит от прошивки и кодировки.')
+        self.scenario_detail = QLabel('New presets are display requests; whether they show depends on firmware and coding.')
         self.scenario_detail.setWordWrap(True)
         root.addWidget(self.scenario_detail)
-        missing = QLabel('Пока нет видео Night Vision / рамок объектов и отдельной BAP-сессии Side Assist.')
+        missing = QLabel('No Night Vision video / object boxes and no separate Side Assist BAP session yet.')
         missing.setWordWrap(True)
         root.addWidget(missing)
-        self.advanced = QCheckBox('Расширенный режим — отдельные поля')
+        self.advanced = QCheckBox('Advanced mode — individual fields')
         root.addWidget(self.advanced)
         self.search = QLineEdit()
         self.search.setPlaceholderText('Filter fields in the current tab…')
@@ -114,7 +114,7 @@ class AssistPanel(QWidget):
             scroll.setWidget(page)
             self.tabs.addTab(scroll, title)
         root.addWidget(self.tabs, 1)
-        self.status = QLabel('Выберите сценарий. Отдельно включать Transmit не нужно.')
+        self.status = QLabel('Choose a scenario. No need to enable Transmit separately.')
         self.status.setWordWrap(True)
         root.addWidget(self.status)
         self.bottom_gap = QWidget()
@@ -136,7 +136,7 @@ class AssistPanel(QWidget):
         if not self.peer or not self.peer.set_assist_scenario(key):
             with QSignalBlocker(self.scenario):
                 self.scenario.setCurrentIndex(self.last_scenario)
-            self.status.setText('Не удалось поставить сценарий в очередь KSS.')
+            self.status.setText('Could not queue the scenario to KSS.')
             return
         from hmi.assist_scenarios import scenario, description
         profile = scenario(key)
@@ -158,7 +158,7 @@ class AssistPanel(QWidget):
         self.scenario_detail.setText(description(key))
         self.last_scenario = index
         title = self.scenario.itemText(index)
-        self.status.setText('Сценарий поставлен в очередь KSS: ' + title)
+        self.status.setText('Scenario queued to KSS: ' + title)
         self.report('Assist scenario: ' + key)
 
     def filter(self, text):

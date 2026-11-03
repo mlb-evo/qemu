@@ -9,67 +9,67 @@ sys.dont_write_bytecode = True
 from copy import deepcopy
 
 LABELS = {
-    'off': 'Выключить ассистенты',
-    'acc': 'ACC — заданная скорость',
-    'follow': 'ACC — автомобиль впереди',
-    'gap': 'ACC — дистанция',
-    'lane': 'Lane Assist — обе линии',
-    'lane_left': 'Lane Assist — левая линия',
-    'lane_right': 'Lane Assist — правая линия',
+    'off': 'Turn assistants off',
+    'acc': 'ACC — set speed',
+    'follow': 'ACC — vehicle ahead',
+    'gap': 'ACC — distance',
+    'lane': 'Lane Assist — both lines',
+    'lane_left': 'Lane Assist — left line',
+    'lane_right': 'Lane Assist — right line',
     'acc_lane': 'ACC + Lane Assist',
-    'cruise': 'Круиз-контроль',
-    'limiter': 'Ограничитель скорости',
-    'acc_standby': 'ACC — ожидание (код состояния 2)',
-    'gap_near': 'ACC — короткая дистанция (код 1)',
-    'gap_far': 'ACC — большая дистанция (код 5)',
-    'acc_warning': 'ACC — предупреждение / AWV (код 1)',
-    'acc_failure': 'ACC — запрос сообщения о неисправности',
-    'traffic_jam': 'Пробка / STA — индикация (код 1)',
-    'lane_standby': 'Lane Assist — ожидание (лампы: код 1)',
-    'limiter_warning': 'Ограничитель — подсказка водителю (код 1)',
-    'sign_single': 'Знаки — один знак (сырой код 1)',
-    'sign_three': 'Знаки — три знака (сырые коды 1 / 2 / 3)',
-    'sign_warning': 'Знаки — предупреждение по первому знаку',
-    'sign_timeout': 'Знаки — потеря данных',
-    'sign_error': 'Знаки — ошибка данных',
-    'night_active': 'Night Vision — включён',
-    'night_pedestrian': 'Night Vision — предупреждение о пешеходе',
-    'night_animal': 'Night Vision — предупреждение о животном',
-    'night_pedestrian_off': 'Night Vision — предупреждение о пешеходах отключено',
-    'night_timeout': 'Night Vision — потеря данных',
-    'traffic_red': 'Светофор — красный',
-    'traffic_green': 'Светофор — зелёный',
-    'traffic_countdown': 'Светофор — ожидание зелёного',
-    'traffic_speed': 'Светофор — рекомендуемая скорость',
-    'traffic_unavailable': 'Светофор — нет данных',
+    'cruise': 'Cruise control',
+    'limiter': 'Speed limiter',
+    'acc_standby': 'ACC — standby (state code 2)',
+    'gap_near': 'ACC — short distance (code 1)',
+    'gap_far': 'ACC — long distance (code 5)',
+    'acc_warning': 'ACC — warning / AWV (code 1)',
+    'acc_failure': 'ACC — fault message request',
+    'traffic_jam': 'Traffic jam / STA — indication (code 1)',
+    'lane_standby': 'Lane Assist — standby (lamps: code 1)',
+    'limiter_warning': 'Limiter — driver hint (code 1)',
+    'sign_single': 'Signs — one sign (raw code 1)',
+    'sign_three': 'Signs — three signs (raw codes 1 / 2 / 3)',
+    'sign_warning': 'Signs — warning for the first sign',
+    'sign_timeout': 'Signs — data lost',
+    'sign_error': 'Signs — data error',
+    'night_active': 'Night Vision — on',
+    'night_pedestrian': 'Night Vision — pedestrian warning',
+    'night_animal': 'Night Vision — animal warning',
+    'night_pedestrian_off': 'Night Vision — pedestrian warning disabled',
+    'night_timeout': 'Night Vision — data lost',
+    'traffic_red': 'Traffic light — red',
+    'traffic_green': 'Traffic light — green',
+    'traffic_countdown': 'Traffic light — waiting for green',
+    'traffic_speed': 'Traffic light — recommended speed',
+    'traffic_unavailable': 'Traffic light — no data',
 }
 
 
 # These describe display requests, not camera recognition or proven rendering.
 DETAILS = {
-    'sign_single': 'VZE_01: знак 1, режим 1. Значение кода знака ещё не расшифровано.',
-    'sign_three': 'VZE_01: три сырых кода и дополнительные таблички 1 / 2 / 3; режим 1.',
-    'sign_warning': 'VZE и ACC одновременно запрашивают предупреждение по первому знаку.',
-    'sign_timeout': 'VZE_Timeout: timeout=1; коды знаков очищены.',
-    'sign_error': 'VZE_Timeout: timeout_fehler=1; коды знаков очищены.',
+    'sign_single': 'VZE_01: sign 1, mode 1. The meaning of the sign code is not decoded yet.',
+    'sign_three': 'VZE_01: three raw codes and additional plates 1 / 2 / 3; mode 1.',
+    'sign_warning': 'VZE and ACC both request a warning for the first sign.',
+    'sign_timeout': 'VZE_Timeout: timeout=1; sign codes cleared.',
+    'sign_error': 'VZE_Timeout: timeout_fehler=1; sign codes cleared.',
 }
 
 
 def description(key):
     if key.startswith('traffic_') and key != 'traffic_jam':
-        return ('Локальная BAP-сессия OnlineFunctions: сигнал, время до зелёного и скорость. '
-                'На время пресета включается доступность OnlineFunctions; при выходе восстанавливается.')
+        return ('Local OnlineFunctions BAP session: signal, time to green and speed. '
+                'OnlineFunctions availability is enabled for the preset and restored on exit.')
     if key.startswith('night_'):
-        return ('Запрос индикации Night Vision. Нужны доступность системы и её экран; '
-                'видеопоток камеры и рамки объектов пока не подаются. '
-                'Распознавание изображения этот пресет не выполняет.')
+        return ('Night Vision display request. Needs system availability and its screen; '
+                'the camera video stream and object boxes are not fed yet. '
+                'This preset does not perform image recognition.')
     if key.startswith('sign_'):
-        return (DETAILS[key] + ' Показ зависит от кодировки и активного экрана. '
-                'Это входы распознанных знаков, не распознавание камеры.')
+        return (DETAILS[key] + ' Display depends on coding and the active screen. '
+                'These are recognised-sign inputs, not camera recognition.')
     if key == 'off':
-        return 'Очистить входы предыдущего сценария и остановить их передачу.'
-    return ('Связанные запросы индикации отправляются вместе. Числа — коды прошивки, '
-            'включая скорость; показ новых состояний требует проверки в госте.')
+        return 'Clear the previous scenario inputs and stop transmitting them.'
+    return ('Related display requests are sent together. Numbers are firmware codes, '
+            'including speed; new states still need checking in the guest.')
 
 
 def scenario(key):

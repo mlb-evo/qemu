@@ -1,7 +1,9 @@
-MHI2 fork: macOS quick start
-===========================
+MLB Evo emulator (MHI2 + FPK1)
+==============================
 
-For Audi, Volkswagen and Porsche boot instructions, see `README.md <README.md>`_.
+For Audi, Volkswagen and Porsche MHI2 and Audi FPK1 boot instructions, see
+`README.md <README.md>`_. Based on `iscle/qemu-mhi2
+<https://github.com/iscle/qemu-mhi2>`_.
 
 ===========
 QEMU README

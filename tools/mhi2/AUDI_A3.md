@@ -88,7 +88,7 @@ On either host:
 ```sh
 mkdir -p "$HOME/mhi2-repro"
 cd "$HOME/mhi2-repro"
-git clone --depth 1 --branch main https://github.com/iscle/qemu-mhi2.git qemu
+git clone --depth 1 --branch main https://github.com/mlb-evo/qemu.git qemu
 cd qemu
 python3 -m venv .venv
 . .venv/bin/activate

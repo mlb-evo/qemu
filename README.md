@@ -1,9 +1,15 @@
-# MHI2 head-unit emulator
+# MLB Evo emulator: MHI2 head unit and FPK1 instrument cluster
 
-Boot supported **Audi, Volkswagen and Porsche MHI2 firmware** on a Mac, with
-the original QNX user interface and emulated vehicle/companion services.
+Boot supported **Audi, Volkswagen and Porsche MHI2 firmware** and the
+experimental **Audi FPK1 instrument cluster** on a Mac or Linux host, with the
+original QNX user interface and emulated vehicle/companion services.
 This is an experimental QEMU fork. It does not require a head unit,
 Raspberry Pi Pico, QNX SDK or a separate Pico repository.
+
+Repository: <https://github.com/mlb-evo/qemu>. This work is based on
+[iscle/qemu-mhi2](https://github.com/iscle/qemu-mhi2), which provides the MHI2
+machine, the host/guest bridges and the bootstrap release used below; the
+FPK1 cluster workflow is added on top of it.
 
 ## Supported firmware
 
@@ -50,10 +56,10 @@ brew install git pkgconf ninja python glib pixman mesa lzo libusb libslirp seven
 
 export MHI2_REPRO="$HOME/mhi2-repro"
 mkdir -p "$MHI2_REPRO"
-curl -fL https://github.com/iscle/qemu-mhi2/archive/refs/heads/main.zip \
+curl -fL https://github.com/mlb-evo/qemu/archive/refs/heads/main.zip \
   -o "$MHI2_REPRO/qemu.zip"
 unzip -q "$MHI2_REPRO/qemu.zip" -d "$MHI2_REPRO"
-mv "$MHI2_REPRO/qemu-mhi2-main" "$MHI2_REPRO/qemu"
+mv "$MHI2_REPRO/qemu-main" "$MHI2_REPRO/qemu"
 cd "$MHI2_REPRO/qemu"
 "$(brew --prefix python)/bin/python3" -m venv .venv
 . .venv/bin/activate
@@ -66,7 +72,7 @@ ZIP**, the ZIP command above, and Git clones (including shallow clones) are all
 supported. If you prefer Git, replace the download/unzip/move commands with:
 
 ```sh
-git clone --depth 1 --branch main https://github.com/iscle/qemu-mhi2.git "$MHI2_REPRO/qemu"
+git clone --depth 1 --branch main https://github.com/mlb-evo/qemu.git "$MHI2_REPRO/qemu"
 ```
 
 The ZIP contains source, so it still needs to be compiled. Git is used only to
@@ -84,7 +90,8 @@ sudo apt install libavcodec-dev libavutil-dev libswscale-dev gcc-arm-none-eabi l
 
 The update archive is not a complete flash image. All three workflows also
 need the captured boot handoff and formatted disk template from the
-[bootstrap release](https://github.com/iscle/qemu-mhi2/releases/tag/mhi2-bootstrap-v1):
+[bootstrap release](https://github.com/iscle/qemu-mhi2/releases/tag/mhi2-bootstrap-v1)
+published by the upstream iscle/qemu-mhi2 project:
 
 ```sh
 mkdir -p "$MHI2_REPRO/bootstrap"
@@ -234,18 +241,26 @@ command fail and are listed in the report. The generated `run.sh` sets
 generated GLSL and reports stay under the build directory; the research
 scripts stay in the checkout.
 
-**4. Launch with the panel's long coding:**
+**4. Launch the cluster:**
 
 ```sh
-bash "$MHI2_REPRO/fpk1-build/run.sh" \
-  --coding 008500E07C98000801A369602000600000000000
+bash "$MHI2_REPRO/fpk1-build/run.sh"
 ```
 
-Use the same command for subsequent launches; add `--seconds 60` for a bounded
-run. The launcher opens the frame viewer and KSS peer, prints the guest console
-in the Terminal, and saves logs and frames under `fpk1-build/runs/<time>/`.
-Close the viewer to stop the KSS link; press Ctrl-C in the Terminal to stop
-the emulator. Thex default run limit is 1800 seconds.
+Use the same command for subsequent launches. The launcher prints the
+firmware, coding, time limit and log directory it uses, opens the frame viewer
+and KSS peer, prints the guest console in the Terminal, and saves logs and
+frames under `fpk1-build/runs/<time>/`. Close the viewer to stop the KSS link;
+press Ctrl-C in the Terminal to stop the emulator.
+
+Common options (`run.sh --help` lists them):
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--coding HEX` | `008500E07C98000801A369602000600000000000` (Q7 0378 panel) | Long coding sent to ConfigM; `--coding ''` sends none |
+| `--seconds N` | `1800` | Stop the emulator after N seconds, e.g. `--seconds 60` for a bounded run |
+
+Any other option is passed to `tools/fpk1/run_stage1_console.py`.
 
 `--coding` accepts 20 bytes as 40 hexadecimal digits. The peer extracts the bit
 fields into seven ConfigM RTE signals, sends them to `gss_ipc` before
@@ -385,8 +400,9 @@ and the original [upstream QEMU README](README.rst).
 
 ## Source and licensing
 
-The fork is based on [official QEMU](https://github.com/qemu/qemu). MHI2-specific
-changes are experimental and include AI-assisted work; they are not intended
+The fork is based on [iscle/qemu-mhi2](https://github.com/iscle/qemu-mhi2),
+which is in turn based on [official QEMU](https://github.com/qemu/qemu). MHI2-specific
+and FPK1 changes are experimental and include AI-assisted work; they are not intended
 as upstream QEMU submissions. QEMU and third-party source retain their existing
 copyright and license notices; see [COPYING](COPYING) and [COPYING.LIB](COPYING.LIB).
 Firmware and captured bootstrap data are separate from the emulator source;

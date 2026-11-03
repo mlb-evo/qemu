@@ -19,22 +19,22 @@ DEFAULT = dict(pressure=[24, 24, 26, 26], temperature=[85, 85, 85, 85],
                temperature_state=[0, 0, 0, 0], collected=0,
                pressure_unit=0, temperature_unit=0, operation=0, lamp=0)
 PRESETS = {
-    'off': ('Остановить передачу TPMS', None),
-    'values_24_26': ('2,4 / 2,4 / 2,6 / 2,6 bar; 25 °C', DEFAULT),
-    'values_20': ('2,0 bar на всех колёсах; 20 °C',
+    'off': ('Stop TPMS transmission', None),
+    'values_24_26': ('2.4 / 2.4 / 2.6 / 2.6 bar; 25 °C', DEFAULT),
+    'values_20': ('2.0 bar on all wheels; 20 °C',
                   dict(DEFAULT, pressure=[20] * 4, temperature=[80] * 4)),
-    'values_30': ('3,0 bar на всех колёсах; 40 °C',
+    'values_30': ('3.0 bar on all wheels; 40 °C',
                   dict(DEFAULT, pressure=[30] * 4, temperature=[100] * 4)),
-    'lamp_off': ('Лампа RDK = 0', dict(DEFAULT, lamp=0)),
-    'lamp_on': ('Лампа RDK = 1', dict(DEFAULT, lamp=1)),
+    'lamp_off': ('RDK lamp = 0', dict(DEFAULT, lamp=0)),
+    'lamp_on': ('RDK lamp = 1', dict(DEFAULT, lamp=1)),
 }
 for code in range(16):
-    PRESETS[f'state_{code}'] = (f'Состояние давления всех колёс = {code}',
+    PRESETS[f'state_{code}'] = (f'Pressure state of all wheels = {code}',
                                dict(DEFAULT, state=[code] * 4))
-for wheel, title in enumerate(('переднее левое', 'переднее правое', 'заднее левое', 'заднее правое')):
+for wheel, title in enumerate(('Front left', 'Front right', 'Rear left', 'Rear right')):
     values = deepcopy(DEFAULT)
     values['pressure'][wheel] = 16
-    PRESETS[f'wheel_{WHEELS[wheel]}'] = (f'{title}: 1,6 bar, остальные 2,4 / 2,6 bar', values)
+    PRESETS[f'wheel_{WHEELS[wheel]}'] = (f'{title}: 1.6 bar, others 2.4 / 2.6 bar', values)
 
 
 def preset(key):

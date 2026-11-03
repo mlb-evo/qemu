@@ -14,14 +14,14 @@ class NavigationPanel(QWidget):
         self.peer, self.report = peer, report
         self.accepted = None
         root = QVBoxLayout(self)
-        note = QLabel('Navigation / BAP NavSD (FSG 0x32). Активация включает бит 14 '
-                      'ConfigM Driverassist_Media (BAP_NAVIGATION_ACTIVE, бит кодировки 87) '
-                      'и отвечает gtf2 от имени блока навигации, включая настройки карты (Menu R на первой вкладке). '
-                      'Карта по LVDS не эмулируется.')
+        note = QLabel('Navigation / BAP NavSD (FSG 0x32). Activation sets bit 14 of '
+                      'ConfigM Driverassist_Media (BAP_NAVIGATION_ACTIVE, coding bit 87) '
+                      'and answers gtf2 on behalf of the navigation unit, including map settings (Menu R on the first tab). '
+                      'The LVDS map is not emulated.')
         note.setWordWrap(True)
         root.addWidget(note)
         self.presets = QComboBox()
-        self.presets.addItem('Выберите пресет…', None)
+        self.presets.addItem('Choose a preset…', None)
         for key, (title, _) in PRESETS.items():
             self.presets.addItem(title, key)
         root.addWidget(self.presets)
@@ -29,20 +29,20 @@ class NavigationPanel(QWidget):
         self.operation = QSpinBox()
         self.operation.setRange(0, 255)
         self.operation.valueChanged.connect(self.edit)
-        form.addRow('FSG_OperationState — код (0 = рабочий режим)', self.operation)
-        self.carplay = QCheckBox('Пункт CarPlay в «Map display» (SupportedMapViews бит 3, патч au736_evo)')
+        form.addRow('FSG_OperationState — code (0 = normal operation)', self.operation)
+        self.carplay = QCheckBox('CarPlay item in "Map display" (SupportedMapViews bit 3, au736_evo patch)')
         self.carplay.setChecked(True)
         self.carplay.toggled.connect(self.edit)
         form.addRow(self.carplay)
         root.addLayout(form)
         buttons = QHBoxLayout()
-        self.apply = QPushButton('Активировать навигацию')
-        self.stop = QPushButton('Выключить навигацию')
+        self.apply = QPushButton('Activate navigation')
+        self.stop = QPushButton('Turn navigation off')
         buttons.addWidget(self.apply)
         buttons.addWidget(self.stop)
         root.addLayout(buttons)
         root.addStretch(1)
-        self.status = QLabel('Навигация выключена.')
+        self.status = QLabel('Navigation is off.')
         self.status.setWordWrap(True)
         root.addWidget(self.status)
         self.presets.currentIndexChanged.connect(self.select_preset)
@@ -54,7 +54,7 @@ class NavigationPanel(QWidget):
     def edit(self, *_):
         with QSignalBlocker(self.presets):
             self.presets.setCurrentIndex(0)
-        self.status.setText('Значения изменены. Нажмите «Активировать навигацию».')
+        self.status.setText('Values changed. Press "Activate navigation".')
 
     def load(self, profile):
         with QSignalBlocker(self.operation), QSignalBlocker(self.carplay):
@@ -81,12 +81,12 @@ class NavigationPanel(QWidget):
                 self.presets.setCurrentIndex(0)
             if self.accepted is not None:
                 self.load(self.accepted)
-            self.status.setText('Не удалось поставить навигацию в очередь: KSS остановлен или очередь заполнена.')
+            self.status.setText('Could not queue navigation: KSS is stopped or the queue is full.')
             return
         self.accepted = deepcopy(profile)
         if profile is not None:
             self.load(profile)
-        text = ('Навигация: выключение поставлено в очередь KSS.' if profile is None else
-                f'Навигация активируется: OperationState {profile["operation"]}.')
+        text = ('Navigation: turn-off queued to KSS.' if profile is None else
+                f'Navigation activating: OperationState {profile["operation"]}.')
         self.status.setText(text)
         self.report(text)

@@ -51,8 +51,8 @@ WHEEL_BUTTONS = (
     ('\u21a9', 2, 1, 'back'),
     ('\u25bc', 3, 0, 'down'),
     ('MENU', 4, 0, 'menu'),
-    ('Меню L', 5, 0, 'side_left'),
-    ('Меню R', 5, 1, 'side_right'),
+    ('Menu L', 5, 0, 'side_left'),
+    ('Menu R', 5, 1, 'side_right'),
 )
 
 
@@ -285,7 +285,7 @@ class Viewer(QWidget):
         layout.addLayout(bottom)
         from ui.assist import AssistPanel
         self.assist = AssistPanel(kss, self.keys_status.setText)
-        self.tabs.addTab(main, 'Лог и руль')
+        self.tabs.addTab(main, 'Log & wheel')
         self.tabs.addTab(self.assist, 'Driver assist')
         from ui.tpms import TpmsPanel
         self.tpms = TpmsPanel(kss, self.keys_status.setText)
@@ -356,7 +356,7 @@ class PeerWindow(QWidget):
         middle.addWidget(self.panel)
         from ui.assist import AssistPanel
         self.assist = AssistPanel(kss, self.keys_status.setText)
-        self.tabs.addTab(main, 'Лог и руль')
+        self.tabs.addTab(main, 'Log & wheel')
         self.tabs.addTab(self.assist, 'Driver assist')
         from ui.tpms import TpmsPanel
         self.tpms = TpmsPanel(kss, self.keys_status.setText)

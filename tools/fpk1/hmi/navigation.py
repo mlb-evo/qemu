@@ -51,9 +51,9 @@ SEQUENCES = {0x2c}
 # map_views: SupportedMapViews; bit 3 shows the au736_evo CarPlay item.
 DEFAULT = dict(operation=0, map_views=0x0f)
 PRESETS = {
-    'off': ('Навигация выключена', None),
-    'normal': ('Навигация активна (OperationState 0)', DEFAULT),
-    'no_carplay': ('Навигация активна, без CarPlay (SupportedMapViews 0x07)', dict(DEFAULT, map_views=0x07)),
+    'off': ('Navigation off', None),
+    'normal': ('Navigation active (OperationState 0)', DEFAULT),
+    'no_carplay': ('Navigation active, no CarPlay (SupportedMapViews 0x07)', dict(DEFAULT, map_views=0x07)),
 }
 for code in range(1, 16):
     PRESETS[f'operation_{code}'] = (f'OperationState = {code}', dict(DEFAULT, operation=code))

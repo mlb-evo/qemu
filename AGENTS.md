@@ -39,23 +39,25 @@ generally involve:
 
 If unsure, the linked `security.rst` document provides authoritative guidance.
 
-## Local FPK1 research workflow
+## Local FPK1 workflow
 
-User preference: keep only experiment/research scripts under
-`tools/fpk1/research/`. Do not put binaries, shader files, caches, virtual
-environments, third-party checkouts, reports or run results there.
+This checkout keeps only what is needed to build and run the FPK1 firmware in
+the emulator: the machine model, `tools/fpk1/build_fpk1.py`,
+`run_stage1_console.py`, media and NOR preparation, the KSS peer, the shader
+cache builder (`tools/fpk1/shaders/`), the UI/runtime and their tests.
+Firmware documentation, analysis and experiment scripts belong in
+[mlb-evo/au736_evo](https://github.com/mlb-evo/au736_evo) (`docs/firmware/`,
+`research/`), not here; they use this checkout through `QEMU_MHI2_DIR`.
 Store generated/private artifacts under `build_fpk1/research-artifacts/`
 (which is gitignored); VM run logs may remain under `build_fpk1/runs/`.
-Keep runnable scripts pointed at those separate artifact paths.
-Research remains local and is not intended for upstream contribution; the
+This tooling remains local and is not intended for upstream contribution; the
 code-provenance policy above continues to apply.
 
 ## Local FPK1 UI and runtime layout
 
 Keep Qt interface code under `tools/fpk1/ui/`, shared HMI runtime modules
 under `tools/fpk1/hmi/`, and their regression tests under `tools/fpk1/tests/`.
-Only inspectors, firmware oracle checks and experimental runners belong in
-`tools/fpk1/research/hmi/`. Research may import the UI/runtime; the UI and its
+Research scripts in au736_evo may import the UI/runtime; the UI and its
 runtime dependencies must never import research modules or test helpers.
 `tools/fpk1/view_frames.py` remains a compatibility launcher for `ui.viewer`.
 This organization does not change the local-only provenance policy above.

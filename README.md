@@ -215,7 +215,7 @@ from this checkout, add `--qemu /path/to/qemu-system-arm` to the build command.
 **3. Prepare the FPK1 shaders.** The build command above already extracts
 the firmware's KZB shader binaries and translates their Tegra programs into
 GLSL for the host GLES bridge. It runs
-`tools/fpk1/research/shader-translate/build_cache.py` automatically.
+`tools/fpk1/shaders/build_cache.py` automatically.
 
 The build directory contains:
 
@@ -230,7 +230,7 @@ To regenerate the cache after updating the translator, run from the checkout:
 
 ```sh
 "$MHI2_REPRO/fpk1-build/venv/bin/python" \
-  tools/fpk1/research/shader-translate/build_cache.py \
+  tools/fpk1/shaders/build_cache.py \
   --archive "/path/to/AU_C1_AU736_0378_1280_prod_8S0906961AK_Q7_2018.zip" \
   --build-dir "$MHI2_REPRO/fpk1-build"
 ```
@@ -238,8 +238,7 @@ To regenerate the cache after updating the translator, run from the checkout:
 Check the final `translated N/N` message; unsupported programs make this
 command fail and are listed in the report. The generated `run.sh` sets
 `MHI2_SHADER_CACHE` to this build's cache automatically. Shader binaries,
-generated GLSL and reports stay under the build directory; the research
-scripts stay in the checkout.
+generated GLSL and reports stay under the build directory.
 
 **4. Launch the cluster:**
 
@@ -271,8 +270,10 @@ FPK1 remains a local research workflow. Internal coding, vehicle type and
 drivetrain require separate KSS data, and a fully configured cluster HMI
 startup has not been confirmed. The 50-second coding smoke run reached
 application run, then reported `diagnosis`/`swdlclient` startup watchdog errors
-and a `gtf2` fallback. See the [FPK1 guide](docs/fpk1-diagnostic-machine.md)
-and [firmware research](docs/fpk1-firmware-research.md) for details.
+and a `gtf2` fallback. See the [FPK1 guide](docs/fpk1-diagnostic-machine.md) for running it.
+Firmware analysis, recovered interfaces and research scripts live in
+[mlb-evo/au736_evo](https://github.com/mlb-evo/au736_evo) (`docs/firmware/`,
+`research/`).
 
 ### Subsequent launches and shutdown (MHI2)
 

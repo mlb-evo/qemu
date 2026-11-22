@@ -8,10 +8,14 @@ This tooling remains local and is not intended for upstream QEMU contribution.
   scanout capture. It has no Qt or research dependency. Native window embedding
   belongs to `ui/`.
 - `kss_peer.py` and `gss_ipc_frames.py`: shared KSS transport and framing.
+- `shaders/`: extracts the firmware's shader binaries and translates them into
+  the GLSL cache used by `glhost` (`build_fpk1.py` runs `build_cache.py`).
 - `tests/`: runtime and UI regression tests.
-- `research/hmi/`: firmware inspectors, oracle checks and experimental runs.
-  Research scripts can import `hmi/` and `ui/`; those packages must never
-  import research scripts or test helpers.
+
+Firmware inspectors, oracle checks and experiments live in
+[mlb-evo/au736_evo](https://github.com/mlb-evo/au736_evo) `research/`. They
+may import `hmi/` and `ui/`; those packages must never import research scripts
+or test helpers.
 
 Run the HMI/UI tests with:
 

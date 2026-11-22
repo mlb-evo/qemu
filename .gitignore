@@ -25,8 +25,3 @@ GTAGS
 *.zip
 
 # FPK1 research: scripts only; generated artifacts belong under /build*.
-/tools/fpk1/research/**/*.bin
-/tools/fpk1/research/**/*.cgbin
-/tools/fpk1/research/**/*.glsl
-/tools/fpk1/research/**/__pycache__/
-/tools/fpk1/research/**/venv/

@@ -1,7 +1,7 @@
 """Translate every known FPK1 shader binary into the glhost cache.
 
-Sources: the KZB programs extracted by shader-audit/audit_sources.py and any binaries
-collected from glhost runs with collect.py. Output goes to
+Sources: the KZB programs extracted by audit_sources.py and any binaries collected
+from glhost runs (au736_evo research/shader-translate/collect.py). Output goes to
 build_fpk1/research-artifacts/shader-translate/cache, which build_fpk1/run.sh sets as
 MHI2_SHADER_CACHE. Pass --archive ZIP to extract directly from firmware first;
 --build-dir selects the build directory (default: build_fpk1).
@@ -29,7 +29,7 @@ def main():
     args = parser.parse_args()
     artifacts = args.build_dir.resolve() / 'research-artifacts'
     if args.archive:
-        subprocess.run([sys.executable, str(HERE.parent / 'shader-audit/audit_sources.py'),
+        subprocess.run([sys.executable, str(HERE / 'audit_sources.py'),
                         '--archive', str(args.archive.resolve()),
                         '--artifacts', str(artifacts)], check=True)
     out = artifacts / 'shader-translate/cache'

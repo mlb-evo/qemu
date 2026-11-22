@@ -111,7 +111,7 @@ fi
 run="$here/runs/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$run"
 export MHI2_GL_WIDTH=1440 MHI2_GL_HEIGHT=540
-# GLSL for the firmware's Tegra binaries, made by tools/fpk1/research/shader-translate.
+# GLSL for the firmware's Tegra binaries, made by tools/fpk1/shaders/build_cache.py.
 export MHI2_SHADER_CACHE=$here/research-artifacts/shader-translate/cache
 # GR3D is not emulated; GLES goes through the bridge, native 3D jobs retire empty.
 export TEGRA_GR3D_DISCARD=1
@@ -160,7 +160,7 @@ def main():
     (output / 'media').mkdir()
     run([output / 'venv/bin/python', TOOLS / 'create_fpk1_emmc.py', archive, output / 'media/emmc.img'],
         stdout=(output / 'media/emmc.json').open('w'))
-    run([output / 'venv/bin/python', TOOLS / 'research/shader-translate/build_cache.py',
+    run([output / 'venv/bin/python', TOOLS / 'shaders/build_cache.py',
          '--archive', archive, '--build-dir', output])
     (output / 'runs').mkdir()
 

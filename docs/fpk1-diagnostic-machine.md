@@ -33,7 +33,7 @@ A successfully instantiated QEMU machine is not proof of working QNX.
 
 ## Research requirements
 
-See [firmware research](fpk1-firmware-research.md). Next steps:
+See [firmware research](https://github.com/mlb-evo/au736_evo/blob/main/docs/firmware/firmware-research.md) in au736_evo. Next steps:
 1. Validate Stage1 startup and its actual load/entry address.
 2. Establish flash layout and FPK1-specific boot handoff (BCT/IRAM/AVP).
 3. Add necessary board peripherals based on trace evidence.
@@ -70,7 +70,7 @@ This applies to the **decoded** image, not the signed component or raw payload.
 The existing diagnostic machine executes startup but reaches a Data Abort
 (DFAR `0x3`). A command-line CBAR override moves progress to another Data Abort
 (DFAR `0xff7`); neither experiment boots QNX. See the latest complete Stage1
-section in [firmware research](fpk1-firmware-research.md) for commands and evidence.
+section in [firmware research](https://github.com/mlb-evo/au736_evo/blob/main/docs/firmware/firmware-research.md) for commands and evidence.
 
 ## Synthetic CPU0 and memory handoff
 
@@ -118,7 +118,7 @@ python3 tools/fpk1/run_stage1_console.py <firmware.zip> \
 ```
 
 See "Bootloader command line, eMMC and boot to Stage3" in the
-[firmware research](fpk1-firmware-research.md) for evidence and limits.
+[firmware research](https://github.com/mlb-evo/au736_evo/blob/main/docs/firmware/firmware-research.md) for evidence and limits.
 
 ## Quick start: build once, then `run.sh`
 
@@ -145,8 +145,8 @@ drivetrain need separate KSS data; this option alone does not establish a
 fully configured HMI startup.
 
 The Qt interface lives in `tools/fpk1/ui/`; its inputs, presets and codecs
-live in `tools/fpk1/hmi/`. Neither package imports `research/`. Inspectors and
-firmware experiments live in `tools/fpk1/research/hmi/` and may use the runtime.
+live in `tools/fpk1/hmi/`. Inspectors and firmware experiments live in
+au736_evo `research/` and use this runtime through `QEMU_MHI2_DIR`.
 Regression tests live in `tools/fpk1/tests/`. The existing `view_frames.py`
 command remains a thin compatibility launcher for `ui.viewer`.
 
@@ -159,7 +159,7 @@ the serial console. VIEW, left/right, OK, BACK and roller up/down are enabled
 with `--kss`. Click after the HMI has started; early clicks can be dropped
 before its IPC client connects. Long holds and simultaneous combinations
 are not implemented. See the recovered wire format in
-`docs/fpk1-firmware-research.md`.
+[firmware research](https://github.com/mlb-evo/au736_evo/blob/main/docs/firmware/firmware-research.md).
 Below the wheel, six checkable buttons show the front left/right doors,
 rear left/right doors, bonnet and boot as `Closed` or `Open`. Click a button
 to toggle it; checked means open. Initial state is all closed. States are

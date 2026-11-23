@@ -18,6 +18,13 @@ from tests.test_driver_assist import messages
 
 
 class Checks(unittest.TestCase):
+    def test_lane_presets_code_ldw_per_side(self):
+        from hmi.assist_scenarios import scenario
+        modes = {key: scenario(key)['LDW_02']['LDW_Lernmodus_seitenabhaengig_uint8']
+                 for key in ('lane', 'lane_left', 'lane_right', 'lane_standby')}
+        self.assertEqual(modes, {'lane': 0b1010, 'lane_left': 0b1011, 'lane_right': 0b1110,
+                                 'lane_standby': 0b0101})
+
     def test_scenarios_have_consistent_legacy_and_hmi_requests(self):
         for key in LABELS:
             profile = scenario(key)

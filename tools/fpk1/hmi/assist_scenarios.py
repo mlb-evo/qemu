@@ -55,6 +55,13 @@ DETAILS = {
 }
 
 
+def lernmodus(left, right):
+    """LDW_Lernmodus_seitenabhaengig as VW's LDW_Lernmodus_links (bits 0..1)
+    and _rechts (2..3): 1 line not seen, 2 seen, 3 departure (VW CAN layout,
+    assumed; au736_evo reads it the same way)."""
+    return left | right << 2
+
+
 def description(key):
     if key.startswith('traffic_') and key != 'traffic_jam':
         return ('Локальная BAP-сессия OnlineFunctions: сигнал, время до зелёного и скорость. '
@@ -125,7 +132,7 @@ def scenario(key):
             result['TelltaleAALA_Display']['tt_sta_uint8'] = 2
         if key == 'lane_standby':
             result['TelltaleAALA_Display'].update(tt_lane_left_uint8=1, tt_lane_right_uint8=1)
-            result['LDW_02'] = dict(LDW_Lernmodus_seitenabhaengig_uint8=1)
+            result['LDW_02'] = dict(LDW_Lernmodus_seitenabhaengig_uint8=lernmodus(1, 1))
         if key == 'limiter_warning':
             result['TSK_07']['TSK_Limiter_Fahrerinfo_uint8'] = 1
         return result
@@ -159,7 +166,7 @@ def scenario(key):
         right = 3 if key == 'lane_right' else 2
         lamps.update(tt_lane_left_uint8=left, tt_lane_right_uint8=right,
                      tt_ldw_acc_egoCar_uint8=2)
-        result['LDW_02'] = dict(LDW_Lernmodus_seitenabhaengig_uint8=3,
+        result['LDW_02'] = dict(LDW_Lernmodus_seitenabhaengig_uint8=lernmodus(left, right),
                                LDW_Status_LED_gruen_uint8=1,
                                LDW_Status_LED_gelb_uint8=int(key in ('lane_left', 'lane_right')))
     if key in ('cruise', 'limiter'):

@@ -293,6 +293,9 @@ class Viewer(QWidget):
         from ui.navigation import NavigationPanel
         self.navigation = NavigationPanel(kss, self.keys_status.setText)
         self.tabs.addTab(self.navigation, 'Navigation')
+        from ui.driving import DrivingPanel
+        self.driving = DrivingPanel(kss, self.keys_status.setText)
+        self.tabs.addTab(self.driving, 'Движение')
         outer.addWidget(self.tabs)
         self.stamp = None
         self.timer = None
@@ -364,6 +367,9 @@ class PeerWindow(QWidget):
         from ui.navigation import NavigationPanel
         self.navigation = NavigationPanel(kss, self.keys_status.setText)
         self.tabs.addTab(self.navigation, 'Navigation')
+        from ui.driving import DrivingPanel
+        self.driving = DrivingPanel(kss, self.keys_status.setText)
+        self.tabs.addTab(self.driving, 'Движение')
         layout.addWidget(self.tabs, 1)
         layout.addWidget(self.keys_status)
         self.resize(900, 580)

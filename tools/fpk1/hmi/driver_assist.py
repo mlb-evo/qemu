@@ -34,6 +34,9 @@ def valid_command(name, field, value):
     if name == '@navigation' and field is None:
         from hmi.navigation import valid_profile
         return valid_profile(value)
+    if name == '@driving' and field is None:
+        from hmi.driving import valid_profile
+        return valid_profile(value)
     if name == '@scenario' and field is None:
         from hmi.assist_scenarios import LABELS
         return isinstance(value, str) and value in LABELS
@@ -63,6 +66,8 @@ class DriverAssist:
         self.tpms = Tpms(peer)
         from hmi.navigation import Navigation
         self.navigation = Navigation(peer)
+        from hmi.driving import Driving
+        self.driving = Driving(peer)
 
     def enabled(self, name):
         return name in self.transmit
@@ -101,6 +106,7 @@ class DriverAssist:
             self.inflight = self.peer.outbox[-1]
 
     def tick(self):
+        self.driving.tick()
         if self.inflight is not None or time.monotonic() < self.next_at:
             return
         try:
@@ -117,6 +123,10 @@ class DriverAssist:
             self.send(['TelltaleHMI_Display'], log=True, force=True)
             if self.inflight is None and len(self.peer.outbox) > queued_before:
                 self.inflight = self.peer.outbox[-1]
+            return
+        if name == '@driving':
+            self.driving.select(value)
+            self.peer.log(f'Driving preset: {value}')
             return
         if name == '@navigation':
             queued_before = len(self.peer.outbox)

@@ -56,10 +56,10 @@ DETAILS = {
 
 
 def lernmodus(left, right):
-    """LDW_Lernmodus_seitenabhaengig as VW's LDW_Lernmodus_links (bits 0..1)
-    and _rechts (2..3): 1 line not seen, 2 seen, 3 departure (VW CAN layout,
-    assumed; au736_evo reads it the same way)."""
-    return left | right << 2
+    """LDW_Lernmodus_seitenabhaengig: bits 0..1 the right line, 2..3 the left
+    one; 1 not seen, 2 seen, 3 departure (the stock gtf2's lane bars under
+    the speedometer show grey, green and red on those sides)."""
+    return right | left << 2
 
 
 def description(key):

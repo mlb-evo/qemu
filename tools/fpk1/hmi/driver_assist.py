@@ -34,6 +34,9 @@ def valid_command(name, field, value):
     if name == '@navigation' and field is None:
         from hmi.navigation import valid_profile
         return valid_profile(value)
+    if name == '@media' and field is None:
+        from hmi.media import valid_profile
+        return valid_profile(value)
     if name == '@driving' and field is None:
         from hmi.driving import valid_profile
         return valid_profile(value)
@@ -66,6 +69,8 @@ class DriverAssist:
         self.tpms = Tpms(peer)
         from hmi.navigation import Navigation
         self.navigation = Navigation(peer)
+        from hmi.media import Media
+        self.media = Media(peer)
         from hmi.driving import Driving
         self.driving = Driving(peer)
 
@@ -102,11 +107,13 @@ class DriverAssist:
         self.traffic.send()
         self.tpms.send()
         self.navigation.send()
+        self.media.send()
         if len(self.peer.outbox) > before:
             self.inflight = self.peer.outbox[-1]
 
     def tick(self):
         self.driving.tick()
+        self.media.tick()
         if self.inflight is not None or time.monotonic() < self.next_at:
             return
         try:
@@ -133,6 +140,14 @@ class DriverAssist:
             self.navigation.select(value)
             self.peer.log(f'Navigation profile: {value}')
             self.navigation.send()
+            if self.inflight is None and len(self.peer.outbox) > queued_before:
+                self.inflight = self.peer.outbox[-1]
+            return
+        if name == '@media':
+            queued_before = len(self.peer.outbox)
+            self.media.select(value)
+            self.peer.log(f'Media profile: {value}')
+            self.media.send()
             if self.inflight is None and len(self.peer.outbox) > queued_before:
                 self.inflight = self.peer.outbox[-1]
             return

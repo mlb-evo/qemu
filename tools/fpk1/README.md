@@ -10,6 +10,10 @@ This tooling remains local and is not intended for upstream QEMU contribution.
 - `hmi/driving.py`: repeating driving presets (park, city, highway, sprint,
   reverse) that send vehicle speed, engine speed and gear ten times a second;
   the viewer's "Движение" tab selects them (`@driving` on the assist queue).
+- `hmi/media.py`: BAP AudioSD (FSG 0x31) fixture with radio and media presets
+  (FM, DAB, USB, SD card, paused, AUX, muted; radio sets ListAvailable bit 0,
+  the station list view, whose entries come over MOST); a playing track's position
+  advances once a second. The viewer's "Media" tab selects them (`@media`).
 - `kss_peer.py` and `gss_ipc_frames.py`: shared KSS transport and framing.
 - `shaders/`: extracts the firmware's shader binaries and translates them into
   the GLSL cache used by `glhost` (`build_fpk1.py` runs `build_cache.py`).

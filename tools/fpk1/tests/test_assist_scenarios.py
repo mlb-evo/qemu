@@ -129,7 +129,7 @@ class Checks(unittest.TestCase):
             peer = KssPeer(Path('/unused.sock'))
             window = make(peer)
             self.assertEqual([window.tabs.tabText(i) for i in range(window.tabs.count())],
-                             ['Лог и руль', 'Driver assist', 'TPMS', 'Navigation', 'Движение'])
+                             ['Лог и руль', 'Driver assist', 'TPMS', 'Navigation', 'Движение', 'Media'])
             self.assertIs(window.tabs.widget(1), window.assist)
             self.assertIs(window.tabs.widget(2), window.tpms)
             self.assertFalse(window.assist.isWindow())

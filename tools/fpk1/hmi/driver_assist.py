@@ -37,6 +37,9 @@ def valid_command(name, field, value):
     if name == '@media' and field is None:
         from hmi.media import valid_profile
         return valid_profile(value)
+    if name == '@board' and field is None:
+        from hmi.board_computer import valid_profile
+        return valid_profile(value)
     if name == '@driving' and field is None:
         from hmi.driving import valid_profile
         return valid_profile(value)
@@ -73,6 +76,8 @@ class DriverAssist:
         self.media = Media(peer)
         from hmi.driving import Driving
         self.driving = Driving(peer)
+        from hmi.board_computer import BoardComputer
+        self.board = BoardComputer(peer, self.driving)
 
     def enabled(self, name):
         return name in self.transmit
@@ -113,6 +118,7 @@ class DriverAssist:
 
     def tick(self):
         self.driving.tick()
+        self.board.tick()
         self.media.tick()
         if self.inflight is not None or time.monotonic() < self.next_at:
             return
@@ -134,6 +140,11 @@ class DriverAssist:
         if name == '@driving':
             self.driving.select(value)
             self.peer.log(f'Driving preset: {value}')
+            return
+        if name == '@board':
+            self.board.select(value)
+            self.peer.log('Board computer: ' + ('off' if value is None else
+                          f'range {value["range"]} km, live={value["live"]}'))
             return
         if name == '@navigation':
             queued_before = len(self.peer.outbox)

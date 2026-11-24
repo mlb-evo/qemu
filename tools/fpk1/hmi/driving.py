@@ -97,6 +97,12 @@ class Driving:
         self.profile = key
         self.started = self.next_at = self.clock()
 
+    def sample(self):
+        """(speed, rpm, selector, gear) now, or None while no preset runs."""
+        if self.profile is None:
+            return None
+        return PRESETS[self.profile][1](self.clock() - self.started)
+
     def tick(self):
         if self.profile is None or not self.peer.application_running:
             return

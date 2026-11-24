@@ -10,6 +10,11 @@ This tooling remains local and is not intended for upstream QEMU contribution.
 - `hmi/driving.py`: repeating driving presets (park, city, highway, sprint,
   reverse) that send vehicle speed, engine speed and gear ten times a second;
   the viewer's "Движение" tab selects them (`@driving` on the assist queue).
+- `hmi/board_computer.py`: board computer presets (city, highway, reserve,
+  reset): BC trip data since start, since refuelling and long-term, current
+  consumption, range, odometer and the host's clock once a second; with
+  "live" the counters follow the driving preset. The viewer's
+  "Бортовой компьютер" tab selects or edits them (`@board`).
 - `hmi/media.py`: BAP AudioSD (FSG 0x31) fixture with radio and media presets
   (FM, DAB, USB, SD card, paused, AUX, muted; radio sets ListAvailable bit 0,
   the station list view, whose entries come over MOST); a playing track's position
